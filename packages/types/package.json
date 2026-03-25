@@ -1,0 +1,16 @@
+{
+  "name": "@nexora/types",
+  "version": "1.0.0",
+  "description": "Shared TypeScript types for Nexora platform",
+  "main": "dist/index.d.ts",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint src --ext .ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

@@ -1,0 +1,340 @@
+version: '3.8'
+
+services:
+  # Database Layer - Essential Services
+  mongodb:
+    image: mongo:latest
+    container_name: nexora-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: nexora_dev_password
+    volumes:
+      - ./data/mongodb-data:/data/db
+      - ./infrastructure/mongo-init.js:/docker-entrypoint-initdb.d/init.js
+    networks:
+      - nexora-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')", "--quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:latest
+    container_name: nexora-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - ./data/redis-data:/data
+    networks:
+      - nexora-network
+    healthcheck:
+      test: redis-cli ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Microservices
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    container_name: nexora-auth-service
+    ports:
+      - "3010:3001"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      AUTH_SERVICE_PORT: 3001
+      MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/nexora_auth?authSource=admin
+      REDIS_URI: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
+      JWT_EXPIRY: ${JWT_EXPIRY:-7d}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_CALLBACK_URL: ${GOOGLE_CALLBACK_URL:-}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_CALLBACK_URL: ${MICROSOFT_CALLBACK_URL:-}
+      SAML_ENTRY_POINT: ${SAML_ENTRY_POINT:-}
+      SAML_ISSUER: ${SAML_ISSUER:-}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+    networks:
+      - nexora-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:3001/api/v1/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  hr-service:
+    build:
+      context: ./services/hr-service
+      dockerfile: Dockerfile
+    container_name: nexora-hr-service
+    ports:
+      - "3020:3010"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      HR_SERVICE_PORT: 3010
+      MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/nexora_hr?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
+      AUTH_SERVICE_URL: http://auth-service:3001
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      FRONTEND_URL: http://localhost:3100
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+    networks:
+      - nexora-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:3010/api/v1/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  attendance-service:
+    build:
+      context: ./services/attendance-service
+      dockerfile: Dockerfile
+    container_name: nexora-attendance-service
+    ports:
+      - "3011:3011"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      ATTENDANCE_SERVICE_PORT: 3011
+      MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/nexora_attendance?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - nexora-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:3011/api/v1/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  leave-service:
+    build:
+      context: ./services/leave-service
+      dockerfile: Dockerfile
+    container_name: nexora-leave-service
+    ports:
+      - "3012:3012"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      LEAVE_SERVICE_PORT: 3012
+      MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/nexora_leave?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - nexora-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:3012/api/v1/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  policy-service:
+    build:
+      context: ./services/policy-service
+      dockerfile: Dockerfile
+    container_name: nexora-policy-service
+    ports:
+      - "3013:3013"
+    environment:
+      NODE_ENV: development
+      POLICY_SERVICE_PORT: "3013"
+      MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/nexora_policies?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3013/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - nexora-network
+
+  chat-service:
+    build:
+      context: ./services/chat-service
+      dockerfile: Dockerfile
+    container_name: nexora-chat-service
+    ports:
+      - "3002:3002"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      CHAT_SERVICE_PORT: 3002
+      MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/nexora_chat?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
+      LLM_BASE_URL: http://host.docker.internal:7/v1/chat/completions
+      LLM_MODEL: deepseek
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - nexora-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:3002/api/v1/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  ai-service:
+    build:
+      context: ./services/ai-service
+      dockerfile: Dockerfile
+    container_name: nexora-ai-service
+    ports:
+      - "3080:3080"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      AI_SERVICE_PORT: 3080
+      JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
+      LLM_BASE_URL: http://host.docker.internal:7/v1/chat/completions
+      LLM_MODEL: deepseek
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - nexora-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:3080/api/v1/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  calling-service:
+    build:
+      context: ./services/calling-service
+      dockerfile: Dockerfile
+    container_name: nexora-calling-service
+    ports:
+      - "3051:3051"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      CALLING_SERVICE_PORT: 3051
+      MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/nexora_calling?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
+      STUN_SERVERS: stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - nexora-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:3051/api/v1/calls || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+    container_name: nexora-api-gateway
+    ports:
+      - "3005:3005"
+    environment:
+      GATEWAY_PORT: 3005
+      AUTH_SERVICE_URL: http://auth-service:3001
+      HR_SERVICE_URL: http://hr-service:3010
+      ATTENDANCE_SERVICE_URL: http://attendance-service:3011
+      LEAVE_SERVICE_URL: http://leave-service:3012
+      AI_SERVICE_URL: http://ai-service:3080
+      CHAT_SERVICE_URL: http://chat-service:3002
+      CALLING_SERVICE_URL: http://calling-service:3051
+      POLICY_SERVICE_URL: http://policy-service:3013
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      hr-service:
+        condition: service_healthy
+      attendance-service:
+        condition: service_healthy
+      leave-service:
+        condition: service_healthy
+      policy-service:
+        condition: service_healthy
+      calling-service:
+        condition: service_healthy
+    networks:
+      - nexora-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:3005/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:3005
+        NEXT_PUBLIC_CHAT_SOCKET_URL: http://localhost:3002
+        NEXT_PUBLIC_CALL_SOCKET_URL: http://localhost:3051
+    container_name: nexora-frontend
+    ports:
+      - "3100:3000"
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    networks:
+      - nexora-network
+    restart: unless-stopped
+
+  # Development Tools
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: nexora-mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - nexora-network
+    restart: unless-stopped
+
+networks:
+  nexora-network:
+    driver: bridge
+
+volumes:
+  mongodb-data:
+  redis-data:

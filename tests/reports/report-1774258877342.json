@@ -1,0 +1,368 @@
+{
+  "timestamp": "2026-03-23T09:41:17.340Z",
+  "totalSuites": 8,
+  "totalTests": 48,
+  "totalPassed": 42,
+  "totalFailed": 6,
+  "totalSkipped": 0,
+  "coverage": 88,
+  "duration": 37777,
+  "suites": [
+    {
+      "suite": "Attendance",
+      "category": "e2e",
+      "module": "attendance",
+      "tests": [
+        {
+          "name": "Setup: create admin user and org",
+          "status": "pass",
+          "duration": 264
+        },
+        {
+          "name": "Setup: create member user and invite to org",
+          "status": "pass",
+          "duration": 206
+        },
+        {
+          "name": "1. Clock in records attendance for non-admin user",
+          "status": "pass",
+          "duration": 126
+        },
+        {
+          "name": "2. Clock out calculates working hours",
+          "status": "pass",
+          "duration": 1045
+        },
+        {
+          "name": "3. Cannot clock in twice without clocking out (expect 409)",
+          "status": "pass",
+          "duration": 57
+        },
+        {
+          "name": "4. Admin/super_admin cannot clock in (expect 403)",
+          "status": "pass",
+          "duration": 6
+        },
+        {
+          "name": "5. Manual entry creates pending record",
+          "status": "pass",
+          "duration": 12
+        },
+        {
+          "name": "6. Approve manual entry",
+          "status": "pass",
+          "duration": 24
+        },
+        {
+          "name": "7. Reject manual entry with reason",
+          "status": "pass",
+          "duration": 19
+        },
+        {
+          "name": "8. Today status shows sessions",
+          "status": "pass",
+          "duration": 14
+        },
+        {
+          "name": "9. Attendance stats",
+          "status": "pass",
+          "duration": 16
+        },
+        {
+          "name": "10a. Create shift",
+          "status": "pass",
+          "duration": 16
+        },
+        {
+          "name": "10b. List shifts",
+          "status": "pass",
+          "duration": 9
+        },
+        {
+          "name": "10c. Update shift",
+          "status": "pass",
+          "duration": 15
+        },
+        {
+          "name": "10d. Delete shift",
+          "status": "pass",
+          "duration": 8
+        },
+        {
+          "name": "11a. Create policy",
+          "status": "pass",
+          "duration": 15
+        },
+        {
+          "name": "11b. List policies",
+          "status": "pass",
+          "duration": 11
+        },
+        {
+          "name": "11c. Update policy",
+          "status": "pass",
+          "duration": 9
+        },
+        {
+          "name": "11d. Delete policy",
+          "status": "pass",
+          "duration": 8
+        },
+        {
+          "name": "12. Create policy from template",
+          "status": "pass",
+          "duration": 38
+        },
+        {
+          "name": "13. Get templates",
+          "status": "pass",
+          "duration": 8
+        },
+        {
+          "name": "14. Alert generation on late clock-in",
+          "status": "pass",
+          "duration": 58
+        }
+      ],
+      "totalTests": 22,
+      "passed": 22,
+      "failed": 0,
+      "skipped": 0,
+      "duration": 5469,
+      "timestamp": "2026-03-23T09:40:45.012Z"
+    },
+    {
+      "suite": "auth-org",
+      "category": "e2e",
+      "module": "auth-org",
+      "tests": [
+        {
+          "name": "Suite execution",
+          "status": "fail",
+          "duration": 0,
+          "error": "Command failed: npx ts-node --transpile-only \"/Users/ekamjitsingh/Projects/Nexora/tests/e2e/auth-org.test.ts\" 2>&1"
+        }
+      ],
+      "totalTests": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "duration": 6768,
+      "timestamp": "2026-03-23T09:40:51.800Z"
+    },
+    {
+      "suite": "hr-directory",
+      "category": "e2e",
+      "module": "hr-directory",
+      "tests": [
+        {
+          "name": "Suite execution",
+          "status": "fail",
+          "duration": 0,
+          "error": "Command failed: npx ts-node --transpile-only \"/Users/ekamjitsingh/Projects/Nexora/tests/e2e/hr-directory.test.ts\" 2>&1"
+        }
+      ],
+      "totalTests": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "duration": 4216,
+      "timestamp": "2026-03-23T09:40:56.016Z"
+    },
+    {
+      "suite": "leave",
+      "category": "e2e",
+      "module": "leave",
+      "tests": [
+        {
+          "name": "Suite execution",
+          "status": "fail",
+          "duration": 0,
+          "error": "Command failed: npx ts-node --transpile-only \"/Users/ekamjitsingh/Projects/Nexora/tests/e2e/leave.test.ts\" 2>&1"
+        }
+      ],
+      "totalTests": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "duration": 4023,
+      "timestamp": "2026-03-23T09:41:00.039Z"
+    },
+    {
+      "suite": "multi-tenancy",
+      "category": "e2e",
+      "module": "multi-tenancy",
+      "tests": [
+        {
+          "name": "Suite execution",
+          "status": "fail",
+          "duration": 0,
+          "error": "Command failed: npx ts-node --transpile-only \"/Users/ekamjitsingh/Projects/Nexora/tests/e2e/multi-tenancy.test.ts\" 2>&1"
+        }
+      ],
+      "totalTests": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "duration": 3702,
+      "timestamp": "2026-03-23T09:41:03.741Z"
+    },
+    {
+      "suite": "projects",
+      "category": "e2e",
+      "module": "projects",
+      "tests": [
+        {
+          "name": "Suite execution",
+          "status": "fail",
+          "duration": 0,
+          "error": "Command failed: npx ts-node --transpile-only \"/Users/ekamjitsingh/Projects/Nexora/tests/e2e/projects.test.ts\" 2>&1"
+        }
+      ],
+      "totalTests": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "duration": 3814,
+      "timestamp": "2026-03-23T09:41:07.555Z"
+    },
+    {
+      "suite": "Tasks & Timesheets",
+      "category": "e2e",
+      "module": "tasks",
+      "tests": [
+        {
+          "name": "Setup: create test user, org, and project",
+          "status": "pass",
+          "duration": 228
+        },
+        {
+          "name": "Create task linked to project",
+          "status": "pass",
+          "duration": 145
+        },
+        {
+          "name": "List tasks with filters",
+          "status": "pass",
+          "duration": 24
+        },
+        {
+          "name": "Get task by ID",
+          "status": "pass",
+          "duration": 10
+        },
+        {
+          "name": "Update task",
+          "status": "pass",
+          "duration": 13
+        },
+        {
+          "name": "Delete task",
+          "status": "pass",
+          "duration": 16
+        },
+        {
+          "name": "Update task status",
+          "status": "pass",
+          "duration": 9
+        },
+        {
+          "name": "Add comment to task",
+          "status": "pass",
+          "duration": 9
+        },
+        {
+          "name": "Log time on task (updates loggedHours)",
+          "status": "pass",
+          "duration": 16
+        },
+        {
+          "name": "My tasks filter",
+          "status": "pass",
+          "duration": 9
+        },
+        {
+          "name": "Task stats by project",
+          "status": "pass",
+          "duration": 7
+        },
+        {
+          "name": "Create timesheet",
+          "status": "pass",
+          "duration": 87
+        },
+        {
+          "name": "Get my timesheets",
+          "status": "pass",
+          "duration": 10
+        },
+        {
+          "name": "Submit timesheet",
+          "status": "pass",
+          "duration": 12
+        },
+        {
+          "name": "Review (approve) timesheet",
+          "status": "pass",
+          "duration": 7
+        },
+        {
+          "name": "Cannot edit submitted timesheet",
+          "status": "pass",
+          "duration": 9
+        },
+        {
+          "name": "Delete only draft timesheets",
+          "status": "pass",
+          "duration": 40
+        },
+        {
+          "name": "Pending timesheets list",
+          "status": "pass",
+          "duration": 44
+        },
+        {
+          "name": "BIZ: Time logged on tasks aggregates correctly",
+          "status": "pass",
+          "duration": 47,
+          "businessNote": "Accurate time tracking for billing"
+        },
+        {
+          "name": "BIZ: Timesheet review workflow prevents unreviewed billing",
+          "status": "pass",
+          "duration": 36,
+          "businessNote": "Financial control for client billing"
+        }
+      ],
+      "totalTests": 20,
+      "passed": 20,
+      "failed": 0,
+      "skipped": 0,
+      "duration": 4087,
+      "timestamp": "2026-03-23T09:41:11.626Z"
+    },
+    {
+      "suite": "business-logic",
+      "category": "e2e",
+      "module": "business-logic",
+      "tests": [
+        {
+          "name": "Suite execution",
+          "status": "fail",
+          "duration": 0,
+          "error": "Command failed: npx ts-node --transpile-only \"/Users/ekamjitsingh/Projects/Nexora/tests/business/business-logic.test.ts\" 2>&1"
+        }
+      ],
+      "totalTests": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "duration": 5697,
+      "timestamp": "2026-03-23T09:41:17.339Z"
+    }
+  ],
+  "businessInsights": [
+    "Accurate time tracking for billing",
+    "Financial control for client billing"
+  ]
+}

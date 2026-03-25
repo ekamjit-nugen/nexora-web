@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker exec:*)",
+      "Bash(bash /Users/ekamjitsingh/Projects/Nexora/scripts/seed-roles.sh)",
+      "Bash(bash /Users/ekamjitsingh/Projects/Nexora/scripts/seed-policies.sh)"
+    ]
+  }
+}

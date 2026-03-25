@@ -1,0 +1,29 @@
+{
+  "name": "@nexora/api-gateway",
+  "version": "1.0.0",
+  "description": "Nexora API Gateway - central routing for all microservices",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "ts-node src/main.ts",
+    "build": "tsc",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "compression": "^1.7.4",
+    "express": "^4.18.0",
+    "helmet": "^7.0.0",
+    "http-proxy-middleware": "^3.0.0",
+    "jsonwebtoken": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/compression": "^1.7.0",
+    "@types/jsonwebtoken": "^9.0.0",
+    "@types/express": "^4.17.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

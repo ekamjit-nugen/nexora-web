@@ -1,0 +1,66 @@
+{
+  "name": "nexora",
+  "version": "1.0.0",
+  "description": "Nexora - Unified Enterprise IT Operations Platform",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "services/auth-service",
+    "services/hr-service",
+    "services/attendance-service",
+    "services/payroll-service",
+    "services/project-service",
+    "services/task-service",
+    "services/board-service",
+    "services/crm-service",
+    "services/invoice-service",
+    "services/expense-service",
+    "services/document-service",
+    "services/asset-service",
+    "services/recruitment-service",
+    "services/notification-service",
+    "services/realtime-service",
+    "services/analytics-service",
+    "services/ai-service",
+    "services/chat-service",
+    "services/calling-service",
+    "services/file-service",
+    "services/integration-service",
+    "services/api-gateway",
+    "services/policy-service",
+    "services/leave-service",
+    "packages/shared",
+    "packages/types",
+    "packages/utils"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces",
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "lint": "eslint . --ext .ts,.tsx --ignore-pattern node_modules",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
+    "docker:build": "docker-compose build",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f",
+    "k8s:deploy": "kubectl apply -f infrastructure/k8s/",
+    "k8s:delete": "kubectl delete -f infrastructure/k8s/"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=9.0.0"
+  },
+  "author": "Nugen IT Services",
+  "license": "CONFIDENTIAL",
+  "dependencies": {
+    "lucide-react": "^1.0.1"
+  }
+}

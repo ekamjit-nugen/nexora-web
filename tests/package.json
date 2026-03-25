@@ -1,0 +1,21 @@
+{
+  "name": "@nexora/tests",
+  "private": true,
+  "scripts": {
+    "test": "npx ts-node tests/runner.ts",
+    "test:auth": "npx ts-node tests/e2e/auth-org.test.ts",
+    "test:hr": "npx ts-node tests/e2e/hr-directory.test.ts",
+    "test:attendance": "npx ts-node tests/e2e/attendance.test.ts",
+    "test:leave": "npx ts-node tests/e2e/leave.test.ts",
+    "test:projects": "npx ts-node tests/e2e/projects.test.ts",
+    "test:tasks": "npx ts-node tests/e2e/tasks.test.ts",
+    "test:tenancy": "npx ts-node tests/e2e/multi-tenancy.test.ts",
+    "test:business": "npx ts-node tests/business/business-logic.test.ts",
+    "clean": "docker exec nexora-mongodb mongosh -u root -p nexora_dev_password --quiet --eval '[\"nexora_auth\",\"nexora_hr\",\"nexora_attendance\",\"nexora_leave\",\"nexora_projects\",\"nexora_tasks\"].forEach(d => { db = db.getSiblingDB(d); db.getCollectionNames().forEach(c => db[c].deleteMany({})); }); print(\"ALL CLEARED\");'"
+  },
+  "dependencies": {
+    "typescript": "^5.0.0",
+    "ts-node": "^10.9.0",
+    "@types/node": "^20.0.0"
+  }
+}

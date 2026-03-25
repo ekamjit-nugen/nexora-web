@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.log
+.env
+.DS_Store
+coverage/
+.eslintignore
+build/
+.idea/
+*.swp
+*.swo
+*~
+.vscode/
