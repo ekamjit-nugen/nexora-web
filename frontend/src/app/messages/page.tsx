@@ -2687,17 +2687,49 @@ export default function MessagesPage() {
                 ) : (
                   /* Audio-only call view */
                   <div className="flex items-center justify-center h-full relative">
-                    <div className="text-center">
-                      <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-[#2563EB] to-[#0EA5E9] flex items-center justify-center mx-auto mb-4 shadow-[0_0_40px_rgba(37,99,235,0.35)]">
-                        <span className="absolute inset-0 rounded-full border border-white/10 animate-pulse" />
-                        {/* Audio wave animation */}
-                        <svg className="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
-                        </svg>
-                      </div>
-                      <p className="text-white text-lg font-semibold">{getEmployeeName(callConversation?.participants.find((p) => p.userId !== user?._id)?.userId || "")}</p>
-                      <p className="text-[#94A3B8] text-sm mt-1">Audio Call in progress</p>
-                    </div>
+                    {(() => {
+                      const remoteParticipants = (callConversation?.participants || []).filter((p) => p.userId !== user?._id);
+                      const totalRemote = remoteParticipants.length;
+
+                      // Grid layout for audio participants
+                      const gridClass = totalRemote <= 1 ? "" : totalRemote === 2 ? "grid grid-cols-2 gap-6" : totalRemote <= 4 ? "grid grid-cols-2 gap-5" : "grid grid-cols-3 gap-4";
+                      const avatarSize = totalRemote <= 1 ? "w-28 h-28" : totalRemote <= 3 ? "w-20 h-20" : "w-16 h-16";
+                      const textSize = totalRemote <= 1 ? "text-4xl" : totalRemote <= 3 ? "text-2xl" : "text-xl";
+                      const nameSize = totalRemote <= 1 ? "text-lg" : "text-sm";
+
+                      if (totalRemote === 0) {
+                        return (
+                          <div className="text-center">
+                            <div className="w-28 h-28 rounded-full bg-gradient-to-br from-[#2563EB] to-[#0EA5E9] flex items-center justify-center mx-auto mb-4 shadow-[0_0_40px_rgba(37,99,235,0.35)]">
+                              <span className="text-4xl font-bold text-white">?</span>
+                            </div>
+                            <p className="text-[#94A3B8] text-sm">Connecting...</p>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className={totalRemote <= 1 ? "text-center" : gridClass}>
+                          {remoteParticipants.map((p) => {
+                            const emp = employeeMap[p.userId];
+                            const firstName = emp?.firstName || "";
+                            const lastName = emp?.lastName || "";
+                            const initials = `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase() || "?";
+                            const name = [firstName, lastName].filter(Boolean).join(" ") || "Unknown";
+                            return (
+                              <div key={p.userId} className="flex flex-col items-center">
+                                <div className={`relative ${avatarSize} rounded-full bg-gradient-to-br from-[#2563EB] to-[#0EA5E9] flex items-center justify-center mb-3 shadow-[0_0_40px_rgba(37,99,235,0.25)]`}>
+                                  <span className="absolute inset-0 rounded-full border border-white/10 animate-pulse" />
+                                  <span className={`${textSize} font-bold text-white relative z-10`}>{initials}</span>
+                                </div>
+                                <p className={`text-white font-semibold ${nameSize}`}>{name}</p>
+                                <p className="text-[#94A3B8] text-xs mt-0.5">{Math.floor(callDuration / 60)}:{String(callDuration % 60).padStart(2, "0")}</p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
                     {/* Floating emojis overlay for audio calls too */}
                     <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
                       {floatingEmojis.map((e) => (

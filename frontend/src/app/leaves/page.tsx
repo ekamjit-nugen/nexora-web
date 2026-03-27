@@ -460,37 +460,29 @@ export default function LeavesPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-3">
                   {balanceCards.map((card) => {
                     const policyType = leavePolicy?.leavePolicy?.leaveTypes.find((lt: { type: string }) => lt.type === card.key);
+                    const colorName = card.color.includes("blue") ? "blue" : card.color.includes("red") ? "red" : card.color.includes("emerald") ? "emerald" : card.color.includes("violet") ? "violet" : "gray";
                     return (
-                      <Card key={card.key} className="border-0 shadow-sm">
-                        <CardContent className="p-5 flex items-center justify-between">
-                          <div>
-                            <p className="text-[11px] text-[#64748B]">{card.label}</p>
-                            <p className="text-lg font-bold text-[#0F172A] mt-1">
-                              {card.available}
-                              <span className="text-[13px] font-normal text-[#94A3B8]">
-                                /{card.total} annual
-                              </span>
-                            </p>
-                            <p className="text-xs text-[#94A3B8] mt-0.5">{card.used} used</p>
-                            {policyType && leavePolicy && (
-                              <p className="text-[10px] text-[#2E86C1] mt-0.5">
-                                Policy: {leavePolicy.policyName}
-                              </p>
-                            )}
-                          </div>
-                          <div
-                            className={`w-11 h-11 rounded-xl ${card.color} flex items-center justify-center`}
-                          >
-                            <svg
-                              className="w-5 h-5"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              strokeWidth={1.5}
-                            >
+                      <Card key={card.key} className="border-0 shadow-sm relative overflow-hidden">
+                        <div className={`absolute top-0 right-0 w-20 h-20 bg-${colorName}-50 rounded-bl-[60px] -mr-2 -mt-2`} />
+                        <CardContent className="p-5 relative">
+                          <div className={`w-8 h-8 rounded-lg bg-${colorName}-100 flex items-center justify-center mb-3`}>
+                            <svg className={`w-4 h-4 text-${colorName}-600`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                               <path strokeLinecap="round" strokeLinejoin="round" d={card.icon} />
                             </svg>
                           </div>
+                          <p className="text-2xl font-bold text-[#0F172A]">
+                            {card.available}
+                            <span className="text-[13px] font-normal text-[#94A3B8]">
+                              /{card.total} annual
+                            </span>
+                          </p>
+                          <p className="text-[11px] text-[#94A3B8] mt-0.5">{card.label}</p>
+                          <p className="text-xs text-[#94A3B8] mt-0.5">{card.used} used</p>
+                          {policyType && leavePolicy && (
+                            <p className="text-[10px] text-[#2E86C1] mt-0.5">
+                              Policy: {leavePolicy.policyName}
+                            </p>
+                          )}
                         </CardContent>
                       </Card>
                     );

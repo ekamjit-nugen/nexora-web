@@ -49,6 +49,14 @@ export class TaskController {
     return { success: true, message: 'Task stats retrieved', data: stats };
   }
 
+  @Get(':id/children')
+  @UseGuards(JwtAuthGuard)
+  async getChildTasks(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const children = await this.taskService.getChildTasks(id, orgId);
+    return { success: true, message: 'Child tasks retrieved', data: children };
+  }
+
   @Get(':id')
   @UseGuards(JwtAuthGuard)
   async getTask(@Param('id') id: string, @Req() req) {

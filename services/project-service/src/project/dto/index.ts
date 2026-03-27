@@ -100,6 +100,9 @@ export class CreateProjectDto {
   @IsOptional() @IsEnum(['critical', 'high', 'medium', 'low'])
   priority?: string;
 
+  @IsOptional() @IsEnum(['scrum', 'kanban', 'scrumban', 'waterfall', 'xp', 'lean', 'safe', 'custom'])
+  methodology?: string;
+
   @IsOptional() @IsString()
   departmentId?: string;
 
@@ -152,6 +155,9 @@ export class UpdateProjectDto {
 
   @IsOptional() @IsEnum(['critical', 'high', 'medium', 'low'])
   priority?: string;
+
+  @IsOptional() @IsEnum(['scrum', 'kanban', 'scrumban', 'waterfall', 'xp', 'lean', 'safe', 'custom'])
+  methodology?: string;
 
   @IsOptional() @IsString()
   departmentId?: string;

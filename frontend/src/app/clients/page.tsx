@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { ConfirmModal } from "@/components/confirm-modal";
 
 // ── Industry Colors ──
 
@@ -102,6 +103,12 @@ const emptyForm: ClientFormData = {
   contactPersons: [],
 };
 
+const STEPS = [
+  { num: 1, label: "Essentials", desc: "Company & contact" },
+  { num: 2, label: "Billing", desc: "Address & invoicing" },
+  { num: 3, label: "Details", desc: "Extra info" },
+];
+
 function ClientFormModal({
   open,
   onClose,
@@ -116,8 +123,12 @@ function ClientFormModal({
   const isEdit = !!client;
   const [form, setForm] = useState<ClientFormData>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [step, setStep] = useState(0);
+  const [slideDir, setSlideDir] = useState<"left" | "right">("left");
+  const [visible, setVisible] = useState(true);
 
   useEffect(() => {
+    if (open) setStep(0);
     if (client) {
       setForm({
         companyName: client.companyName || "",
@@ -176,18 +187,30 @@ function ClientFormModal({
     setForm(prev => {
       const updated = [...prev.contactPersons];
       updated[idx] = { ...updated[idx], [field]: value };
-      // If setting primary, unset others
       if (field === "isPrimary" && value === true) {
-        updated.forEach((cp, i) => {
-          if (i !== idx) cp.isPrimary = false;
-        });
+        updated.forEach((cp, i) => { if (i !== idx) cp.isPrimary = false; });
       }
       return { ...prev, contactPersons: updated };
     });
   };
 
+  const goTo = (target: number) => {
+    if (target === step || target < 0 || target > 2) return;
+    if (target > step && step === 0 && !form.companyName.trim()) {
+      toast.error("Company name is required");
+      return;
+    }
+    setSlideDir(target > step ? "left" : "right");
+    setVisible(false);
+    setTimeout(() => {
+      setStep(target);
+      setVisible(true);
+    }, 200);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (step < 2) { goTo(step + 1); return; }
 
     if (!form.companyName.trim()) {
       toast.error("Company name is required");
@@ -196,10 +219,7 @@ function ClientFormModal({
 
     setSaving(true);
     try {
-      const tags = form.tags
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
+      const tags = form.tags.split(",").map((s) => s.trim()).filter(Boolean);
 
       const payload: Record<string, unknown> = {
         companyName: form.companyName.trim(),
@@ -237,7 +257,6 @@ function ClientFormModal({
       if (isEdit) {
         await clientApi.updateClient(client._id, payload as Partial<Client>);
 
-        // Sync contact persons: remove all existing, then add new ones
         if (client.contactPersons && client.contactPersons.length > 0) {
           for (let i = client.contactPersons.length - 1; i >= 0; i--) {
             await clientApi.removeContact(client._id, i).catch(() => {});
@@ -258,7 +277,6 @@ function ClientFormModal({
         toast.success("Client updated successfully");
       } else {
         const res = await clientApi.createClient(payload as Partial<Client>);
-        // Add contact persons to newly created client
         const newId = (res.data as Client)?._id;
         if (newId && form.contactPersons.length > 0) {
           for (const cp of form.contactPersons) {
@@ -286,19 +304,25 @@ function ClientFormModal({
     }
   };
 
+  const slideClass = visible
+    ? "translate-x-0 opacity-100"
+    : slideDir === "left"
+    ? "-translate-x-6 opacity-0"
+    : "translate-x-6 opacity-0";
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
 
-      <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-[720px] max-h-[90vh] overflow-y-auto mx-4">
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-[620px] max-h-[90vh] overflow-hidden mx-4 flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-[#F1F5F9]">
+        <div className="flex items-center justify-between px-6 pt-6 pb-4">
           <div>
-            <h2 className="text-xl font-bold text-[#0F172A]">
-              {isEdit ? "Edit Client" : "Add Client"}
+            <h2 className="text-lg font-bold text-[#0F172A]">
+              {isEdit ? "Edit Client" : "Add New Client"}
             </h2>
             <p className="text-[13px] text-[#64748B] mt-0.5">
-              {isEdit ? "Update client information" : "Add a new client to your organization"}
+              Step {step + 1} of 3 — {STEPS[step].desc}
             </p>
           </div>
           <button
@@ -311,320 +335,405 @@ function ClientFormModal({
           </button>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          {/* Company Name & Display Name */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">
-                Company Name <span className="text-red-500">*</span>
-              </Label>
-              <Input
-                value={form.companyName}
-                onChange={(e) => handleChange("companyName", e.target.value)}
-                placeholder="Acme Corp"
-                className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
-                required
-              />
-            </div>
-            <div>
-              <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Display Name</Label>
-              <Input
-                value={form.displayName}
-                onChange={(e) => handleChange("displayName", e.target.value)}
-                placeholder="Acme"
-                className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
-              />
-            </div>
-          </div>
-
-          {/* Industry & Website */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Industry</Label>
-              <select
-                value={form.industry}
-                onChange={(e) => handleChange("industry", e.target.value)}
-                className="w-full h-10 px-3 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] text-sm text-[#334155]"
-              >
-                {industries.map((i) => (
-                  <option key={i} value={i}>
-                    {i.charAt(0).toUpperCase() + i.slice(1)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Website</Label>
-              <Input
-                value={form.website}
-                onChange={(e) => handleChange("website", e.target.value)}
-                placeholder="https://acme.com"
-                className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
-              />
-            </div>
-          </div>
-
-          {/* Primary Contact Person (backward compat) */}
-          <div>
-            <p className="text-[12px] font-semibold text-[#334155] mb-2">Primary Contact</p>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Name</Label>
-                <Input
-                  value={form.contactName}
-                  onChange={(e) => handleChange("contactName", e.target.value)}
-                  placeholder="John Doe"
-                  className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
-                />
-              </div>
-              <div>
-                <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Email</Label>
-                <Input
-                  type="email"
-                  value={form.contactEmail}
-                  onChange={(e) => handleChange("contactEmail", e.target.value)}
-                  placeholder="john@acme.com"
-                  className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
-                />
-              </div>
-              <div>
-                <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Phone</Label>
-                <Input
-                  value={form.contactPhone}
-                  onChange={(e) => handleChange("contactPhone", e.target.value)}
-                  placeholder="+91 98765 43210"
-                  className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
-                />
-              </div>
-              <div>
-                <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Designation</Label>
-                <Input
-                  value={form.contactDesignation}
-                  onChange={(e) => handleChange("contactDesignation", e.target.value)}
-                  placeholder="CTO"
-                  className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Additional Contact Persons */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-[12px] font-semibold text-[#334155]">Additional Contacts</p>
-              <button
-                type="button"
-                onClick={addContactPerson}
-                className="text-[12px] font-medium text-[#2E86C1] hover:text-[#1A5276] flex items-center gap-1"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                Add Contact
-              </button>
-            </div>
-            {form.contactPersons.map((cp, idx) => (
-              <div key={idx} className="border border-[#E2E8F0] rounded-lg p-3 mb-2 bg-[#FAFBFC]">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[11px] font-medium text-[#64748B]">Contact #{idx + 1}</span>
-                  <div className="flex items-center gap-3">
-                    <label className="flex items-center gap-1.5 text-[11px] text-[#475569] cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={cp.isPrimary}
-                        onChange={(e) => updateContactPerson(idx, "isPrimary", e.target.checked)}
-                        className="rounded border-[#CBD5E1]"
-                      />
-                      Primary
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => removeContactPerson(idx)}
-                      className="text-red-400 hover:text-red-600"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <Input
-                    value={cp.name}
-                    onChange={(e) => updateContactPerson(idx, "name", e.target.value)}
-                    placeholder="Name"
-                    className="h-9 text-sm bg-white border-[#E2E8F0] rounded-lg"
-                  />
-                  <Input
-                    type="email"
-                    value={cp.email}
-                    onChange={(e) => updateContactPerson(idx, "email", e.target.value)}
-                    placeholder="Email"
-                    className="h-9 text-sm bg-white border-[#E2E8F0] rounded-lg"
-                  />
-                  <Input
-                    value={cp.phone}
-                    onChange={(e) => updateContactPerson(idx, "phone", e.target.value)}
-                    placeholder="Phone"
-                    className="h-9 text-sm bg-white border-[#E2E8F0] rounded-lg"
-                  />
-                  <Input
-                    value={cp.designation}
-                    onChange={(e) => updateContactPerson(idx, "designation", e.target.value)}
-                    placeholder="Designation"
-                    className="h-9 text-sm bg-white border-[#E2E8F0] rounded-lg"
-                  />
-                </div>
+        {/* Stepper */}
+        <div className="px-6 pb-5">
+          <div className="flex items-center justify-center gap-0">
+            {STEPS.map((s, i) => (
+              <div key={i} className="flex items-center">
+                <button
+                  type="button"
+                  onClick={() => (isEdit || i <= step) && goTo(i)}
+                  className={`relative flex items-center justify-center w-9 h-9 rounded-full text-sm font-semibold transition-all duration-300 ${
+                    i === step
+                      ? "bg-[#2E86C1] text-white shadow-lg shadow-[#2E86C1]/30 scale-110 ring-4 ring-[#2E86C1]/15"
+                      : i < step
+                      ? "bg-emerald-500 text-white shadow-md shadow-emerald-500/20"
+                      : "bg-[#F1F5F9] text-[#94A3B8] border-2 border-[#E2E8F0]"
+                  } ${(isEdit || i <= step) ? "cursor-pointer hover:scale-105" : "cursor-default"}`}
+                >
+                  {i < step ? (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : (
+                    s.num
+                  )}
+                </button>
+                <p className={`ml-2 text-[11px] font-medium transition-colors duration-300 ${
+                  i === step ? "text-[#2E86C1]" : i < step ? "text-emerald-600" : "text-[#94A3B8]"
+                }`}>
+                  {s.label}
+                </p>
+                {i < 2 && (
+                  <div className={`mx-3 w-12 h-[2px] rounded-full transition-colors duration-500 ${
+                    i < step ? "bg-emerald-400" : "bg-[#E2E8F0]"
+                  }`} />
+                )}
               </div>
             ))}
           </div>
+          {/* Progress bar */}
+          <div className="mt-4 h-1 bg-[#F1F5F9] rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-[#2E86C1] to-[#3498DB] rounded-full transition-all duration-500 ease-out"
+              style={{ width: `${((step + 1) / 3) * 100}%` }}
+            />
+          </div>
+        </div>
 
-          {/* Billing Address */}
-          <div>
-            <p className="text-[12px] font-semibold text-[#334155] mb-2">Billing Address</p>
-            <div className="space-y-3">
-              <Input
-                value={form.street}
-                onChange={(e) => handleChange("street", e.target.value)}
-                placeholder="Street address"
-                className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
-              />
-              <div className="grid grid-cols-2 gap-4">
-                <Input
-                  value={form.city}
-                  onChange={(e) => handleChange("city", e.target.value)}
-                  placeholder="City"
-                  className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
-                />
-                <Input
-                  value={form.state}
-                  onChange={(e) => handleChange("state", e.target.value)}
-                  placeholder="State"
-                  className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
-                />
+        {/* Step content */}
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-6">
+          <div className={`transition-all duration-200 ease-in-out ${slideClass}`}>
+
+            {/* ── Step 1: Essentials ── */}
+            {step === 0 && (
+              <div className="space-y-4 pb-2">
+                <div>
+                  <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">
+                    Company Name <span className="text-red-500">*</span>
+                  </Label>
+                  <Input
+                    value={form.companyName}
+                    onChange={(e) => handleChange("companyName", e.target.value)}
+                    placeholder="e.g. Acme Corp"
+                    className="h-11 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                    autoFocus
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Contact Person</Label>
+                    <Input
+                      value={form.contactName}
+                      onChange={(e) => handleChange("contactName", e.target.value)}
+                      placeholder="John Doe"
+                      className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Email</Label>
+                    <Input
+                      type="email"
+                      value={form.contactEmail}
+                      onChange={(e) => handleChange("contactEmail", e.target.value)}
+                      placeholder="john@acme.com"
+                      className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Phone</Label>
+                    <Input
+                      value={form.contactPhone}
+                      onChange={(e) => handleChange("contactPhone", e.target.value)}
+                      placeholder="+91 98765 43210"
+                      className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Currency</Label>
+                    <select
+                      value={form.currency}
+                      onChange={(e) => handleChange("currency", e.target.value)}
+                      className="w-full h-10 px-3 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] text-sm text-[#334155]"
+                    >
+                      <option value="INR">INR (&#8377;)</option>
+                      <option value="USD">USD ($)</option>
+                      <option value="EUR">EUR (&euro;)</option>
+                      <option value="GBP">GBP (&pound;)</option>
+                    </select>
+                  </div>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <Input
-                  value={form.country}
-                  onChange={(e) => handleChange("country", e.target.value)}
-                  placeholder="Country"
-                  className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
-                />
-                <Input
-                  value={form.zip}
-                  onChange={(e) => handleChange("zip", e.target.value)}
-                  placeholder="ZIP / Postal Code"
-                  className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
-                />
+            )}
+
+            {/* ── Step 2: Billing & Invoicing ── */}
+            {step === 1 && (
+              <div className="space-y-4 pb-2">
+                <div>
+                  <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Street Address</Label>
+                  <Input
+                    value={form.street}
+                    onChange={(e) => handleChange("street", e.target.value)}
+                    placeholder="123 Business Ave"
+                    className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                    autoFocus
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">City</Label>
+                    <Input
+                      value={form.city}
+                      onChange={(e) => handleChange("city", e.target.value)}
+                      placeholder="City"
+                      className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">State</Label>
+                    <Input
+                      value={form.state}
+                      onChange={(e) => handleChange("state", e.target.value)}
+                      placeholder="State"
+                      className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Country</Label>
+                    <Input
+                      value={form.country}
+                      onChange={(e) => handleChange("country", e.target.value)}
+                      placeholder="Country"
+                      className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">ZIP / Postal Code</Label>
+                    <Input
+                      value={form.zip}
+                      onChange={(e) => handleChange("zip", e.target.value)}
+                      placeholder="110001"
+                      className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Tax ID (GST/VAT)</Label>
+                    <Input
+                      value={form.taxId}
+                      onChange={(e) => handleChange("taxId", e.target.value)}
+                      placeholder="22AAAAA0000A1Z5"
+                      className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Payment Terms (days)</Label>
+                    <Input
+                      type="number"
+                      value={form.paymentTerms}
+                      onChange={(e) => handleChange("paymentTerms", e.target.value)}
+                      placeholder="30"
+                      className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                    />
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
+            )}
 
-          {/* Tax ID */}
-          <div>
-            <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Tax ID (GST/VAT)</Label>
-            <Input
-              value={form.taxId}
-              onChange={(e) => handleChange("taxId", e.target.value)}
-              placeholder="22AAAAA0000A1Z5"
-              className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
-            />
-          </div>
+            {/* ── Step 3: Additional Details ── */}
+            {step === 2 && (
+              <div className="space-y-4 pb-2">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Display Name</Label>
+                    <Input
+                      value={form.displayName}
+                      onChange={(e) => handleChange("displayName", e.target.value)}
+                      placeholder="Short name"
+                      className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                      autoFocus
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Industry</Label>
+                    <select
+                      value={form.industry}
+                      onChange={(e) => handleChange("industry", e.target.value)}
+                      className="w-full h-10 px-3 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] text-sm text-[#334155]"
+                    >
+                      {industries.map((i) => (
+                        <option key={i} value={i}>{i.charAt(0).toUpperCase() + i.slice(1)}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
 
-          {/* Currency, Payment Terms, Status */}
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Currency</Label>
-              <select
-                value={form.currency}
-                onChange={(e) => handleChange("currency", e.target.value)}
-                className="w-full h-10 px-3 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] text-sm text-[#334155]"
-              >
-                <option value="INR">INR</option>
-                <option value="USD">USD</option>
-                <option value="EUR">EUR</option>
-                <option value="GBP">GBP</option>
-              </select>
-            </div>
-            <div>
-              <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Payment Terms (days)</Label>
-              <Input
-                type="number"
-                value={form.paymentTerms}
-                onChange={(e) => handleChange("paymentTerms", e.target.value)}
-                placeholder="30"
-                className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
-              />
-            </div>
-            <div>
-              <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Status</Label>
-              <select
-                value={form.status}
-                onChange={(e) => handleChange("status", e.target.value)}
-                className="w-full h-10 px-3 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] text-sm text-[#334155]"
-              >
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-                <option value="prospect">Prospect</option>
-              </select>
-            </div>
-          </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Website</Label>
+                    <Input
+                      value={form.website}
+                      onChange={(e) => handleChange("website", e.target.value)}
+                      placeholder="https://acme.com"
+                      className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Contact Designation</Label>
+                    <Input
+                      value={form.contactDesignation}
+                      onChange={(e) => handleChange("contactDesignation", e.target.value)}
+                      placeholder="CTO"
+                      className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                    />
+                  </div>
+                </div>
 
-          {/* Tags */}
-          <div>
-            <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Tags</Label>
-            <Input
-              value={form.tags}
-              onChange={(e) => handleChange("tags", e.target.value)}
-              placeholder="enterprise, recurring, priority (comma-separated)"
-              className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
-            />
-            <p className="text-[11px] text-[#94A3B8] mt-1">Separate tags with commas</p>
-          </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Status</Label>
+                    <select
+                      value={form.status}
+                      onChange={(e) => handleChange("status", e.target.value)}
+                      className="w-full h-10 px-3 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] text-sm text-[#334155]"
+                    >
+                      <option value="active">Active</option>
+                      <option value="inactive">Inactive</option>
+                      <option value="prospect">Prospect</option>
+                    </select>
+                  </div>
+                  <div>
+                    <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Tags</Label>
+                    <Input
+                      value={form.tags}
+                      onChange={(e) => handleChange("tags", e.target.value)}
+                      placeholder="enterprise, priority"
+                      className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                    />
+                  </div>
+                </div>
 
-          {/* Notes */}
-          <div>
-            <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Notes</Label>
-            <textarea
-              value={form.notes}
-              onChange={(e) => handleChange("notes", e.target.value)}
-              placeholder="Additional notes about this client..."
-              rows={3}
-              className="w-full px-3 py-2 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] text-sm text-[#334155] resize-none focus:outline-none focus:ring-2 focus:ring-[#2E86C1]/20 focus:border-[#2E86C1]"
-            />
-          </div>
+                <div>
+                  <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Notes</Label>
+                  <textarea
+                    value={form.notes}
+                    onChange={(e) => handleChange("notes", e.target.value)}
+                    placeholder="Additional notes..."
+                    rows={2}
+                    className="w-full px-3 py-2 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] text-sm text-[#334155] resize-none focus:outline-none focus:ring-2 focus:ring-[#2E86C1]/20 focus:border-[#2E86C1]"
+                  />
+                </div>
 
-          {/* Actions */}
-          <div className="flex items-center justify-end gap-3 pt-2">
-            <Button
-              type="button"
-              onClick={onClose}
-              className="h-10 px-5 rounded-xl text-sm font-medium bg-white text-[#475569] border border-[#E2E8F0] hover:bg-[#F8FAFC]"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={saving}
-              className="h-10 px-5 rounded-xl text-sm font-medium bg-[#2E86C1] hover:bg-[#2471A3] text-white disabled:opacity-50"
-            >
-              {saving ? (
-                <span className="flex items-center gap-2">
-                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Saving...
-                </span>
-              ) : isEdit ? (
-                "Save Changes"
-              ) : (
-                "Add Client"
-              )}
-            </Button>
+                {/* Additional Contact Persons */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[12px] font-semibold text-[#334155]">Additional Contacts</p>
+                    <button
+                      type="button"
+                      onClick={addContactPerson}
+                      className="text-[12px] font-medium text-[#2E86C1] hover:text-[#1A5276] flex items-center gap-1"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                      </svg>
+                      Add
+                    </button>
+                  </div>
+                  {form.contactPersons.map((cp, idx) => (
+                    <div key={idx} className="border border-[#E2E8F0] rounded-lg p-3 mb-2 bg-[#FAFBFC]">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[11px] font-medium text-[#64748B]">Contact #{idx + 1}</span>
+                        <div className="flex items-center gap-3">
+                          <label className="flex items-center gap-1.5 text-[11px] text-[#475569] cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={cp.isPrimary}
+                              onChange={(e) => updateContactPerson(idx, "isPrimary", e.target.checked)}
+                              className="rounded border-[#CBD5E1]"
+                            />
+                            Primary
+                          </label>
+                          <button type="button" onClick={() => removeContactPerson(idx)} className="text-red-400 hover:text-red-600">
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <Input value={cp.name} onChange={(e) => updateContactPerson(idx, "name", e.target.value)} placeholder="Name" className="h-9 text-sm bg-white border-[#E2E8F0] rounded-lg" />
+                        <Input type="email" value={cp.email} onChange={(e) => updateContactPerson(idx, "email", e.target.value)} placeholder="Email" className="h-9 text-sm bg-white border-[#E2E8F0] rounded-lg" />
+                        <Input value={cp.phone} onChange={(e) => updateContactPerson(idx, "phone", e.target.value)} placeholder="Phone" className="h-9 text-sm bg-white border-[#E2E8F0] rounded-lg" />
+                        <Input value={cp.designation} onChange={(e) => updateContactPerson(idx, "designation", e.target.value)} placeholder="Designation" className="h-9 text-sm bg-white border-[#E2E8F0] rounded-lg" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </form>
+
+        {/* Footer buttons */}
+        <div className="flex items-center justify-between px-6 py-4 border-t border-[#F1F5F9] bg-white">
+          <div>
+            {step === 0 ? (
+              <Button
+                type="button"
+                onClick={onClose}
+                className="h-10 px-5 rounded-xl text-sm font-medium bg-white text-[#475569] border border-[#E2E8F0] hover:bg-[#F8FAFC]"
+              >
+                Cancel
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                onClick={() => goTo(step - 1)}
+                className="h-10 px-5 rounded-xl text-sm font-medium bg-white text-[#475569] border border-[#E2E8F0] hover:bg-[#F8FAFC] flex items-center gap-1.5"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                </svg>
+                Back
+              </Button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {step < 2 && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (!form.companyName.trim()) { toast.error("Company name is required"); return; }
+                  setStep(2);
+                  setVisible(true);
+                }}
+                className="text-[12px] font-medium text-[#94A3B8] hover:text-[#64748B] px-3 py-2 transition-colors"
+              >
+                Skip to finish
+              </button>
+            )}
+            {step < 2 ? (
+              <Button
+                type="button"
+                onClick={() => goTo(step + 1)}
+                className="h-10 px-6 rounded-xl text-sm font-medium bg-[#2E86C1] hover:bg-[#2471A3] text-white flex items-center gap-1.5"
+              >
+                Next
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                onClick={handleSubmit as any}
+                disabled={saving}
+                className="h-10 px-6 rounded-xl text-sm font-medium bg-[#2E86C1] hover:bg-[#2471A3] text-white disabled:opacity-50"
+              >
+                {saving ? (
+                  <span className="flex items-center gap-2">
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Saving...
+                  </span>
+                ) : isEdit ? (
+                  "Save Changes"
+                ) : (
+                  "Add Client"
+                )}
+              </Button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -632,60 +741,7 @@ function ClientFormModal({
 
 // ── Delete Confirmation Modal ──
 
-function DeleteModal({
-  open,
-  onClose,
-  onConfirm,
-  clientName,
-  deleting,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
-  clientName: string;
-  deleting: boolean;
-}) {
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-[420px] mx-4 p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center">
-            <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
-            </svg>
-          </div>
-          <div>
-            <h3 className="text-[15px] font-semibold text-[#0F172A]">Delete Client</h3>
-            <p className="text-[13px] text-[#64748B]">This action cannot be undone.</p>
-          </div>
-        </div>
-        <p className="text-[13px] text-[#475569] mb-5">
-          Are you sure you want to delete <span className="font-semibold">{clientName}</span>?
-        </p>
-        <div className="flex justify-end gap-3">
-          <Button
-            type="button"
-            onClick={onClose}
-            className="h-9 px-4 rounded-xl text-sm font-medium bg-white text-[#475569] border border-[#E2E8F0] hover:bg-[#F8FAFC]"
-          >
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            onClick={onConfirm}
-            disabled={deleting}
-            className="h-9 px-4 rounded-xl text-sm font-medium bg-red-500 hover:bg-red-600 text-white disabled:opacity-50"
-          >
-            {deleting ? "Deleting..." : "Delete"}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// DeleteModal replaced by ConfirmModal
 
 // ── Client Detail Panel ──
 
@@ -837,15 +893,6 @@ function ClientDetailPanel({
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={onEdit}
-                className="w-9 h-9 rounded-lg flex items-center justify-center hover:bg-[#EBF5FB] transition-colors text-[#2E86C1]"
-                title="Edit"
-              >
-                <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-              </button>
               <button
                 onClick={onClose}
                 className="w-9 h-9 rounded-lg flex items-center justify-center hover:bg-[#F1F5F9] transition-colors text-[#94A3B8]"
@@ -1111,96 +1158,25 @@ function ClientDetailPanel({
 
           {/* Projects Tab */}
           {activeTab === "projects" && (
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-[13px] font-semibold text-[#334155]">Linked Projects</h3>
-                <button
-                  onClick={() => setShowProjectPicker(!showProjectPicker)}
-                  className="text-[12px] font-medium text-[#2E86C1] hover:text-[#1A5276] flex items-center gap-1"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                  </svg>
-                  Link Project
-                </button>
+            <div className="text-center py-10">
+              <div className="w-14 h-14 rounded-full bg-[#EBF5FB] flex items-center justify-center mx-auto mb-4">
+                <svg className="w-7 h-7 text-[#2E86C1]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
               </div>
-
-              {/* Project Picker Dropdown */}
-              {showProjectPicker && (
-                <div className="border border-[#E2E8F0] rounded-lg p-3 mb-4 bg-[#FAFBFC]">
-                  <p className="text-[12px] font-medium text-[#475569] mb-2">Select a project to link:</p>
-                  {availableProjects.length === 0 ? (
-                    <p className="text-[13px] text-[#94A3B8] py-2">No projects available to link.</p>
-                  ) : (
-                    <div className="max-h-[200px] overflow-y-auto space-y-1">
-                      {availableProjects.map(p => (
-                        <button
-                          key={p._id}
-                          onClick={() => handleLinkProject(p._id)}
-                          className="w-full text-left px-3 py-2 rounded-lg hover:bg-[#EBF5FB] transition-colors flex items-center justify-between group"
-                        >
-                          <div>
-                            <p className="text-[13px] font-medium text-[#0F172A]">{p.projectName}</p>
-                            <p className="text-[11px] text-[#94A3B8]">{p.status} - {p.category || "General"}</p>
-                          </div>
-                          <svg className="w-4 h-4 text-[#2E86C1] opacity-0 group-hover:opacity-100 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                          </svg>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {loadingProjects ? (
-                <div className="flex justify-center py-10">
-                  <svg className="animate-spin h-6 w-6 text-[#2E86C1]" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                </div>
-              ) : projects.length === 0 ? (
-                <div className="text-center py-10">
-                  <div className="w-12 h-12 rounded-full bg-[#F1F5F9] flex items-center justify-center mx-auto mb-3">
-                    <svg className="w-6 h-6 text-[#94A3B8]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                    </svg>
-                  </div>
-                  <p className="text-sm text-[#64748B]">No projects linked yet</p>
-                  <p className="text-[12px] text-[#94A3B8] mt-1">Link projects to track work for this client</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {projects.map(p => (
-                    <div key={p._id} className="flex items-center justify-between p-3 bg-[#F8FAFC] rounded-lg hover:bg-[#F1F5F9] transition-colors">
-                      <div>
-                        <p className="text-[13px] font-medium text-[#0F172A]">{p.projectName}</p>
-                        <div className="flex items-center gap-3 mt-0.5">
-                          <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${
-                            p.status === "active" ? "bg-emerald-50 text-emerald-700" :
-                            p.status === "completed" ? "bg-blue-50 text-blue-700" :
-                            "bg-gray-100 text-gray-600"
-                          }`}>
-                            {p.status}
-                          </span>
-                          <span className="text-[11px] text-[#94A3B8]">{p.progressPercentage}% complete</span>
-                          {p.team && <span className="text-[11px] text-[#94A3B8]">{p.team.length} members</span>}
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => handleUnlinkProject(p._id)}
-                        className="text-red-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition-colors"
-                        title="Unlink project"
-                      >
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                        </svg>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <p className="text-sm font-medium text-[#334155]">Projects coming soon</p>
+              <p className="text-[12px] text-[#94A3B8] mt-1 max-w-[260px] mx-auto">
+                Project management is being redesigned. You&apos;ll be able to link projects to this client here.
+              </p>
+              <button
+                onClick={() => window.location.href = "/dashboard"}
+                className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-medium text-[#2E86C1] bg-[#EBF5FB] hover:bg-[#D4E9F7] transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                Create Project
+              </button>
             </div>
           )}
 
@@ -1277,7 +1253,11 @@ export default function ClientsPage() {
       setLoading(true);
       const params: Record<string, string> = {};
       if (search) params.search = search;
-      if (filterStatus) params.status = filterStatus;
+      if (filterStatus === "deleted") {
+        params.showDeleted = "true";
+      } else if (filterStatus) {
+        params.status = filterStatus;
+      }
 
       const [clientsRes, statsRes] = await Promise.all([
         clientApi.getClients(params),
@@ -1393,67 +1373,110 @@ export default function ClientsPage() {
         {/* Page Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-xl font-bold text-[#0F172A]">Clients</h1>
+            <h1 className="text-2xl font-bold text-[#0F172A]">Clients</h1>
             <p className="text-[13px] text-[#64748B] mt-1">
               Manage your organization&apos;s client relationships
             </p>
           </div>
-          {canManageClients && (
-            <Button
-              onClick={openAddModal}
-              className="h-11 bg-[#2E86C1] hover:bg-[#2471A3] text-white font-medium px-5 rounded-xl text-[15px]"
-            >
-              <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-              Add Client
-            </Button>
-          )}
+          <div className="flex items-center gap-3">
+            {stats.prospects > 0 && (
+              <div className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+                <svg className="w-4 h-4 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
+                <span className="text-xs font-medium text-amber-700">{stats.prospects} prospect{stats.prospects !== 1 ? 's' : ''}</span>
+              </div>
+            )}
+            {canManageClients && (
+              <Button
+                onClick={openAddModal}
+                className="h-11 bg-[#2E86C1] hover:bg-[#2471A3] text-white font-medium px-5 rounded-xl text-[15px] shadow-sm"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                Add Client
+              </Button>
+            )}
+          </div>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          {[
-            {
-              label: "Total Clients",
-              value: stats.total,
-              icon: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4",
-              color: "text-blue-600 bg-blue-50",
-            },
-            {
-              label: "Active",
-              value: stats.active,
-              icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z",
-              color: "text-emerald-600 bg-emerald-50",
-            },
-            {
-              label: "Total Revenue",
-              value: `${clients.reduce((sum, c) => sum + (c.totalRevenue || 0), 0).toLocaleString()}`,
-              icon: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
-              color: "text-violet-600 bg-violet-50",
-            },
-            {
-              label: "Outstanding",
-              value: `${clients.reduce((sum, c) => sum + (c.outstandingAmount || 0), 0).toLocaleString()}`,
-              icon: "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6",
-              color: "text-amber-600 bg-amber-50",
-            },
-          ].map((stat) => (
-            <Card key={stat.label} className="border-0 shadow-sm">
-              <CardContent className="p-5 flex items-center justify-between">
-                <div>
-                  <p className="text-[11px] text-[#64748B]">{stat.label}</p>
-                  <p className="text-lg font-bold text-[#0F172A] mt-1">{stat.value}</p>
-                </div>
-                <div className={`w-11 h-11 rounded-xl ${stat.color} flex items-center justify-center`}>
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d={stat.icon} />
-                  </svg>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        {/* Stats — Enhanced */}
+        {(() => {
+          const totalRevenue = clients.reduce((sum, c) => sum + (c.totalRevenue || 0), 0);
+          const totalOutstanding = clients.reduce((sum, c) => sum + (c.outstandingAmount || 0), 0);
+          const avgRevenue = stats.total > 0 ? Math.round(totalRevenue / stats.total) : 0;
+          const industryBreakdown = clients.reduce((acc, c) => { acc[c.industry || 'other'] = (acc[c.industry || 'other'] || 0) + 1; return acc; }, {} as Record<string, number>);
+          const topIndustry = Object.entries(industryBreakdown).sort((a, b) => b[1] - a[1])[0];
+          return (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                <Card className="border-0 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-20 h-20 bg-blue-50 rounded-bl-[60px] -mr-2 -mt-2" />
+                  <CardContent className="p-5 relative">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
+                        <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                      </div>
+                      <span className="text-xs font-medium text-[#64748B] uppercase tracking-wide">Total Clients</span>
+                    </div>
+                    <p className="text-2xl font-bold text-[#0F172A]">{stats.total}</p>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span className="text-[11px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 font-medium">{stats.active} active</span>
+                      <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 font-medium">{stats.prospects} prospects</span>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-0 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-20 h-20 bg-violet-50 rounded-bl-[60px] -mr-2 -mt-2" />
+                  <CardContent className="p-5 relative">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center">
+                        <svg className="w-4 h-4 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8V7m0 10v1" /></svg>
+                      </div>
+                      <span className="text-xs font-medium text-[#64748B] uppercase tracking-wide">Total Revenue</span>
+                    </div>
+                    <p className="text-2xl font-bold text-[#0F172A]">{totalRevenue.toLocaleString()}</p>
+                    <p className="text-[11px] text-[#94A3B8] mt-1">Avg per client: {avgRevenue.toLocaleString()}</p>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-0 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-20 h-20 bg-amber-50 rounded-bl-[60px] -mr-2 -mt-2" />
+                  <CardContent className="p-5 relative">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center">
+                        <svg className="w-4 h-4 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      </div>
+                      <span className="text-xs font-medium text-[#64748B] uppercase tracking-wide">Outstanding</span>
+                    </div>
+                    <p className="text-2xl font-bold text-amber-600">{totalOutstanding.toLocaleString()}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-amber-500 rounded-full transition-all" style={{ width: `${totalRevenue > 0 ? Math.min(100, Math.round((totalOutstanding / totalRevenue) * 100)) : 0}%` }} />
+                      </div>
+                      <span className="text-[11px] font-medium text-amber-600">{totalRevenue > 0 ? Math.round((totalOutstanding / totalRevenue) * 100) : 0}%</span>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-0 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-20 h-20 bg-emerald-50 rounded-bl-[60px] -mr-2 -mt-2" />
+                  <CardContent className="p-5 relative">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center">
+                        <svg className="w-4 h-4 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      </div>
+                      <span className="text-xs font-medium text-[#64748B] uppercase tracking-wide">Top Industry</span>
+                    </div>
+                    <p className="text-2xl font-bold text-[#0F172A] capitalize">{topIndustry ? topIndustry[0] : '—'}</p>
+                    <p className="text-[11px] text-[#94A3B8] mt-1">{topIndustry ? `${topIndustry[1]} client${topIndustry[1] !== 1 ? 's' : ''}` : 'No clients yet'} &middot; {Object.keys(industryBreakdown).length} industries</p>
+                  </CardContent>
+                </Card>
+              </div>
+
+            </>
+          );
+        })()}
 
         {/* Filters */}
         <Card className="border-0 shadow-sm mb-6">
@@ -1479,6 +1502,7 @@ export default function ClientsPage() {
                 <option value="active">Active</option>
                 <option value="inactive">Inactive</option>
                 <option value="prospect">Prospect</option>
+                <option value="deleted">Deleted</option>
               </select>
             </div>
           </CardContent>
@@ -1580,15 +1604,15 @@ export default function ClientsPage() {
                       </div>
                     )}
 
-                    {/* Revenue & Payment Terms */}
-                    <div className="flex items-center gap-4 text-[13px] mb-3">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[#94A3B8]">Revenue:</span>
-                        <span className="text-[#334155] font-medium">{client.currency} {(client.totalRevenue || 0).toLocaleString()}</span>
+                    {/* Revenue & Outstanding */}
+                    <div className="grid grid-cols-2 gap-2 mb-3">
+                      <div className="bg-[#F8FAFC] rounded-lg px-2.5 py-1.5">
+                        <span className="text-[10px] text-[#94A3B8] uppercase">Revenue</span>
+                        <p className="text-[13px] font-semibold text-[#0F172A]">{client.currency} {(client.totalRevenue || 0).toLocaleString()}</p>
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[#94A3B8]">Terms:</span>
-                        <span className="text-[#334155] font-medium">{client.paymentTerms}d</span>
+                      <div className="bg-[#F8FAFC] rounded-lg px-2.5 py-1.5">
+                        <span className="text-[10px] text-[#94A3B8] uppercase">Outstanding</span>
+                        <p className={`text-[13px] font-semibold ${(client.outstandingAmount || 0) > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{client.currency} {(client.outstandingAmount || 0).toLocaleString()}</p>
                       </div>
                     </div>
 
@@ -1623,9 +1647,29 @@ export default function ClientsPage() {
                           </svg>
                           Edit
                         </button>
+                        <select
+                          value={client.status}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={async (e) => {
+                            e.stopPropagation();
+                            const newStatus = e.target.value;
+                            try {
+                              await clientApi.updateClient(client._id, { status: newStatus } as any);
+                              toast.success(`Status changed to ${newStatus}`);
+                              fetchData();
+                            } catch (err) {
+                              toast.error(err instanceof Error ? err.message : "Failed to update status");
+                            }
+                          }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-[12px] font-medium px-2 py-1.5 rounded-lg border border-[#E2E8F0] bg-white text-[#475569] cursor-pointer hover:border-[#2E86C1]"
+                        >
+                          <option value="active">Active</option>
+                          <option value="inactive">Inactive</option>
+                          <option value="prospect">Prospect</option>
+                        </select>
                         <button
                           onClick={(e) => { e.stopPropagation(); openDeleteModal(client); }}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1.5 text-[12px] font-medium text-red-500 hover:text-red-700 px-2.5 py-1.5 rounded-lg hover:bg-red-50"
+                          className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1.5 text-[12px] font-medium text-red-500 hover:text-red-700 px-2.5 py-1.5 rounded-lg hover:bg-red-50 ml-auto"
                         >
                           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -1657,15 +1701,17 @@ export default function ClientsPage() {
       />
 
       {/* Delete Confirmation Modal */}
-      <DeleteModal
+      <ConfirmModal
         open={deleteModalOpen}
-        onClose={() => {
+        title="Delete Client"
+        message={`Are you sure you want to delete "${deletingClient?.companyName || ""}"? This action cannot be undone.`}
+        variant="danger"
+        confirmLabel={deleting ? "Deleting..." : "Delete"}
+        onConfirm={handleDelete}
+        onCancel={() => {
           setDeleteModalOpen(false);
           setDeletingClient(null);
         }}
-        onConfirm={handleDelete}
-        clientName={deletingClient?.companyName || ""}
-        deleting={deleting}
       />
 
       {/* Client Detail Panel */}

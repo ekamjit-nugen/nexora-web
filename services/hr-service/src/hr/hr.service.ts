@@ -16,7 +16,7 @@ import {
   CreateTeamDto, UpdateTeamDto,
   CreateClientDto, UpdateClientDto, ClientQueryDto,
   ClientContactPersonDto, LinkProjectDto,
-  CreateInvoiceDto, UpdateInvoiceDto, InvoiceQueryDto, SendInvoiceDto, MarkPaidDto,
+  CreateInvoiceDto, UpdateInvoiceDto, UpdateInvoiceStatusDto, InvoiceQueryDto, SendInvoiceDto, MarkPaidDto,
   CreateInvoiceTemplateDto,
   CreateCallLogDto, UpdateCallLogDto, CallLogQueryDto,
 } from './dto/index';
@@ -441,9 +441,9 @@ export class HrService {
   }
 
   async getClients(query: ClientQueryDto, orgId?: string) {
-    const { search, status, industry, page = 1, limit = 20, sort = '-createdAt' } = query;
+    const { search, status, industry, showDeleted, page = 1, limit = 20, sort = '-createdAt' } = query;
 
-    const filter: any = { isDeleted: false };
+    const filter: any = showDeleted ? { isDeleted: true } : { isDeleted: false };
     if (orgId) filter.organizationId = orgId;
     if (status) filter.status = status;
     if (industry) filter.industry = industry;
@@ -818,12 +818,12 @@ export class HrService {
 
   private async generateInvoiceNumber(orgId?: string): Promise<string> {
     const year = new Date().getFullYear();
-    const filter: any = { isDeleted: false, invoiceNumber: { $regex: `^INV-${year}-` } };
+    const filter: any = { invoiceNumber: { $regex: `^INV-${year}-` } };
     if (orgId) filter.organizationId = orgId;
 
     const lastInvoice = await this.invoiceModel
       .findOne(filter)
-      .sort({ invoiceNumber: -1 })
+      .sort({ createdAt: -1, invoiceNumber: -1 })
       .select('invoiceNumber')
       .lean();
 
@@ -831,6 +831,13 @@ export class HrService {
     if (lastInvoice) {
       const parts = lastInvoice.invoiceNumber.split('-');
       seq = parseInt(parts[2], 10) + 1;
+    }
+
+    // Ensure uniqueness by checking for existing invoice with this number
+    const candidate = `INV-${year}-${String(seq).padStart(4, '0')}`;
+    const exists = await this.invoiceModel.findOne({ organizationId: orgId, invoiceNumber: candidate }).lean();
+    if (exists) {
+      seq++;
     }
 
     return `INV-${year}-${String(seq).padStart(4, '0')}`;
@@ -948,6 +955,25 @@ export class HrService {
     await existing.save();
     this.logger.log(`Invoice soft-deleted: ${existing.invoiceNumber}`);
     return { message: 'Invoice deleted successfully' };
+  }
+
+  async updateInvoiceStatus(id: string, dto: UpdateInvoiceStatusDto, userId: string, orgId?: string) {
+    const filter: any = { _id: id, isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+
+    const invoice = await this.invoiceModel.findOne(filter);
+    if (!invoice) throw new NotFoundException('Invoice not found');
+
+    // If marking as paid, set amountPaid = total and balanceDue = 0
+    const updateData: any = { status: dto.status, updatedBy: userId };
+    if (dto.status === 'paid') {
+      updateData.amountPaid = invoice.total;
+      updateData.balanceDue = 0;
+    }
+
+    const updated = await this.invoiceModel.findOneAndUpdate(filter, updateData, { new: true });
+    this.logger.log(`Invoice ${updated.invoiceNumber} status changed to ${dto.status}`);
+    return updated;
   }
 
   async sendInvoice(id: string, dto: SendInvoiceDto, orgId?: string) {

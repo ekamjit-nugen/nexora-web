@@ -33,6 +33,7 @@ export interface IUser extends Document {
     microsoft?: { id: string; email: string };
     saml?: { id: string; email: string };
   };
+  isPlatformAdmin: boolean;
   preferences?: Record<string, unknown>;
   otp?: string;
   otpExpiresAt?: Date;
@@ -167,6 +168,11 @@ export const UserSchema = new Schema<IUser>(
         id: String,
         email: String,
       },
+    },
+    isPlatformAdmin: {
+      type: Boolean,
+      default: false,
+      index: true,
     },
     preferences: {
       type: Schema.Types.Mixed,

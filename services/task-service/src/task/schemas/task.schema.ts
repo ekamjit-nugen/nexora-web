@@ -23,6 +23,7 @@ export interface IAttachment {
 
 export interface ITask extends Document {
   organizationId?: string;
+  taskKey?: string;
   title: string;
   description?: string;
   projectId: string;
@@ -43,6 +44,7 @@ export interface ITask extends Document {
   boardId?: string;
   sprintId?: string;
   columnId?: string;
+  statusHistory?: Array<{ status: string; changedAt: Date; changedBy?: string }>;
   isDeleted: boolean;
   deletedAt?: Date;
   createdBy: string;
@@ -54,6 +56,7 @@ export interface ITask extends Document {
 export const TaskSchema = new Schema<ITask>(
   {
     organizationId: { type: String, default: null, index: true },
+    taskKey: { type: String, default: null, index: true },
     title: { type: String, required: true, trim: true },
     description: { type: String, default: null },
     projectId: { type: String, required: true, index: true },
@@ -107,6 +110,11 @@ export const TaskSchema = new Schema<ITask>(
     boardId: { type: String, default: null, index: true },
     sprintId: { type: String, default: null },
     columnId: { type: String, default: null },
+    statusHistory: [{
+      status: { type: String },
+      changedAt: { type: Date, default: Date.now },
+      changedBy: { type: String },
+    }],
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date, default: null },
     createdBy: { type: String, required: true },

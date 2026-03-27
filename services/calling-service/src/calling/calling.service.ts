@@ -82,6 +82,30 @@ export class CallingService {
     return call;
   }
 
+  async inviteToCall(callId: string, inviterId: string, inviteeId: string) {
+    const call = await this.callModel.findOne({ callId });
+    if (!call) {
+      throw new NotFoundException(`Call ${callId} not found`);
+    }
+
+    if (!call.participantIds.includes(inviterId)) {
+      throw new ForbiddenException('You are not a participant in this call');
+    }
+
+    if (['ended', 'rejected', 'missed'].includes(call.status)) {
+      throw new BadRequestException(`Cannot invite to a call with status: ${call.status}`);
+    }
+
+    // Add invitee to participantIds if not already there
+    if (!call.participantIds.includes(inviteeId)) {
+      call.participantIds.push(inviteeId);
+      await call.save();
+    }
+
+    this.logger.log(`User ${inviteeId} invited to call ${callId} by ${inviterId}`);
+    return call;
+  }
+
   async rejectCall(callId: string, userId: string, reason?: string) {
     const call = await this.callModel.findOne({ callId });
     if (!call) {
@@ -102,6 +126,23 @@ export class CallingService {
     await call.save();
 
     this.logger.log(`Call rejected: ${callId} by ${userId}, reason: ${reason}`);
+    return call;
+  }
+
+  async leaveCall(callId: string, userId: string) {
+    const call = await this.callModel.findOne({ callId });
+    if (!call) {
+      throw new NotFoundException(`Call ${callId} not found`);
+    }
+
+    // Mark participant as left
+    const participant = call.participants.find(p => p.userId === userId);
+    if (participant) {
+      participant.leftAt = new Date();
+    }
+    await call.save();
+
+    this.logger.log(`User ${userId} left call ${callId}`);
     return call;
   }
 

@@ -11,6 +11,9 @@ import { OrganizationSchema } from './auth/schemas/organization.schema';
 import { OrgMembershipSchema } from './auth/schemas/org-membership.schema';
 import { OrganizationController } from './auth/organization.controller';
 import { OrganizationService } from './auth/organization.service';
+import { PlatformAdminController } from './auth/platform-admin.controller';
+import { PlatformAdminService } from './auth/platform-admin.service';
+import { AuditLogSchema } from './auth/schemas/audit-log.schema';
 import { JwtStrategy } from './auth/strategies/jwt.strategy';
 import { GoogleStrategy } from './auth/strategies/google.strategy';
 import { MicrosoftStrategy } from './auth/strategies/microsoft.strategy';
@@ -40,6 +43,7 @@ import { HealthModule } from './health/health.module';
       { name: 'Role', schema: RoleSchema },
       { name: 'Organization', schema: OrganizationSchema },
       { name: 'OrgMembership', schema: OrgMembershipSchema },
+      { name: 'AuditLog', schema: AuditLogSchema },
     ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
@@ -54,10 +58,11 @@ import { HealthModule } from './health/health.module';
     }),
     HealthModule,
   ],
-  controllers: [AuthController, OrganizationController],
+  controllers: [AuthController, OrganizationController, PlatformAdminController],
   providers: [
     AuthService,
     OrganizationService,
+    PlatformAdminService,
     JwtStrategy,
     GoogleStrategy,
     MicrosoftStrategy,

@@ -194,6 +194,14 @@ export default function LoginPage() {
 
       const userOrgs: Organization[] = data?.orgs || [];
 
+      // Platform admin — skip org flow entirely
+      const tokenPayload = data?.tokens?.accessToken ? JSON.parse(atob(data.tokens.accessToken.split('.')[1])) : null;
+      if (tokenPayload?.isPlatformAdmin) {
+        toast.success("Welcome, Platform Admin!");
+        window.location.href = "/platform";
+        return;
+      }
+
       if (data?.isNewUser) {
         toast.success("Welcome! Let's get you set up.");
         setPhase("welcome-splash");

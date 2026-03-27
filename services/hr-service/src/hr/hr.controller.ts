@@ -13,7 +13,7 @@ import {
   CreateClientDto, UpdateClientDto, ClientQueryDto,
   ClientContactPersonDto, LinkProjectDto,
   CreateCallLogDto, UpdateCallLogDto, CallLogQueryDto,
-  CreateInvoiceDto, UpdateInvoiceDto, InvoiceQueryDto, SendInvoiceDto, MarkPaidDto,
+  CreateInvoiceDto, UpdateInvoiceDto, UpdateInvoiceStatusDto, InvoiceQueryDto, SendInvoiceDto, MarkPaidDto,
   CreateInvoiceTemplateDto,
 } from './dto/index';
 
@@ -418,5 +418,12 @@ export class HrController {
   async markInvoicePaid(@Param('id') id: string, @Body() dto: MarkPaidDto, @Req() req) {
     const invoice = await this.hrService.markAsPaid(id, dto, req.user?.organizationId);
     return { success: true, message: 'Payment recorded successfully', data: invoice };
+  }
+
+  @Put('invoices/:id/status')
+  @UseGuards(JwtAuthGuard)
+  async updateInvoiceStatus(@Param('id') id: string, @Body() dto: UpdateInvoiceStatusDto, @Req() req) {
+    const invoice = await this.hrService.updateInvoiceStatus(id, dto, req.user.userId, req.user?.organizationId);
+    return { success: true, message: 'Invoice status updated', data: invoice };
   }
 }

@@ -14,6 +14,8 @@ const SERVICES = {
   hr: process.env.HR_SERVICE_URL || 'http://hr-service:3010',
   attendance: process.env.ATTENDANCE_SERVICE_URL || 'http://attendance-service:3011',
   leave: process.env.LEAVE_SERVICE_URL || 'http://leave-service:3012',
+  project: process.env.PROJECT_SERVICE_URL || 'http://project-service:3020',
+  task: process.env.TASK_SERVICE_URL || 'http://task-service:3021',
   ai: process.env.AI_SERVICE_URL || 'http://ai-service:3080',
   chat: process.env.CHAT_SERVICE_URL || 'http://chat-service:3002',
   calling: process.env.CALLING_SERVICE_URL || 'http://calling-service:3051',
@@ -22,12 +24,15 @@ const SERVICES = {
 
 // Route map: path prefix -> service URL
 const ROUTES: Array<{ paths: string[]; target: string; name: string }> = [
+  { paths: ['/api/v1/platform'], target: SERVICES.auth, name: 'auth-service' },
   { paths: ['/api/v1/auth'], target: SERVICES.auth, name: 'auth-service' },
   { paths: ['/api/v1/employees', '/api/v1/departments', '/api/v1/designations', '/api/v1/teams', '/api/v1/clients', '/api/v1/invoices'], target: SERVICES.hr, name: 'hr-service' },
   { paths: ['/api/v1/attendance', '/api/v1/shifts', '/api/v1/alerts'], target: SERVICES.attendance, name: 'attendance-service' },
   { paths: ['/api/v1/policies'], target: SERVICES.policy, name: 'policy-service' },
   { paths: ['/api/v1/leaves', '/api/v1/leave-policies'], target: SERVICES.leave, name: 'leave-service' },
-  { paths: ['/api/v1/calls'], target: SERVICES.calling, name: 'calling-service' },
+  { paths: ['/api/v1/projects'], target: SERVICES.project, name: 'project-service' },
+  { paths: ['/api/v1/tasks', '/api/v1/boards', '/api/v1/sprints', '/api/v1/timesheets'], target: SERVICES.task, name: 'task-service' },
+  { paths: ['/api/v1/calls', '/api/v1/meetings'], target: SERVICES.calling, name: 'calling-service' },
   { paths: ['/api/v1/ai'], target: SERVICES.ai, name: 'ai-service' },
   { paths: ['/api/v1/chat'], target: SERVICES.chat, name: 'chat-service' },
 ];
@@ -95,7 +100,7 @@ app.get('/health', async (_req, res) => {
 });
 
 // SSE/Stream endpoint - bypass proxy, pipe directly
-app.post('/api/v1/ai/chat/stream', express.json(), async (req: any, res: any) => {
+app.post('/api/v1/ai/chat/stream', express.json({ limit: '5mb' }), async (req: any, res: any) => {
   try {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');

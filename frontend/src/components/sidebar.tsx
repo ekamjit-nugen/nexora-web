@@ -1,12 +1,14 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { useAuth } from "@/lib/auth-context";
-import type { User } from "@/lib/api";
+import { projectApi } from "@/lib/api";
+import type { User, Project } from "@/lib/api";
 
 interface SidebarProps {
   user: User;
@@ -43,6 +45,13 @@ const navSections: NavSection[] = [
     ],
   },
   {
+    title: "WORK",
+    items: [
+      { label: "Projects", href: "/projects", icon: "M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" },
+      { label: "Tasks", href: "/tasks", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" },
+    ],
+  },
+  {
     title: "TIME & ATTENDANCE",
     items: [
       { label: "Attendance", href: "/attendance", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" },
@@ -60,9 +69,8 @@ const navSections: NavSection[] = [
     title: "FINANCE",
     roles: ["admin", "super_admin", "hr", "manager"],
     items: [
-      { label: "Invoices", href: "/invoices", icon: "M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" },
-      { label: "Expenses", href: "#", icon: "M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" },
       { label: "Clients", href: "/clients", icon: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" },
+      { label: "Invoices", href: "/invoices", icon: "M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" },
     ],
   },
   {
@@ -80,11 +88,31 @@ function hasRequiredRole(userRoles: string[], requiredRoles?: string[]): boolean
   return userRoles.some((r) => requiredRoles.includes(r));
 }
 
+const platformSection: NavSection = {
+  title: "PLATFORM",
+  items: [
+    { label: "Platform Dashboard", href: "/platform", icon: "M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm0 8a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zm10 0a1 1 0 011-1h4a1 1 0 011 1v6a1 1 0 01-1 1h-4a1 1 0 01-1-1v-6z" },
+    { label: "Organizations", href: "/platform/organizations", icon: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" },
+    { label: "All Users", href: "/platform/users", icon: "M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" },
+    { label: "Analytics", href: "/platform/analytics", icon: "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" },
+    { label: "Audit Logs", href: "/platform/audit-logs", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" },
+  ],
+};
+
 export function Sidebar({ user, onLogout }: SidebarProps) {
   const pathname = usePathname();
-  const { currentOrg, organizations, switchOrg } = useAuth();
+  const { currentOrg, organizations, switchOrg, isPlatformAdmin } = useAuth();
   const initials = `${user.firstName?.[0] || ""}${user.lastName?.[0] || ""}`.toUpperCase();
   const userRoles = user.roles || [];
+
+  // Fetch all projects for board shortcuts
+  const [projects, setProjects] = useState<Project[]>([]);
+
+  useEffect(() => {
+    projectApi.getAll().then((res) => {
+      setProjects(Array.isArray(res.data) ? res.data : []);
+    }).catch(() => {});
+  }, []);
 
   // Filter sections and items based on user roles
   const visibleSections = navSections
@@ -118,6 +146,37 @@ export function Sidebar({ user, onLogout }: SidebarProps) {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+        {/* Platform Admin Section */}
+        {isPlatformAdmin && (
+          <div>
+            <p className="px-3 mb-1.5 text-[10px] font-semibold text-amber-500 uppercase tracking-wider flex items-center gap-1.5">
+              {platformSection.title}
+              <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-bold">ADMIN</span>
+            </p>
+            <div className="space-y-0.5">
+              {platformSection.items.map((item) => {
+                const active = pathname === item.href || (item.href !== "/platform" && pathname.startsWith(item.href));
+                return (
+                  <Link
+                    key={item.label}
+                    href={item.href}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors ${
+                      active
+                        ? "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                        : "text-[var(--sidebar-text,#64748B)] hover:bg-amber-50/50 hover:text-amber-700 dark:hover:bg-amber-900/20"
+                    }`}
+                  >
+                    <svg className="w-[18px] h-[18px] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
+                    </svg>
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </div>
+            <div className="mt-3 mb-1 border-b border-[var(--sidebar-border,#E2E8F0)]" />
+          </div>
+        )}
         {visibleSections.map((section) => (
           <div key={section.title}>
             <p className="px-3 mb-1.5 text-[10px] font-semibold text-[var(--sidebar-section-text,#94A3B8)] uppercase tracking-wider">
@@ -125,7 +184,7 @@ export function Sidebar({ user, onLogout }: SidebarProps) {
             </p>
             <div className="space-y-0.5">
               {section.items.map((item) => {
-                const active = pathname === item.href;
+                const active = pathname === item.href || (item.href === "/projects" && pathname.startsWith("/projects"));
                 return (
                   <Link
                     key={item.label}
@@ -143,6 +202,44 @@ export function Sidebar({ user, onLogout }: SidebarProps) {
                   </Link>
                 );
               })}
+              {/* Project Boards */}
+              {section.title === "WORK" && projects.length > 0 && (
+                <>
+                  <p className="px-3 mt-3 mb-1 text-[9px] font-semibold text-[var(--sidebar-section-text,#94A3B8)] uppercase tracking-wider">Boards</p>
+                  {projects.slice(0, 3).map((proj) => {
+                    const active = pathname === `/projects/${proj._id}`;
+                    return (
+                      <Link
+                        key={proj._id}
+                        href={`/projects/${proj._id}`}
+                        className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors ${
+                          active
+                            ? "bg-[var(--sidebar-active-bg)] text-[var(--sidebar-text-active,#2E86C1)]"
+                            : "text-[var(--sidebar-text,#64748B)] hover:bg-[var(--sidebar-hover,#F1F5F9)] hover:text-[var(--sidebar-text-active,#334155)]"
+                        }`}
+                      >
+                        <div className={`w-5 h-5 rounded flex items-center justify-center text-[9px] font-bold shrink-0 ${
+                          active ? "bg-[var(--primary-hex,#2E86C1)] text-white" : "bg-[var(--sidebar-hover,#F1F5F9)] text-[var(--sidebar-text,#64748B)]"
+                        }`}>
+                          {proj.projectKey?.slice(0, 2) || proj.projectName?.charAt(0)?.toUpperCase()}
+                        </div>
+                        <span className="truncate">{proj.projectName}</span>
+                      </Link>
+                    );
+                  })}
+                  {projects.length > 3 && (
+                    <Link
+                      href="/projects"
+                      className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[11px] font-medium text-[var(--sidebar-text,#64748B)] hover:bg-[var(--sidebar-hover,#F1F5F9)] hover:text-[var(--sidebar-text-active,#334155)] transition-colors"
+                    >
+                      <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      View all ({projects.length})
+                    </Link>
+                  )}
+                </>
+              )}
             </div>
           </div>
         ))}

@@ -14,6 +14,7 @@ export interface IProject extends Document {
   actualEndDate?: Date;
   status: string;
   priority: string;
+  methodology?: string;
   departmentId?: string;
   budget?: {
     amount: number;
@@ -117,6 +118,11 @@ export const ProjectSchema = new Schema<IProject>(
       enum: ['critical', 'high', 'medium', 'low'],
       default: 'medium',
       index: true,
+    },
+    methodology: {
+      type: String,
+      enum: ['scrum', 'kanban', 'scrumban', 'waterfall', 'xp', 'lean', 'safe', 'custom'],
+      default: null,
     },
     departmentId: { type: String, default: null, index: true },
     budget: {

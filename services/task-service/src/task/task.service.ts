@@ -22,14 +22,24 @@ export class TaskService {
   ) {}
 
   async createTask(dto: CreateTaskDto, userId: string, orgId?: string) {
+    // Auto-generate task key like IMT-1, IMT-2
+    let taskKey: string | undefined;
+    if (dto.projectKey || dto.projectId) {
+      const prefix = dto.projectKey || dto.projectId.slice(-4).toUpperCase();
+      const count = await this.taskModel.countDocuments({ projectId: dto.projectId });
+      taskKey = `${prefix}-${count + 1}`;
+    }
+
+    const { projectKey: _pk, ...taskData } = dto as any;
     const task = new this.taskModel({
-      ...dto,
+      ...taskData,
+      taskKey,
       reporterId: userId,
       createdBy: userId,
       ...(orgId && { organizationId: orgId }),
     });
     await task.save();
-    this.logger.log(`Task created: ${task._id} - ${dto.title}`);
+    this.logger.log(`Task created: ${task.taskKey || task._id} - ${dto.title}`);
     return task;
   }
 
@@ -184,14 +194,41 @@ export class TaskService {
   async updateStatus(taskId: string, dto: UpdateStatusDto, userId: string, orgId?: string) {
     const filter: any = { _id: taskId, isDeleted: false };
     if (orgId) filter.organizationId = orgId;
+
+    // Check if status is actually changing
+    const existingTask = await this.taskModel.findOne(filter);
+    if (!existingTask) throw new NotFoundException('Task not found');
+
+    const updateOps: any = { status: dto.status, updatedBy: userId };
+    if (dto.status !== existingTask.status) {
+      // Push to statusHistory when status changes
+      const task = await this.taskModel.findOneAndUpdate(
+        filter,
+        {
+          $set: { status: dto.status, updatedBy: userId },
+          $push: { statusHistory: { status: dto.status, changedAt: new Date(), changedBy: userId } },
+        },
+        { new: true },
+      );
+      if (!task) throw new NotFoundException('Task not found');
+      this.logger.log(`Task ${taskId} status changed to ${dto.status}`);
+      return task;
+    }
+
     const task = await this.taskModel.findOneAndUpdate(
       filter,
-      { status: dto.status, updatedBy: userId },
+      updateOps,
       { new: true },
     );
     if (!task) throw new NotFoundException('Task not found');
     this.logger.log(`Task ${taskId} status changed to ${dto.status}`);
     return task;
+  }
+
+  async getChildTasks(taskId: string, orgId?: string) {
+    const filter: any = { parentTaskId: taskId };
+    if (orgId) filter.organizationId = orgId;
+    return this.taskModel.find(filter).sort({ type: 1, createdAt: 1 });
   }
 
   // ── Timesheet Methods ──

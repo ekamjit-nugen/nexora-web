@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "Nexora",
+    "slug": "nexora-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "nexora",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#2E86C1"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "io.nexora.mobile"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#2E86C1"
+      },
+      "package": "io.nexora.mobile"
+    },
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-local-authentication",
+      "expo-asset",
+      "expo-font"
+    ]
+  }
+}

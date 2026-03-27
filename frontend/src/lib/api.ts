@@ -54,6 +54,7 @@ export interface User {
   roles: string[];
   isActive: boolean;
   mfaEnabled: boolean;
+  isPlatformAdmin?: boolean;
   createdAt: string;
 }
 
@@ -814,6 +815,11 @@ export interface Invoice {
   brandName?: string;
   brandLogo?: string;
   brandAddress?: string;
+  isRecurring?: boolean;
+  recurringInterval?: string;
+  recurringEmail?: string;
+  recurringNextDate?: string;
+  recurringEndDate?: string;
   isDeleted: boolean;
   createdBy?: string;
   updatedBy?: string;
@@ -874,10 +880,310 @@ export const invoiceApi = {
     request<Invoice>(`/invoices/${id}/send`, { method: "POST", body: JSON.stringify(data) }),
   markPaid: (id: string, data: { amount: number; paymentMethod?: string; paymentNotes?: string }) =>
     request<Invoice>(`/invoices/${id}/mark-paid`, { method: "POST", body: JSON.stringify(data) }),
+  updateStatus: (id: string, status: string) =>
+    request<Invoice>(`/invoices/${id}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
   getStats: () => request<InvoiceStats>("/invoices/stats"),
   getTemplates: () => request<InvoiceTemplate[]>("/invoices/templates"),
   createTemplate: (data: Partial<InvoiceTemplate>) =>
     request<InvoiceTemplate>("/invoices/templates", { method: "POST", body: JSON.stringify(data) }),
   deleteTemplate: (id: string) =>
     request(`/invoices/templates/${id}`, { method: "DELETE" }),
+};
+
+// ── Project API ──
+
+export interface Project {
+  _id: string;
+  projectName: string;
+  projectKey: string;
+  description?: string;
+  category?: string;
+  status: 'planning' | 'active' | 'on_hold' | 'completed' | 'cancelled';
+  priority?: string;
+  methodology?: string;
+  startDate?: string;
+  endDate?: string;
+  team: Array<{ userId: string; role: string; name?: string; email?: string; avatar?: string; allocation?: number }>;
+  milestones?: Array<{ _id?: string; title: string; targetDate: string; status: string; description?: string }>;
+  budget?: { amount?: number; currency?: string; billingType?: string; spent?: number };
+  settings?: {
+    boardType?: 'scrum' | 'kanban' | 'custom';
+    sprintDuration?: number;
+    estimationUnit?: 'hours' | 'story_points';
+    enableTimeTracking?: boolean;
+    enableSubtasks?: boolean;
+    enableEpics?: boolean;
+    enableSprints?: boolean;
+  };
+  healthScore?: number;
+  progressPercentage?: number;
+  createdBy?: string;
+  organizationId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export const projectApi = {
+  getAll: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request<Project[]>(`/projects${qs}`);
+  },
+  getById: (id: string) => request<Project>(`/projects/${id}`),
+  create: (data: Partial<Project>) =>
+    request<Project>("/projects", { method: "POST", body: JSON.stringify(data) }),
+  update: (id: string, data: Partial<Project>) =>
+    request<Project>(`/projects/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  delete: (id: string) =>
+    request(`/projects/${id}`, { method: "DELETE" }),
+  getMyProjects: () => request<Project[]>("/projects/my"),
+  getStats: () => request<any>("/projects/stats"),
+  getDashboard: (id: string) => request<any>(`/projects/${id}/dashboard`),
+  addTeamMember: (id: string, data: { userId: string; role: string }) =>
+    request<Project>(`/projects/${id}/team`, { method: "POST", body: JSON.stringify(data) }),
+  removeTeamMember: (id: string, userId: string) =>
+    request(`/projects/${id}/team/${userId}`, { method: "DELETE" }),
+  archive: (id: string) =>
+    request<Project>(`/projects/${id}/archive`, { method: "POST" }),
+};
+
+// ── Task API ──
+
+export interface Task {
+  _id: string;
+  taskKey?: string;
+  title: string;
+  description?: string;
+  projectId: string;
+  type: 'epic' | 'story' | 'task' | 'sub_task' | 'bug' | 'improvement' | 'spike';
+  status: 'backlog' | 'todo' | 'in_progress' | 'in_review' | 'blocked' | 'done' | 'cancelled';
+  priority: 'critical' | 'high' | 'medium' | 'low' | 'trivial';
+  assigneeId?: string;
+  reporterId?: string;
+  parentTaskId?: string;
+  boardId?: string;
+  columnId?: string;
+  sprintId?: string;
+  storyPoints?: number;
+  estimatedHours?: number;
+  loggedHours?: number;
+  dueDate?: string;
+  labels?: string[];
+  comments?: Array<{ _id?: string; userId: string; content: string; createdAt: string }>;
+  attachments?: Array<{ name: string; url: string }>;
+  organizationId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export const taskApi = {
+  getAll: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request<Task[]>(`/tasks${qs}`);
+  },
+  getById: (id: string) => request<Task>(`/tasks/${id}`),
+  create: (data: Partial<Task>) =>
+    request<Task>("/tasks", { method: "POST", body: JSON.stringify(data) }),
+  update: (id: string, data: Partial<Task>) =>
+    request<Task>(`/tasks/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  delete: (id: string) =>
+    request(`/tasks/${id}`, { method: "DELETE" }),
+  getMyTasks: () => request<Task[]>("/tasks/my"),
+  getStats: () => request<any>("/tasks/stats"),
+  updateStatus: (id: string, status: string) =>
+    request<Task>(`/tasks/${id}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
+  addComment: (id: string, content: string) =>
+    request<Task>(`/tasks/${id}/comments`, { method: "POST", body: JSON.stringify({ content }) }),
+  logTime: (id: string, data: { hours: number; date: string; description?: string }) =>
+    request<Task>(`/tasks/${id}/time-entries`, { method: "POST", body: JSON.stringify(data) }),
+  getChildren: (id: string) => request<Task[]>(`/tasks/${id}/children`),
+};
+
+// ── Board API ──
+
+export interface BoardColumn {
+  _id?: string;
+  id?: string;
+  name: string;
+  key: string;
+  order: number;
+  wipLimit?: number;
+  statusMapping?: string;
+  color?: string;
+  isDoneColumn?: boolean;
+  isStartColumn?: boolean;
+  isCollapsed?: boolean;
+}
+
+export interface Board {
+  _id: string;
+  name: string;
+  description?: string;
+  projectId: string;
+  type: 'scrum' | 'kanban' | 'bug_tracker' | 'custom';
+  columns: BoardColumn[];
+  isDefault?: boolean;
+  organizationId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export const boardApi = {
+  getByProject: (projectId: string) => request<Board[]>(`/boards/project/${projectId}`),
+  getById: (id: string) => request<Board>(`/boards/${id}`),
+  create: (data: Partial<Board>) =>
+    request<Board>("/boards", { method: "POST", body: JSON.stringify(data) }),
+  createFromTemplate: (data: { projectId: string; template: string }) =>
+    request<Board>("/boards/from-template", { method: "POST", body: JSON.stringify(data) }),
+  update: (id: string, data: Partial<Board>) =>
+    request<Board>(`/boards/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  delete: (id: string) =>
+    request(`/boards/${id}`, { method: "DELETE" }),
+  getTemplates: () => request<any[]>("/boards/templates"),
+  addColumn: (id: string, data: Partial<BoardColumn>) =>
+    request<Board>(`/boards/${id}/columns`, { method: "POST", body: JSON.stringify(data) }),
+  updateColumn: (id: string, columnId: string, data: Partial<BoardColumn>) =>
+    request<Board>(`/boards/${id}/columns/${columnId}`, { method: "PUT", body: JSON.stringify(data) }),
+  removeColumn: (id: string, columnId: string) =>
+    request<Board>(`/boards/${id}/columns/${columnId}`, { method: "DELETE" }),
+  reorderColumns: (id: string, columnIds: string[]) =>
+    request<Board>(`/boards/${id}/columns/reorder`, { method: "PUT", body: JSON.stringify({ columnIds }) }),
+};
+
+// ── Sprint API ──
+
+export interface Sprint {
+  _id: string;
+  name: string;
+  boardId: string;
+  projectId: string;
+  goal?: string;
+  startDate?: string;
+  endDate?: string;
+  status: 'planning' | 'active' | 'completed';
+  taskIds?: string[];
+  velocity?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export const sprintApi = {
+  getByBoard: (boardId: string) => request<Sprint[]>(`/sprints/board/${boardId}`),
+  getActive: (boardId: string) => request<Sprint>(`/sprints/board/${boardId}/active`),
+  getById: (id: string) => request<Sprint>(`/sprints/${id}`),
+  create: (data: Partial<Sprint>) =>
+    request<Sprint>("/sprints", { method: "POST", body: JSON.stringify(data) }),
+  update: (id: string, data: Partial<Sprint>) =>
+    request<Sprint>(`/sprints/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  start: (id: string) =>
+    request<Sprint>(`/sprints/${id}/start`, { method: "POST" }),
+  complete: (id: string, data?: { moveToBacklog?: boolean }) =>
+    request<Sprint>(`/sprints/${id}/complete`, { method: "POST", body: JSON.stringify(data || {}) }),
+  addTasks: (id: string, taskIds: string[]) =>
+    request<Sprint>(`/sprints/${id}/tasks`, { method: "POST", body: JSON.stringify({ taskIds }) }),
+  removeTask: (id: string, taskId: string) =>
+    request(`/sprints/${id}/tasks/${taskId}`, { method: "DELETE" }),
+  getDetails: (id: string) => request<any>(`/sprints/${id}/details`),
+  getBurndown: (id: string) => request<any>(`/sprints/${id}/burndown`),
+};
+
+// ── Platform Admin API ──
+
+// ── Meeting API ──
+
+export interface Meeting {
+  _id: string;
+  meetingId: string;
+  title: string;
+  description?: string;
+  scheduledAt: string;
+  durationMinutes: number;
+  hostId: string;
+  hostName: string;
+  participantIds: string[];
+  participants: {
+    userId?: string;
+    displayName: string;
+    isAnonymous: boolean;
+    joinedAt?: string;
+    leftAt?: string;
+    audioEnabled: boolean;
+    videoEnabled: boolean;
+  }[];
+  status: "scheduled" | "active" | "ended" | "cancelled";
+  recordingEnabled: boolean;
+  isRecording: boolean;
+  recordingStartedAt?: string;
+  transcript: {
+    speakerId: string;
+    speakerName: string;
+    text: string;
+    timestamp: string;
+  }[];
+  startedAt?: string;
+  endedAt?: string;
+  sprintId?: string;
+  organizationId: string;
+  createdAt: string;
+}
+
+export const meetingApi = {
+  schedule: (data: {
+    title: string;
+    description?: string;
+    scheduledAt: string | Date;
+    durationMinutes?: number;
+    participantIds?: string[];
+    recordingEnabled?: boolean;
+    sprintId?: string;
+  }) =>
+    request<Meeting>("/meetings", { method: "POST", body: JSON.stringify(data) }),
+
+  list: (params?: { status?: string; sprintId?: string }) => {
+    const qs = params ? "?" + new URLSearchParams(params as Record<string, string>).toString() : "";
+    return request<Meeting[]>(`/meetings${qs}`);
+  },
+
+  get: (meetingId: string) => request<Meeting>(`/meetings/${meetingId}`),
+
+  getPublic: (meetingId: string) =>
+    request<Partial<Meeting>>(`/meetings/${meetingId}/public`),
+
+  update: (meetingId: string, data: Partial<Meeting>) =>
+    request<Meeting>(`/meetings/${meetingId}`, { method: "PUT", body: JSON.stringify(data) }),
+
+  start: (meetingId: string) =>
+    request<Meeting>(`/meetings/${meetingId}/start`, { method: "POST" }),
+
+  end: (meetingId: string) =>
+    request<Meeting>(`/meetings/${meetingId}/end`, { method: "POST" }),
+
+  cancel: (meetingId: string) =>
+    request(`/meetings/${meetingId}`, { method: "DELETE" }),
+
+  toggleRecording: (meetingId: string, start: boolean) =>
+    request<Meeting>(`/meetings/${meetingId}/recording`, { method: "POST", body: JSON.stringify({ start }) }),
+
+  getTranscript: (meetingId: string) =>
+    request<Meeting["transcript"]>(`/meetings/${meetingId}/transcript`),
+
+  getBySprint: (sprintId: string) =>
+    request<Meeting[]>(`/meetings/sprint/${sprintId}`),
+};
+
+export const platformApi = {
+  getOrganizations: (params?: { page?: number; limit?: number; search?: string; status?: string }) =>
+    request<any[]>(`/platform/organizations?${new URLSearchParams(Object.entries(params || {}).filter(([_, v]) => v != null).map(([k, v]) => [k, String(v)])).toString()}`),
+  getOrganization: (id: string) => request<any>(`/platform/organizations/${id}`),
+  suspendOrganization: (id: string) => request<any>(`/platform/organizations/${id}/suspend`, { method: 'POST' }),
+  activateOrganization: (id: string) => request<any>(`/platform/organizations/${id}/activate`, { method: 'POST' }),
+  updateOrganizationPlan: (id: string, plan: string) => request<any>(`/platform/organizations/${id}/plan`, { method: 'PUT', body: JSON.stringify({ plan }) }),
+  getUsers: (params?: { page?: number; limit?: number; search?: string }) =>
+    request<any[]>(`/platform/users?${new URLSearchParams(Object.entries(params || {}).filter(([_, v]) => v != null).map(([k, v]) => [k, String(v)])).toString()}`),
+  getUser: (id: string) => request<any>(`/platform/users/${id}`),
+  disableUser: (id: string) => request<any>(`/platform/users/${id}/disable`, { method: 'POST' }),
+  enableUser: (id: string) => request<any>(`/platform/users/${id}/enable`, { method: 'POST' }),
+  resetUserAuth: (id: string) => request<any>(`/platform/users/${id}/reset-auth`, { method: 'POST' }),
+  getAnalytics: () => request<any>('/platform/analytics'),
+  getAuditLogs: (params?: { page?: number; limit?: number; action?: string; targetType?: string }) =>
+    request<any[]>(`/platform/audit-logs?${new URLSearchParams(Object.entries(params || {}).filter(([_, v]) => v != null).map(([k, v]) => [k, String(v)])).toString()}`),
 };

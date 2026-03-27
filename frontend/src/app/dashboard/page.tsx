@@ -192,9 +192,55 @@ export default function DashboardPage() {
         </div>
 
         {/* Stat cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
-          <StatCard title="Team Members" value="1" icon="users" color="bg-violet-50 text-violet-600" />
-          <StatCard title="Pending Approvals" value="0" icon="clock" color="bg-amber-50 text-amber-600" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <Card className="border-0 shadow-sm relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-20 h-20 bg-violet-50 rounded-bl-[60px] -mr-2 -mt-2" />
+            <CardContent className="p-5 relative">
+              <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center mb-3">
+                <svg className="w-4 h-4 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+              </div>
+              <p className="text-2xl font-bold text-[#0F172A]">1</p>
+              <p className="text-[11px] text-[#94A3B8] mt-0.5">Team Members</p>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-20 h-20 bg-amber-50 rounded-bl-[60px] -mr-2 -mt-2" />
+            <CardContent className="p-5 relative">
+              <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center mb-3">
+                <svg className="w-4 h-4 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <p className="text-2xl font-bold text-[#0F172A]">0</p>
+              <p className="text-[11px] text-[#94A3B8] mt-0.5">Pending Approvals</p>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-20 h-20 bg-blue-50 rounded-bl-[60px] -mr-2 -mt-2" />
+            <CardContent className="p-5 relative">
+              <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center mb-3">
+                <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+              </div>
+              <p className="text-2xl font-bold text-[#0F172A]">0</p>
+              <p className="text-[11px] text-[#94A3B8] mt-0.5">Active Projects</p>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-20 h-20 bg-emerald-50 rounded-bl-[60px] -mr-2 -mt-2" />
+            <CardContent className="p-5 relative">
+              <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center mb-3">
+                <svg className="w-4 h-4 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <p className="text-2xl font-bold text-[#0F172A]">0</p>
+              <p className="text-[11px] text-[#94A3B8] mt-0.5">Tasks Due Today</p>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Main content cards */}
@@ -394,32 +440,5 @@ export default function DashboardPage() {
         )}
       </main>
     </div>
-  );
-}
-
-function StatCard({ title, value, icon, color }: { title: string; value: string; icon: string; color: string }) {
-  const icons: Record<string, string> = {
-    folder: "M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z",
-    check: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z",
-    users: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z",
-    clock: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z",
-  };
-
-  return (
-    <Card className="border-0 shadow-sm">
-      <CardContent className="p-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-[11px] text-[#64748B] mb-1">{title}</p>
-            <p className="text-lg font-bold text-[#0F172A]">{value}</p>
-          </div>
-          <div className={`w-11 h-11 rounded-xl ${color} flex items-center justify-center`}>
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d={icons[icon]} />
-            </svg>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
   );
 }

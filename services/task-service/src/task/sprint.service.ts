@@ -180,4 +180,87 @@ export class SprintService {
     const sprint = await this.sprintModel.findOne({ boardId, status: 'active' });
     return sprint;
   }
+
+  async getSprintDetails(sprintId: string) {
+    const sprint = await this.sprintModel.findById(sprintId);
+    if (!sprint) throw new NotFoundException('Sprint not found');
+
+    const tasks = await this.taskModel.find({ sprintId: sprintId });
+    const done = tasks.filter(t => t.status === 'done');
+    const totalPoints = tasks.reduce((s, t) => s + (t.storyPoints || 0), 0);
+    const donePoints = done.reduce((s, t) => s + (t.storyPoints || 0), 0);
+
+    // Get velocity context (last 5 completed sprints on same board)
+    const completedSprints = await this.sprintModel.find({
+      boardId: sprint.boardId,
+      status: 'completed',
+    }).sort({ updatedAt: -1 }).limit(5);
+
+    const velocities = completedSprints.map(s => ({
+      name: s.name,
+      velocity: s.velocity || 0,
+      id: s._id,
+    }));
+    const avgVelocity = velocities.length > 0
+      ? Math.round(velocities.reduce((s, v) => s + v.velocity, 0) / velocities.length)
+      : 0;
+
+    return {
+      sprint,
+      tasks,
+      stats: {
+        totalTasks: tasks.length,
+        doneTasks: done.length,
+        totalPoints,
+        donePoints,
+        byStatus: {
+          backlog: tasks.filter(t => t.status === 'backlog').length,
+          todo: tasks.filter(t => t.status === 'todo').length,
+          in_progress: tasks.filter(t => t.status === 'in_progress').length,
+          in_review: tasks.filter(t => t.status === 'in_review').length,
+          blocked: tasks.filter(t => t.status === 'blocked').length,
+          done: done.length,
+        },
+      },
+      velocity: { current: sprint.velocity || donePoints, history: velocities, average: avgVelocity },
+    };
+  }
+
+  async getSprintBurndown(sprintId: string) {
+    const sprint = await this.sprintModel.findById(sprintId);
+    if (!sprint) throw new NotFoundException('Sprint not found');
+
+    const tasks = await this.taskModel.find({ sprintId });
+    const totalPoints = tasks.reduce((s, t) => s + (t.storyPoints || 0), 0);
+
+    if (!sprint.startDate || !sprint.endDate) {
+      return { totalPoints, dataPoints: [], idealLine: [] };
+    }
+
+    const start = new Date(sprint.startDate);
+    const end = new Date(sprint.endDate);
+    const now = new Date();
+    const totalDays = Math.ceil((end.getTime() - start.getTime()) / 86400000);
+
+    // Build daily data points
+    const dataPoints = [];
+    const idealLine = [];
+    for (let i = 0; i <= totalDays; i++) {
+      const day = new Date(start);
+      day.setDate(day.getDate() + i);
+
+      idealLine.push({ day: i, date: day.toISOString().split('T')[0], points: Math.round(totalPoints * (1 - i / totalDays)) });
+
+      if (day <= now) {
+        // Count done tasks whose updatedAt is before this day's end
+        const dayEnd = new Date(day);
+        dayEnd.setHours(23, 59, 59, 999);
+        const doneByDay = tasks.filter(t => t.status === 'done' && new Date(t.updatedAt) <= dayEnd);
+        const donePoints = doneByDay.reduce((s, t) => s + (t.storyPoints || 0), 0);
+        dataPoints.push({ day: i, date: day.toISOString().split('T')[0], remaining: totalPoints - donePoints });
+      }
+    }
+
+    return { totalPoints, dataPoints, idealLine };
+  }
 }

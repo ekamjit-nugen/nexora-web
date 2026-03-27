@@ -145,6 +145,7 @@ export class AuthService {
       lastName: user.lastName,
       roles: user.roles,
       organizationId: orgId || user.defaultOrganizationId || null,
+      isPlatformAdmin: user.isPlatformAdmin || false,
     };
 
     const jwtExpiry = process.env.JWT_EXPIRY || '7d';

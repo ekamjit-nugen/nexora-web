@@ -12,6 +12,7 @@ interface AuthState {
   organizations: Organization[];
   needsOrgSelection: boolean;
   needsOnboarding: boolean;
+  isPlatformAdmin: boolean;
   login: (email: string, password: string) => Promise<{ needsOrgSelection: boolean }>;
   register: (data: { email: string; password: string; firstName: string; lastName: string }) => Promise<void>;
   logout: () => Promise<void>;
@@ -174,7 +175,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await fetchOrgs();
   };
 
-  const needsOnboarding = Boolean(user && currentOrg && currentOrg.onboardingCompleted === false);
+  const isPlatformAdmin = user?.isPlatformAdmin === true;
+  const needsOnboarding = Boolean(user && currentOrg && currentOrg.onboardingCompleted === false && !isPlatformAdmin);
 
   const handleSetCurrentOrg = (org: Organization | null) => {
     setCurrentOrg(org);
@@ -195,6 +197,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         organizations,
         needsOrgSelection,
         needsOnboarding,
+        isPlatformAdmin,
         login,
         register,
         logout,

@@ -409,21 +409,24 @@ export default function AttendancePage() {
             )}
 
             {/* Stats */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
               {[
-                { label: "Present", value: stats.present, color: "text-emerald-600 bg-emerald-50" },
-                { label: "Late", value: stats.late, color: "text-amber-600 bg-amber-50" },
-                { label: "Absent", value: stats.absent, color: "text-red-600 bg-red-50" },
-                { label: "WFH", value: stats.wfh, color: "text-blue-600 bg-blue-50" },
-                { label: "Pending Approvals", value: stats.pendingApprovals, color: "text-violet-600 bg-violet-50" },
+                { label: "Present", value: stats.present, colorName: "emerald", icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" },
+                { label: "Late", value: stats.late, colorName: "amber", icon: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" },
+                { label: "Absent", value: stats.absent, colorName: "red", icon: "M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" },
+                { label: "WFH", value: stats.wfh, colorName: "blue", icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" },
+                { label: "Pending Approvals", value: stats.pendingApprovals, colorName: "violet", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" },
               ].map(s => (
-                <Card key={s.label} className="border-0 shadow-sm">
-                  <CardContent className="p-3.5 flex items-center justify-between">
-                    <div>
-                      <p className="text-[11px] text-[#64748B]">{s.label}</p>
-                      <p className="text-base font-bold text-[#0F172A]">{s.value}</p>
+                <Card key={s.label} className="border-0 shadow-sm relative overflow-hidden">
+                  <div className={`absolute top-0 right-0 w-20 h-20 bg-${s.colorName}-50 rounded-bl-[60px] -mr-2 -mt-2`} />
+                  <CardContent className="p-5 relative">
+                    <div className={`w-8 h-8 rounded-lg bg-${s.colorName}-100 flex items-center justify-center mb-3`}>
+                      <svg className={`w-4 h-4 text-${s.colorName}-600`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d={s.icon} />
+                      </svg>
                     </div>
-                    <div className={`w-9 h-9 rounded-lg ${s.color} flex items-center justify-center text-xs font-bold`}>{s.value}</div>
+                    <p className="text-2xl font-bold text-[#0F172A]">{s.value}</p>
+                    <p className="text-[11px] text-[#94A3B8] mt-0.5">{s.label}</p>
                   </CardContent>
                 </Card>
               ))}

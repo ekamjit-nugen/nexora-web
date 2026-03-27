@@ -382,6 +382,9 @@ export class ClientQueryDto {
   @IsOptional() @IsEnum(['active', 'inactive', 'prospect'])
   status?: string;
 
+  @IsOptional()
+  showDeleted?: boolean;
+
   @IsOptional() @IsEnum(['technology', 'finance', 'healthcare', 'education', 'retail', 'manufacturing', 'media', 'consulting', 'other'])
   industry?: string;
 
@@ -472,6 +475,24 @@ export class CreateInvoiceDto {
 
   @IsOptional() @IsString()
   brandAddress?: string;
+
+  @IsOptional() @IsString()
+  signature?: string;
+
+  @IsOptional() @IsBoolean()
+  isRecurring?: boolean;
+
+  @IsOptional() @IsEnum(['weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'])
+  recurringInterval?: string;
+
+  @IsOptional() @IsString()
+  recurringEmail?: string;
+
+  @IsOptional() @IsDateString()
+  recurringNextDate?: string;
+
+  @IsOptional() @IsDateString()
+  recurringEndDate?: string;
 }
 
 export class UpdateInvoiceDto {
@@ -529,6 +550,32 @@ export class UpdateInvoiceDto {
 
   @IsOptional() @IsString()
   brandAddress?: string;
+
+  @IsOptional() @IsString()
+  signature?: string;
+
+  @IsOptional() @IsBoolean()
+  isRecurring?: boolean;
+
+  @IsOptional() @IsEnum(['weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'])
+  recurringInterval?: string;
+
+  @IsOptional() @IsString()
+  recurringEmail?: string;
+
+  @IsOptional() @IsDateString()
+  recurringNextDate?: string;
+
+  @IsOptional() @IsDateString()
+  recurringEndDate?: string;
+
+  @IsOptional() @IsEnum(['draft', 'sent', 'partially_paid', 'paid', 'overdue', 'cancelled'])
+  status?: string;
+}
+
+export class UpdateInvoiceStatusDto {
+  @IsEnum(['draft', 'sent', 'partially_paid', 'paid', 'overdue', 'cancelled'])
+  status: string;
 }
 
 export class InvoiceQueryDto {

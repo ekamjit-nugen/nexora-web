@@ -39,6 +39,12 @@ export interface IInvoice extends Document {
   brandName?: string;
   brandLogo?: string;
   brandAddress?: string;
+  signature?: string;
+  isRecurring: boolean;
+  recurringInterval?: string;
+  recurringEmail?: string;
+  recurringNextDate?: Date;
+  recurringEndDate?: Date;
   isDeleted: boolean;
   createdBy?: string;
   updatedBy?: string;
@@ -97,6 +103,16 @@ export const InvoiceSchema = new Schema<IInvoice>(
     brandName: { type: String, default: null },
     brandLogo: { type: String, default: null },
     brandAddress: { type: String, default: null },
+    signature: { type: String, default: null },
+    isRecurring: { type: Boolean, default: false },
+    recurringInterval: {
+      type: String,
+      enum: ['weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'],
+      default: null,
+    },
+    recurringEmail: { type: String, default: null },
+    recurringNextDate: { type: Date, default: null },
+    recurringEndDate: { type: Date, default: null },
     isDeleted: { type: Boolean, default: false },
     createdBy: { type: String, default: null },
     updatedBy: { type: String, default: null },

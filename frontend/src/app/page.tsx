@@ -5,20 +5,20 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 
 export default function Home() {
-  const { user, loading, needsOnboarding } = useAuth();
+  const { user, loading, isPlatformAdmin, organizations } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (!loading) {
       if (!user) {
         router.push("/login");
-      } else if (needsOnboarding) {
-        router.push("/onboarding");
+      } else if (isPlatformAdmin && organizations.length === 0) {
+        router.push("/platform");
       } else {
         router.push("/dashboard");
       }
     }
-  }, [user, loading, needsOnboarding, router]);
+  }, [user, loading, isPlatformAdmin, organizations, router]);
 
   return (
     <div className="min-h-screen flex items-center justify-center">

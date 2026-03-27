@@ -38,6 +38,20 @@ export class SprintController {
     return { success: true, message: sprint ? 'Active sprint retrieved' : 'No active sprint', data: sprint };
   }
 
+  @Get(':id/details')
+  @UseGuards(JwtAuthGuard)
+  async getSprintDetails(@Param('id') id: string) {
+    const details = await this.sprintService.getSprintDetails(id);
+    return { success: true, message: 'Sprint details retrieved', data: details };
+  }
+
+  @Get(':id/burndown')
+  @UseGuards(JwtAuthGuard)
+  async getSprintBurndown(@Param('id') id: string) {
+    const burndown = await this.sprintService.getSprintBurndown(id);
+    return { success: true, message: 'Burndown data retrieved', data: burndown };
+  }
+
   @Get(':id')
   @UseGuards(JwtAuthGuard)
   async getSprint(@Param('id') id: string) {

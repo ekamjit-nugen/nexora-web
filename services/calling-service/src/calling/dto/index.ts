@@ -88,3 +88,88 @@ export class CallHistoryQueryDto {
   @IsOptional()
   page: number = 1;
 }
+
+// ── Meeting DTOs ──
+
+export class ScheduleMeetingDto {
+  @IsString()
+  title: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsString()
+  scheduledAt: string;
+
+  @IsOptional()
+  @IsNumber()
+  durationMinutes?: number = 60;
+
+  @IsOptional()
+  @IsArray()
+  participantIds?: string[] = [];
+
+  @IsOptional()
+  @IsBoolean()
+  recordingEnabled?: boolean = false;
+
+  @IsOptional()
+  @IsString()
+  sprintId?: string;
+}
+
+export class UpdateMeetingDto {
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  scheduledAt?: string;
+
+  @IsOptional()
+  @IsNumber()
+  durationMinutes?: number;
+
+  @IsOptional()
+  @IsArray()
+  participantIds?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  recordingEnabled?: boolean;
+}
+
+export class JoinMeetingAnonymousDto {
+  @IsString()
+  displayName: string;
+}
+
+export class AddTranscriptDto {
+  @IsString()
+  text: string;
+
+  @IsString()
+  speakerName: string;
+}
+
+export class MeetingQueryDto {
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @IsOptional()
+  @IsString()
+  sprintId?: string;
+
+  @IsOptional()
+  limit?: number;
+
+  @IsOptional()
+  page?: number;
+}

@@ -37,6 +37,22 @@ export class CreateTaskDto {
 
   @IsOptional() @IsNumber()
   estimatedHours?: number;
+
+  @IsOptional()
+  @IsEnum(['backlog', 'todo', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled'])
+  status?: string;
+
+  @IsOptional() @IsString()
+  boardId?: string;
+
+  @IsOptional() @IsString()
+  columnId?: string;
+
+  @IsOptional() @IsString()
+  sprintId?: string;
+
+  @IsOptional() @IsString()
+  projectKey?: string;
 }
 
 export class UpdateTaskDto {
