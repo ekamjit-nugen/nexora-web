@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { ConfirmModal } from "@/components/confirm-modal";
+import { RouteGuard } from "@/components/route-guard";
 
 // ── Industry Colors ──
 
@@ -1366,6 +1367,7 @@ export default function ClientsPage() {
   );
 
   return (
+    <RouteGuard minOrgRole="manager">
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
@@ -1727,5 +1729,6 @@ export default function ClientsPage() {
         />
       )}
     </div>
+    </RouteGuard>
   );
 }

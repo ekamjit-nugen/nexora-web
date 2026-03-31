@@ -1,11 +1,12 @@
 import {
   Controller, Get, Post, Put, Delete,
   Body, Param, Query, UseGuards, Req,
-  HttpCode, HttpStatus, Logger, ForbiddenException,
+  HttpCode, HttpStatus, Logger,
 } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { ChatGateway } from './chat.gateway';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { Roles, RolesGuard } from './guards/roles.guard';
 import {
   CreateDirectConversationDto,
   CreateGroupDto,
@@ -21,6 +22,7 @@ import {
 } from './dto/index';
 
 @Controller('chat')
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class ChatController {
   private readonly logger = new Logger(ChatController.name);
 
@@ -33,6 +35,7 @@ export class ChatController {
 
   @Post('conversations/direct')
   @UseGuards(JwtAuthGuard)
+  @Roles('member', 'manager', 'admin', 'owner')
   @HttpCode(HttpStatus.CREATED)
   async createDirectConversation(@Body() dto: CreateDirectConversationDto, @Req() req) {
     const conversation = await this.chatService.createDirectConversation(req.user.userId, dto.targetUserId);
@@ -41,6 +44,7 @@ export class ChatController {
 
   @Post('conversations/group')
   @UseGuards(JwtAuthGuard)
+  @Roles('member', 'manager', 'admin', 'owner')
   @HttpCode(HttpStatus.CREATED)
   async createGroup(@Body() dto: CreateGroupDto, @Req() req) {
     const conversation = await this.chatService.createGroup(dto.name, dto.description, dto.memberIds, req.user.userId);
@@ -49,6 +53,7 @@ export class ChatController {
 
   @Post('conversations/channel')
   @UseGuards(JwtAuthGuard)
+  @Roles('manager', 'admin', 'owner')
   @HttpCode(HttpStatus.CREATED)
   async createChannel(@Body() dto: CreateChannelDto, @Req() req) {
     const conversation = await this.chatService.createChannel(dto.name, dto.description, req.user.userId, dto.memberIds);
@@ -96,6 +101,7 @@ export class ChatController {
 
   @Post('conversations/:id/messages')
   @UseGuards(JwtAuthGuard)
+  @Roles('member', 'manager', 'admin', 'owner')
   @HttpCode(HttpStatus.CREATED)
   async sendMessage(@Param('id') id: string, @Body() dto: SendMessageDto, @Req() req) {
     const message = await this.chatService.sendMessage(id, req.user.userId, dto.content, dto.type, dto.replyTo);
@@ -110,8 +116,8 @@ export class ChatController {
 
   @Get('conversations/:id/messages')
   @UseGuards(JwtAuthGuard)
-  async getMessages(@Param('id') id: string, @Query() query: MessageQueryDto) {
-    const result = await this.chatService.getMessages(id, query.page, query.limit);
+  async getMessages(@Param('id') id: string, @Query() query: MessageQueryDto, @Req() req) {
+    const result = await this.chatService.getMessages(id, req.user.userId, query.page, query.limit);
     return { success: true, message: 'Messages retrieved', data: result.data, pagination: result.pagination };
   }
 
@@ -150,8 +156,8 @@ export class ChatController {
 
   @Get('conversations/:id/search')
   @UseGuards(JwtAuthGuard)
-  async searchMessages(@Param('id') id: string, @Query() query: SearchMessageDto) {
-    const messages = await this.chatService.searchMessages(id, query.q);
+  async searchMessages(@Param('id') id: string, @Query() query: SearchMessageDto, @Req() req) {
+    const messages = await this.chatService.searchMessages(id, query.q, req.user.userId);
     return { success: true, message: 'Search results', data: messages };
   }
 
@@ -208,15 +214,12 @@ export class ChatController {
 
   @Put('settings/:userId/override')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'owner')
   async adminOverrideSettings(
     @Param('userId') targetUserId: string,
     @Body() dto: UpdateChatSettingsDto,
     @Req() req,
   ) {
-    const userRoles: string[] = req.user.roles || [];
-    if (!userRoles.includes('admin') && !userRoles.includes('hr') && req.user.role !== 'admin') {
-      throw new ForbiddenException('Only admins can override user settings');
-    }
     const settings = await this.chatService.adminOverrideSettings(targetUserId, dto, req.user.userId);
     return { success: true, message: 'Settings overridden', data: settings };
   }
@@ -225,37 +228,28 @@ export class ChatController {
 
   @Get('moderation/flagged')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'owner')
   async getFlaggedMessages(@Req() req) {
-    const userRoles: string[] = req.user.roles || [];
-    if (!userRoles.includes('admin') && !userRoles.includes('hr') && req.user.role !== 'admin') {
-      throw new ForbiddenException('Only admin/HR can view flagged messages');
-    }
     const flagged = await this.chatService.getFlaggedMessages();
     return { success: true, message: 'Flagged messages retrieved', data: flagged };
   }
 
   @Put('moderation/flagged/:id')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'owner')
   async reviewFlaggedMessage(
     @Param('id') id: string,
     @Body() dto: ReviewFlaggedMessageDto,
     @Req() req,
   ) {
-    const userRoles: string[] = req.user.roles || [];
-    if (!userRoles.includes('admin') && !userRoles.includes('hr') && req.user.role !== 'admin') {
-      throw new ForbiddenException('Only admin/HR can review flagged messages');
-    }
     const result = await this.chatService.reviewFlaggedMessage(id, dto.status, req.user.userId);
     return { success: true, message: 'Flagged message reviewed', data: result };
   }
 
   @Get('moderation/stats')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'owner')
   async getModerationStats(@Req() req) {
-    const userRoles: string[] = req.user.roles || [];
-    if (!userRoles.includes('admin') && !userRoles.includes('hr') && req.user.role !== 'admin') {
-      throw new ForbiddenException('Only admin/HR can view moderation stats');
-    }
     const stats = await this.chatService.getModerationStats();
     return { success: true, message: 'Moderation stats retrieved', data: stats };
   }

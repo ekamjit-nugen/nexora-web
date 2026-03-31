@@ -656,7 +656,7 @@ export default function SprintDetailPage() {
 
   const handleCompleteSprint = async () => {
     try {
-      await sprintApi.complete(sprintId, { moveToBacklog: true });
+      await sprintApi.complete(sprintId, { moveUnfinishedTo: 'backlog' });
       toast.success("Sprint completed! Unfinished items moved to backlog.");
       fetchAll();
     } catch (err: any) {
@@ -980,15 +980,15 @@ export default function SprintDetailPage() {
                   <div className="space-y-3">
                     {project.milestones.map((ms, i) => {
                       const isCompleted = ms.status === "completed";
-                      const msTaskCount = tasks.filter((t) => t.labels?.includes(ms.title)).length;
-                      const msDone = tasks.filter((t) => t.labels?.includes(ms.title) && t.status === "done").length;
+                      const msTaskCount = tasks.filter((t) => t.labels?.includes(ms.name)).length;
+                      const msDone = tasks.filter((t) => t.labels?.includes(ms.name) && t.status === "done").length;
                       const msPct = msTaskCount > 0 ? Math.round((msDone / msTaskCount) * 100) : 0;
                       return (
                         <div key={i} className="flex items-center gap-3">
                           <div className={`w-3 h-3 rounded-full shrink-0 ${isCompleted ? "bg-emerald-500" : "bg-[#CBD5E1]"}`} />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between mb-1">
-                              <span className="text-[12px] font-medium text-[#0F172A] truncate">{ms.title}</span>
+                              <span className="text-[12px] font-medium text-[#0F172A] truncate">{ms.name}</span>
                               <span className="text-[10px] text-[#94A3B8]">{ms.targetDate ? new Date(ms.targetDate).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "--"}</span>
                             </div>
                             <div className="h-2 bg-[#F1F5F9] rounded-full overflow-hidden">

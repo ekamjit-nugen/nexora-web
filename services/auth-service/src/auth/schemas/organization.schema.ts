@@ -6,6 +6,25 @@ export interface IOrganizationSettings {
   dateFormat: string;
 }
 
+export interface IFeatureFlag {
+  enabled: boolean;
+}
+
+export interface IOrganizationFeatures {
+  projects: IFeatureFlag;
+  tasks: IFeatureFlag;
+  sprints: IFeatureFlag;
+  timesheets: IFeatureFlag;
+  attendance: IFeatureFlag;
+  leaves: IFeatureFlag;
+  clients: IFeatureFlag;
+  invoices: IFeatureFlag;
+  reports: IFeatureFlag;
+  chat: IFeatureFlag;
+  calls: IFeatureFlag;
+  ai: IFeatureFlag;
+}
+
 export interface IOrganization extends Document {
   name: string;
   slug: string;
@@ -15,6 +34,7 @@ export interface IOrganization extends Document {
   logo?: string;
   domain?: string;
   settings: IOrganizationSettings;
+  features: IOrganizationFeatures;
   onboardingCompleted: boolean;
   onboardingStep: number;
   isActive: boolean;
@@ -49,6 +69,23 @@ export const OrganizationSchema = new Schema<IOrganization>(
       timezone: { type: String, default: 'Asia/Kolkata' },
       currency: { type: String, default: 'INR' },
       dateFormat: { type: String, default: 'DD/MM/YYYY' },
+    },
+    features: {
+      type: Object,
+      default: () => ({
+        projects:   { enabled: true },
+        tasks:      { enabled: true },
+        sprints:    { enabled: true },
+        timesheets: { enabled: true },
+        attendance: { enabled: true },
+        leaves:     { enabled: true },
+        clients:    { enabled: true },
+        invoices:   { enabled: true },
+        reports:    { enabled: true },
+        chat:       { enabled: true },
+        calls:      { enabled: true },
+        ai:         { enabled: false },
+      }),
     },
     onboardingCompleted: { type: Boolean, default: false },
     onboardingStep: { type: Number, default: 0 },

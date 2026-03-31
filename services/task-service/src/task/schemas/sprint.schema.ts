@@ -11,6 +11,15 @@ export interface ISprint extends Document {
   status: string;
   taskIds: string[];
   velocity: number;
+  plannedPoints?: number;
+  completedPoints?: number;
+  retroNotes?: string;
+  burndownData?: Array<{day: Date; remaining: number; ideal: number}>;
+  spilloverPoints?: number;
+  spilloverTaskIds?: string[];
+  carryOverPoints?: number;
+  carryOverTaskIds?: string[];
+  carriedFromSprintId?: string;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -32,6 +41,19 @@ export const SprintSchema = new Schema<ISprint>(
     },
     taskIds: [{ type: String }],
     velocity: { type: Number, default: 0 },
+    plannedPoints: { type: Number, default: 0 },
+    completedPoints: { type: Number, default: 0 },
+    retroNotes: { type: String, default: '' },
+    burndownData: [{
+      day: { type: Date },
+      remaining: { type: Number },
+      ideal: { type: Number },
+    }],
+    spilloverPoints: { type: Number, default: 0 },
+    spilloverTaskIds: [{ type: String }],
+    carryOverPoints: { type: Number, default: 0 },
+    carryOverTaskIds: [{ type: String }],
+    carriedFromSprintId: { type: String, default: null },
     createdBy: { type: String, required: true },
   },
   { timestamps: true },

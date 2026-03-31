@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { toast } from "sonner";
+import { RouteGuard } from "@/components/route-guard";
 
 function getPasswordStrength(password: string): { score: number; label: string; color: string } {
   let score = 0;
@@ -183,6 +184,7 @@ export default function SecuritySettingsPage() {
   const oauthProviders = (user as any).oauthProviders;
 
   return (
+    <RouteGuard minOrgRole="admin">
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-semibold text-[#0F172A]">Security</h2>
@@ -423,5 +425,6 @@ export default function SecuritySettingsPage() {
         onCancel={() => setConfirmState(s => ({...s, open: false}))}
       />
     </div>
+    </RouteGuard>
   );
 }

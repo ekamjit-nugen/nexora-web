@@ -1,6 +1,7 @@
 "use client";
 
 import { useAuth } from "@/lib/auth-context";
+import { RouteGuard } from "@/components/route-guard";
 
 const plans = [
   {
@@ -73,6 +74,7 @@ export default function BillingSettingsPage() {
   const currentPlan = currentOrg?.plan || "free";
 
   return (
+    <RouteGuard minOrgRole="admin">
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-semibold text-[#0F172A]">Billing</h2>
@@ -164,5 +166,6 @@ export default function BillingSettingsPage() {
         </div>
       </div>
     </div>
+    </RouteGuard>
   );
 }

@@ -5,10 +5,12 @@ import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { platformApi } from "@/lib/api";
+import type { OrgFeatures } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { RouteGuard } from "@/components/route-guard";
 
 interface OrgMember {
   _id: string;
@@ -33,10 +35,26 @@ interface OrgDetail {
   memberCount?: number;
   members?: OrgMember[];
   settings?: { timezone?: string; currency?: string; dateFormat?: string };
+  features?: OrgFeatures;
   onboardingCompleted?: boolean;
   createdAt: string;
   createdBy?: string;
 }
+
+const ALL_FEATURES: { key: keyof OrgFeatures; label: string; description: string }[] = [
+  { key: "projects",   label: "Projects",    description: "Project boards and planning" },
+  { key: "tasks",      label: "Tasks",       description: "Task management and tracking" },
+  { key: "sprints",    label: "Sprints",     description: "Agile sprint planning" },
+  { key: "timesheets", label: "Timesheets",  description: "Time tracking and logging" },
+  { key: "attendance", label: "Attendance",  description: "Attendance and check-in/out" },
+  { key: "leaves",     label: "Leaves",      description: "Leave requests and approvals" },
+  { key: "clients",    label: "Clients",     description: "Client management" },
+  { key: "invoices",   label: "Invoices",    description: "Invoicing and billing" },
+  { key: "reports",    label: "Reports",     description: "Analytics and reporting" },
+  { key: "chat",       label: "Chat",        description: "Team messaging" },
+  { key: "calls",      label: "Calls",       description: "Audio and video calls" },
+  { key: "ai",         label: "AI Features", description: "AI-powered tools and suggestions" },
+];
 
 const PLANS = ["free", "starter", "professional", "enterprise"];
 
@@ -49,6 +67,9 @@ export default function PlatformOrganizationDetailPage() {
   const [dataLoading, setDataLoading] = useState(true);
   const [confirmAction, setConfirmAction] = useState<"suspend" | "activate" | null>(null);
   const [planDropdown, setPlanDropdown] = useState(false);
+  const [activeTab, setActiveTab] = useState<"overview" | "features">("overview");
+  const [featuresLoading, setFeaturesLoading] = useState(false);
+  const [featureDraft, setFeatureDraft] = useState<Record<string, boolean>>({});
 
   const fetchOrg = useCallback(async () => {
     setDataLoading(true);
@@ -100,6 +121,34 @@ export default function PlatformOrganizationDetailPage() {
     }
   };
 
+  // Initialize featureDraft when org loads
+  useEffect(() => {
+    if (!org) return;
+    const draft: Record<string, boolean> = {};
+    for (const { key } of ALL_FEATURES) {
+      draft[key] = org.features?.[key]?.enabled ?? true;
+    }
+    setFeatureDraft(draft);
+  }, [org]);
+
+  const handleSaveFeatures = async () => {
+    if (!org) return;
+    setFeaturesLoading(true);
+    try {
+      const features: Record<string, { enabled: boolean }> = {};
+      for (const [key, enabled] of Object.entries(featureDraft)) {
+        features[key] = { enabled };
+      }
+      await platformApi.updateOrganizationFeatures(org._id, features);
+      toast.success("Feature flags updated");
+      fetchOrg();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update features");
+    } finally {
+      setFeaturesLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC]">
@@ -119,6 +168,7 @@ export default function PlatformOrganizationDetailPage() {
   const isSuspended = org?.status === "suspended" || org?.isActive === false;
 
   return (
+    <RouteGuard requirePlatformAdmin>
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
@@ -132,6 +182,25 @@ export default function PlatformOrganizationDetailPage() {
           </Link>
           <h1 className="text-xl font-bold text-[#0F172A]">Organization Detail</h1>
         </div>
+
+        {/* Tabs */}
+        {!dataLoading && org && (
+          <div className="flex gap-1 mb-6 border-b border-[#E2E8F0]">
+            {(["overview", "features"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-4 py-2 text-sm font-medium capitalize transition-colors border-b-2 -mb-px ${
+                  activeTab === tab
+                    ? "border-[#2E86C1] text-[#2E86C1]"
+                    : "border-transparent text-[#64748B] hover:text-[#334155]"
+                }`}
+              >
+                {tab === "features" ? "Feature Flags" : "Overview"}
+              </button>
+            ))}
+          </div>
+        )}
 
         {dataLoading ? (
           <div className="space-y-4">
@@ -150,6 +219,49 @@ export default function PlatformOrganizationDetailPage() {
               <p className="text-sm text-[#64748B]">Organization not found.</p>
             </CardContent>
           </Card>
+        ) : activeTab === "features" ? (
+          <div className="space-y-4">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-semibold text-[#0F172A]">Feature Flags</CardTitle>
+                  <Button size="sm" onClick={handleSaveFeatures} disabled={featuresLoading}>
+                    {featuresLoading ? "Saving..." : "Save Changes"}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs text-[#64748B] mb-4">Enable or disable features for this organization. Changes take effect immediately.</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {ALL_FEATURES.map(({ key, label, description }) => (
+                    <div
+                      key={key}
+                      className="flex items-center justify-between p-3 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC]"
+                    >
+                      <div>
+                        <p className="text-[13px] font-medium text-[#0F172A]">{label}</p>
+                        <p className="text-[11px] text-[#94A3B8]">{description}</p>
+                      </div>
+                      <button
+                        onClick={() => setFeatureDraft((d) => ({ ...d, [key]: !d[key] }))}
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+                          featureDraft[key] ? "bg-[#2E86C1]" : "bg-[#CBD5E1]"
+                        }`}
+                        role="switch"
+                        aria-checked={featureDraft[key]}
+                      >
+                        <span
+                          className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                            featureDraft[key] ? "translate-x-4.5" : "translate-x-0.5"
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         ) : (
           <div className="space-y-6">
             {/* Overview */}
@@ -347,5 +459,6 @@ export default function PlatformOrganizationDetailPage() {
         )}
       </main>
     </div>
+    </RouteGuard>
   );
 }

@@ -31,17 +31,21 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   }
 
   private extractToken(request: any): string | null {
+    // 1. Bearer token (API clients, seed scripts)
     const authHeader = request.headers.authorization;
-    if (!authHeader) {
-      return null;
+    if (authHeader) {
+      const parts = authHeader.split(' ');
+      if (parts.length === 2 && parts[0] === 'Bearer') {
+        return parts[1];
+      }
     }
 
-    const parts = authHeader.split(' ');
-    if (parts.length !== 2 || parts[0] !== 'Bearer') {
-      return null;
+    // 2. httpOnly cookie (browser clients — Wave 1.1 security hardening)
+    if (request.cookies?.nexora_token) {
+      return request.cookies.nexora_token;
     }
 
-    return parts[1];
+    return null;
   }
 }
 

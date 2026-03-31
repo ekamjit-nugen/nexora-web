@@ -8,6 +8,7 @@ import * as QRCode from 'qrcode';
 import { v4 as uuidv4 } from 'uuid';
 import { IUser } from './schemas/user.schema';
 import { IRole } from './schemas/role.schema';
+import { IOrgMembership } from './schemas/org-membership.schema';
 import { CreateRoleDto, UpdateRoleDto } from './dto/role.dto';
 
 export interface AuthTokens {
@@ -25,6 +26,7 @@ export class AuthService {
   constructor(
     @InjectModel('User') private userModel: Model<IUser>,
     @InjectModel('Role') private roleModel: Model<IRole>,
+    @InjectModel('OrgMembership') private orgMembershipModel: Model<IOrgMembership>,
     private jwtService: JwtService,
     private configService: ConfigService,
   ) {}
@@ -79,7 +81,7 @@ export class AuthService {
   /**
    * Login with email and password
    */
-  async login(email: string, password: string): Promise<AuthTokens> {
+  async login(email: string, password: string, organizationId?: string): Promise<AuthTokens> {
     this.logger.debug(`Login attempt: ${email}`);
 
     // Find user by email and select password field
@@ -131,24 +133,40 @@ export class AuthService {
 
     this.logger.log(`User logged in successfully: ${email}`);
 
-    return this.generateTokens(user);
+    return this.generateTokens(user, organizationId);
   }
 
   /**
    * Generate JWT tokens for user
    */
   async generateTokens(user: IUser, orgId?: string): Promise<AuthTokens> {
+    const resolvedOrgId = orgId || user.defaultOrganizationId || null;
+
+    // Look up org role from membership
+    let orgRole = 'member';
+    if (resolvedOrgId) {
+      const membership = await this.orgMembershipModel.findOne({
+        userId: user._id.toString(),
+        organizationId: resolvedOrgId,
+        status: 'active',
+      });
+      if (membership) {
+        orgRole = membership.role;
+      }
+    }
+
     const payload: any = {
       sub: user._id,
       email: user.email,
       firstName: user.firstName,
       lastName: user.lastName,
       roles: user.roles,
-      organizationId: orgId || user.defaultOrganizationId || null,
+      organizationId: resolvedOrgId,
+      orgRole,
       isPlatformAdmin: user.isPlatformAdmin || false,
     };
 
-    const jwtExpiry = process.env.JWT_EXPIRY || '7d';
+    const jwtExpiry = this.configService.get<string>('JWT_EXPIRY') || '7d';
     const accessToken = this.jwtService.sign(payload, {
       expiresIn: jwtExpiry,
     });
@@ -549,8 +567,15 @@ export class AuthService {
   /**
    * Get all users (for admin listing)
    */
-  async getAllUsers(): Promise<IUser[]> {
-    return this.userModel.find({ deletedAt: null }).sort({ createdAt: -1 });
+  async getAllUsers(organizationId?: string): Promise<IUser[]> {
+    const filter: any = { deletedAt: null, isActive: true };
+    if (organizationId) {
+      filter.organizations = organizationId;
+    }
+    return this.userModel
+      .find(filter)
+      .select('-password -mfaSecret -mfaBackupCodes -otp -otpExpiresAt')
+      .sort({ createdAt: -1 });
   }
 
   /**

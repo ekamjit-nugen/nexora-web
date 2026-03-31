@@ -4,6 +4,7 @@ import {
   SubscribeMessage,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
   ConnectedSocket,
   MessageBody,
 } from '@nestjs/websockets';
@@ -14,11 +15,14 @@ import { CallingService } from './calling.service';
 import { InitiateCallDto, AnswerCallDto, RejectCallDto, EndCallDto, IceCandidateDto, MediaNegotiationDto } from './dto/index';
 
 @WebSocketGateway({
-  cors: { origin: '*', credentials: true },
+  cors: {
+    origin: (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3100').split(','),
+    credentials: true,
+  },
   namespace: '/calls',
   transports: ['websocket', 'polling'],
 })
-export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
   @WebSocketServer() server: Server;
   private logger = new Logger('CallingGateway');
 
@@ -35,6 +39,21 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect 
     private jwtService: JwtService,
     private callingService: CallingService,
   ) {}
+
+  async afterInit(server: any) {
+    const redisUrl = process.env.REDIS_URI || 'redis://redis:6379';
+    try {
+      const { createAdapter } = await import('@socket.io/redis-adapter');
+      const { createClient } = await import('redis');
+      const pubClient = createClient({ url: redisUrl });
+      const subClient = pubClient.duplicate();
+      await Promise.all([pubClient.connect(), subClient.connect()]);
+      server.adapter(createAdapter(pubClient, subClient));
+      console.log('Calling gateway: Redis adapter connected');
+    } catch (error: any) {
+      console.warn('Calling gateway: Redis adapter failed, using in-memory:', error.message);
+    }
+  }
 
   // ── Connection handling ──
   async handleConnection(client: Socket) {
@@ -54,6 +73,9 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect 
         client.disconnect();
         return;
       }
+
+      const user = decoded;
+      client.data.user = user; // Store full user data including organizationId
 
       this.socketUsers.set(client.id, userId);
       // Store display name from JWT for use in call events
@@ -127,9 +149,15 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect 
     const userId = this.socketUsers.get(client.id);
     if (!userId) return;
 
+    if (client.data?.user?.orgRole === 'viewer') {
+      client.emit('error', { message: 'Viewers cannot initiate calls' });
+      return;
+    }
+
     try {
+      const orgId = client.data?.user?.organizationId || 'default-org';
       // Create call in database
-      const call = await this.callingService.initiateCall(userId, 'default-org', data);
+      const call = await this.callingService.initiateCall(userId, orgId, data);
 
       // Join initiator to call room
       client.join(`call:${call.callId}`);

@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ISprint } from './schemas/sprint.schema';
@@ -31,6 +32,10 @@ export class SprintService {
 
   async getSprintsByBoard(boardId: string) {
     return this.sprintModel.find({ boardId }).sort({ createdAt: -1 });
+  }
+
+  async getSprintsByProject(projectId: string) {
+    return this.sprintModel.find({ projectId }).sort({ createdAt: -1 });
   }
 
   async getSprint(sprintId: string) {
@@ -80,66 +85,131 @@ export class SprintService {
     return sprint;
   }
 
-  async completeSprint(sprintId: string, moveUnfinishedTo: string) {
+  /**
+   * Wave 1.2: Complete a sprint with full Jira-parity flow.
+   * Supports moveUnfinishedTo: 'backlog' | 'next_sprint' | 'new_sprint'
+   * forceCompleteIds: task IDs to mark done before velocity calculation
+   */
+  async completeSprint(
+    sprintId: string,
+    moveUnfinishedTo: string,
+    options?: { newSprintName?: string; forceCompleteIds?: string[] },
+  ) {
     const sprint = await this.getSprint(sprintId);
 
     if (sprint.status !== 'active') {
       throw new BadRequestException('Only active sprints can be completed');
     }
 
+    // Force-complete selected items (mark as done before velocity calc)
+    if (options?.forceCompleteIds?.length) {
+      await this.taskModel.updateMany(
+        { _id: { $in: options.forceCompleteIds }, sprintId },
+        { status: 'done', completedAt: new Date() },
+      );
+    }
+
     // Calculate velocity: sum of story points of completed tasks
     const completedTasks = await this.taskModel.find({
-      _id: { $in: sprint.taskIds },
+      sprintId,
       status: 'done',
       isDeleted: false,
     });
     const velocity = completedTasks.reduce((sum, t) => sum + ((t as any).storyPoints || 0), 0);
+    const completedPoints = velocity;
 
     // Find incomplete tasks
     const incompleteTasks = await this.taskModel.find({
-      _id: { $in: sprint.taskIds },
-      status: { $ne: 'done' },
+      sprintId,
+      status: { $nin: ['done', 'cancelled'] },
       isDeleted: false,
     });
 
     const incompleteTaskIds = incompleteTasks.map((t) => t._id.toString());
+    const spilloverPoints = incompleteTasks.reduce((sum, t) => sum + ((t as any).storyPoints || 0), 0);
+    const allTasks = await this.taskModel.find({ sprintId, isDeleted: false });
+    const plannedPoints = allTasks.reduce((sum, t) => sum + ((t as any).storyPoints || 0), 0);
+
+    let nextSprintId: string | null = null;
+    let newSprint: any = null;
 
     if (moveUnfinishedTo === 'backlog') {
-      // Move incomplete tasks back to backlog
       await this.taskModel.updateMany(
         { _id: { $in: incompleteTaskIds } },
         { sprintId: null, status: 'backlog' },
       );
     } else if (moveUnfinishedTo === 'next_sprint') {
-      // Find or check for the next planning sprint on this board
       const nextSprint = await this.sprintModel.findOne({
         boardId: sprint.boardId,
         status: 'planning',
         _id: { $ne: sprintId },
       }).sort({ createdAt: 1 });
 
-      if (nextSprint) {
-        // Move tasks to next sprint
-        await this.taskModel.updateMany(
-          { _id: { $in: incompleteTaskIds } },
-          { sprintId: nextSprint._id.toString() },
-        );
-        nextSprint.taskIds.push(...incompleteTaskIds);
-        await nextSprint.save();
-      } else {
-        // No next sprint — move to backlog as fallback
-        await this.taskModel.updateMany(
-          { _id: { $in: incompleteTaskIds } },
-          { sprintId: null, status: 'backlog' },
+      if (!nextSprint) {
+        throw new BadRequestException(
+          'No planning sprint exists to move incomplete items to. ' +
+          'Create a new sprint first, or use moveUnfinishedTo: "new_sprint".',
         );
       }
+
+      nextSprintId = nextSprint._id.toString();
+      const carryOverPoints = incompleteTasks.reduce((sum, t) => sum + ((t as any).storyPoints || 0), 0);
+      await this.taskModel.updateMany(
+        { _id: { $in: incompleteTaskIds } },
+        { sprintId: nextSprint._id.toString() },
+      );
+      nextSprint.taskIds.push(...incompleteTaskIds);
+      (nextSprint as any).carryOverPoints = ((nextSprint as any).carryOverPoints || 0) + carryOverPoints;
+      (nextSprint as any).carryOverTaskIds = [...((nextSprint as any).carryOverTaskIds || []), ...incompleteTaskIds];
+      (nextSprint as any).carriedFromSprintId = sprintId;
+      sprint.carryOverTaskIds = incompleteTaskIds as any;
+      sprint.carryOverPoints = carryOverPoints as any;
+      await nextSprint.save();
+    } else if (moveUnfinishedTo === 'new_sprint') {
+      // Wave 1.2: Create a new planning sprint and move incomplete items there
+      const newSprintName = options?.newSprintName || `${sprint.name} (Carry-over)`;
+      newSprint = new this.sprintModel({
+        name: newSprintName,
+        boardId: sprint.boardId,
+        projectId: sprint.projectId,
+        goal: `Carry-over items from ${sprint.name}`,
+        status: 'planning',
+        taskIds: incompleteTaskIds,
+        carryOverTaskIds: incompleteTaskIds,
+        carryOverPoints: spilloverPoints,
+        carriedFromSprintId: sprintId,
+        createdBy: sprint.createdBy,
+      });
+      await newSprint.save();
+      nextSprintId = newSprint._id.toString();
+
+      await this.taskModel.updateMany(
+        { _id: { $in: incompleteTaskIds } },
+        { sprintId: newSprint._id.toString() },
+      );
+      sprint.carryOverTaskIds = incompleteTaskIds as any;
+      sprint.carryOverPoints = spilloverPoints as any;
     }
 
     sprint.status = 'completed';
     sprint.velocity = velocity;
+    (sprint as any).completedPoints = completedPoints;
+    (sprint as any).plannedPoints = plannedPoints;
+    (sprint as any).spilloverPoints = spilloverPoints;
+    (sprint as any).spilloverTaskIds = incompleteTaskIds;
+    if (!sprint.endDate) sprint.endDate = new Date();
+    (sprint as any).completedAt = new Date();
     await sprint.save();
-    this.logger.log(`Sprint completed: ${sprintId}, velocity: ${velocity}`);
-    return sprint;
+    this.logger.log(`Sprint completed: ${sprintId}, velocity: ${velocity}sp, spillover: ${spilloverPoints}sp, action: ${moveUnfinishedTo}`);
+
+    return {
+      sprint,
+      velocity,
+      completedCount: completedTasks.length,
+      incompleteCount: incompleteTasks.length,
+      movedToSprintId: nextSprintId,
+      newSprint: newSprint || null,
+    };
   }
 
   async addTasksToSprint(sprintId: string, taskIds: string[]) {
@@ -262,5 +332,25 @@ export class SprintService {
     }
 
     return { totalPoints, dataPoints, idealLine };
+  }
+
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async recordDailyBurndown() {
+    const activeSprints = await this.sprintModel.find({ status: 'active' });
+    for (const sprint of activeSprints) {
+      if (!sprint.startDate || !sprint.endDate) continue;
+      const tasks = await this.taskModel.find({ _id: { $in: sprint.taskIds }, isDeleted: false });
+      const remaining = tasks
+        .filter(t => t.status !== 'done' && t.status !== 'cancelled')
+        .reduce((sum, t) => sum + (t.storyPoints || 0), 0);
+      const plannedPoints = (sprint as any).plannedPoints || tasks.reduce((s, t) => s + (t.storyPoints || 0), 0);
+      const totalDays = Math.ceil((sprint.endDate.getTime() - sprint.startDate.getTime()) / (1000 * 60 * 60 * 24));
+      const daysElapsed = Math.max(Math.ceil((Date.now() - sprint.startDate.getTime()) / (1000 * 60 * 60 * 24)), 0);
+      const ideal = Math.max(0, Math.round(plannedPoints * (1 - daysElapsed / totalDays) * 100) / 100);
+      if (!(sprint as any).burndownData) (sprint as any).burndownData = [];
+      (sprint as any).burndownData.push({ day: new Date(), remaining, ideal });
+      await sprint.save();
+    }
+    this.logger.log(`Daily burndown snapshot recorded for ${activeSprints.length} active sprint(s)`);
   }
 }

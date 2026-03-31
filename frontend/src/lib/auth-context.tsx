@@ -1,9 +1,22 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from "react";
-import { authApi, orgApi, User, Organization } from "./api";
+import { authApi, orgApi, User, Organization, OrgFeatures } from "./api";
 import { useRouter } from "next/navigation";
 import { resetTheme } from "./theme";
+
+// Role hierarchy for comparison
+const ROLE_HIERARCHY = ['viewer', 'member', 'manager', 'admin', 'owner'];
+
+function decodeJwtPayload(token: string): Record<string, any> | null {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(base64));
+  } catch {
+    return null;
+  }
+}
 
 interface AuthState {
   user: User | null;
@@ -13,6 +26,10 @@ interface AuthState {
   needsOrgSelection: boolean;
   needsOnboarding: boolean;
   isPlatformAdmin: boolean;
+  orgRole: string;
+  hasOrgRole: (minRole: string) => boolean;
+  isProjectRole: (team: Array<{ userId: string; role: string }>, minRole: string) => boolean;
+  isFeatureEnabled: (feature: keyof OrgFeatures) => boolean;
   login: (email: string, password: string) => Promise<{ needsOrgSelection: boolean }>;
   register: (data: { email: string; password: string; firstName: string; lastName: string }) => Promise<void>;
   logout: () => Promise<void>;
@@ -29,7 +46,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [needsOrgSelection, setNeedsOrgSelection] = useState(false);
+  const [orgRole, setOrgRole] = useState<string>('member');
   const router = useRouter();
+
+  // Extract orgRole from JWT token
+  const extractOrgRoleFromToken = useCallback(() => {
+    const token = localStorage.getItem('accessToken');
+    if (!token) return 'member';
+    const payload = decodeJwtPayload(token);
+    return payload?.orgRole || 'member';
+  }, []);
 
   const fetchOrgs = useCallback(async () => {
     try {
@@ -73,6 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(res.data || null);
       if (res.data) {
         await fetchOrgs();
+        setOrgRole(extractOrgRoleFromToken());
       }
     } catch {
       localStorage.removeItem("accessToken");
@@ -81,7 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [fetchOrgs]);
+  }, [fetchOrgs, extractOrgRoleFromToken]);
 
   useEffect(() => {
     fetchUser();
@@ -99,6 +126,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Fetch orgs
       const orgs = await fetchOrgs();
+      setOrgRole(extractOrgRoleFromToken());
 
       if (orgs.length > 1 && !localStorage.getItem("currentOrgId")) {
         setNeedsOrgSelection(true);
@@ -120,6 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const userRes = await authApi.me();
       setUser(userRes.data || null);
       await fetchOrgs();
+      setOrgRole(extractOrgRoleFromToken());
     }
   };
 
@@ -139,6 +168,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCurrentOrg(null);
     setOrganizations([]);
     setNeedsOrgSelection(false);
+    setOrgRole('member');
     router.push("/login");
   };
 
@@ -161,6 +191,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setCurrentOrg(org);
     }
     setNeedsOrgSelection(false);
+    setOrgRole(extractOrgRoleFromToken());
 
     // Refetch user with new token
     try {
@@ -177,6 +208,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isPlatformAdmin = user?.isPlatformAdmin === true;
   const needsOnboarding = Boolean(user && currentOrg && currentOrg.onboardingCompleted === false && !isPlatformAdmin);
+
+  const hasOrgRole = useCallback((minRole: string): boolean => {
+    if (isPlatformAdmin) return true;
+    const userIndex = ROLE_HIERARCHY.indexOf(orgRole);
+    const minIndex = ROLE_HIERARCHY.indexOf(minRole);
+    return userIndex >= minIndex;
+  }, [isPlatformAdmin, orgRole]);
+
+  const isProjectRole = useCallback((team: Array<{ userId: string; role: string }>, minRole: string): boolean => {
+    if (isPlatformAdmin) return true;
+    // Org admin/owner always has full project access
+    if (hasOrgRole('admin')) return true;
+    const userId = user?._id || (user as any)?.userId;
+    const member = team?.find(m => m.userId === userId);
+    if (!member) return false;
+    const memberIndex = ROLE_HIERARCHY.indexOf(member.role);
+    const minIndex = ROLE_HIERARCHY.indexOf(minRole);
+    return memberIndex >= minIndex;
+  }, [isPlatformAdmin, hasOrgRole, user]);
+
+  const isFeatureEnabled = useCallback((feature: keyof OrgFeatures): boolean => {
+    if (isPlatformAdmin) return true;
+    const features = currentOrg?.features;
+    if (!features) return true; // default enabled when no features config
+    const flag = features[feature];
+    if (flag === undefined) return true; // unknown feature defaults to enabled
+    return flag.enabled === true;
+  }, [isPlatformAdmin, currentOrg]);
 
   const handleSetCurrentOrg = (org: Organization | null) => {
     setCurrentOrg(org);
@@ -198,6 +257,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         needsOrgSelection,
         needsOnboarding,
         isPlatformAdmin,
+        orgRole,
+        hasOrgRole,
+        isProjectRole,
+        isFeatureEnabled,
         login,
         register,
         logout,

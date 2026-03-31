@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { RouteGuard } from "@/components/route-guard";
 
 interface LeaveBalanceEntry {
   leaveType: string;
@@ -143,7 +144,7 @@ export default function LeavesPage() {
       const promises: Promise<unknown>[] = [
         leaveApi.getMy(),
         leaveApi.getBalance(),
-        policyApi.getAll({ type: "leave", isActive: "true" }),
+        policyApi.getAll({ category: "leave", isActive: "true" }),
       ];
 
       if (canManage) {
@@ -340,6 +341,7 @@ export default function LeavesPage() {
   const showEmployeeCol = activeTab === "all" || activeTab === "approvals";
 
   return (
+    <RouteGuard minOrgRole="member">
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
       <main className="flex-1 ml-[260px] p-8">
@@ -735,6 +737,7 @@ export default function LeavesPage() {
         )}
       </main>
     </div>
+    </RouteGuard>
   );
 }
 

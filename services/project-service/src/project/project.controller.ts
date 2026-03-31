@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { ProjectService } from './project.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RolesGuard, Roles } from './guards/roles.guard';
 import {
   CreateProjectDto, UpdateProjectDto, ProjectQueryDto,
   AddTeamMemberDto, UpdateTeamMemberDto, AddMilestoneDto, UpdateMilestoneDto,
@@ -20,7 +21,8 @@ export class ProjectController {
   // ── Projects ──
 
   @Post('projects')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
   @HttpCode(HttpStatus.CREATED)
   async createProject(@Body() dto: CreateProjectDto, @Req() req) {
     const project = await this.projectService.createProject(dto, req.user.userId, req.user?.organizationId);
@@ -28,42 +30,54 @@ export class ProjectController {
   }
 
   @Get('projects')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   async getProjects(@Query() query: ProjectQueryDto, @Req() req) {
     const result = await this.projectService.getProjects(query, req.user?.organizationId);
     return { success: true, message: 'Projects retrieved', data: result.data, pagination: result.pagination };
   }
 
   @Get('projects/my')
-  @UseGuards(JwtAuthGuard)
-  async getMyProjects(@Req() req) {
-    const projects = await this.projectService.getMyProjects(req.user.userId, req.user?.organizationId);
-    return { success: true, message: 'My projects retrieved', data: projects };
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async getMyProjects(
+    @Req() req,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const result = await this.projectService.getMyProjects(
+      req.user.userId,
+      req.user?.organizationId,
+      parseInt(page) || 1,
+      parseInt(limit) || 20,
+    );
+    return { success: true, message: 'My projects retrieved', ...result };
   }
 
   @Get('projects/stats')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
   async getStats(@Req() req) {
     const stats = await this.projectService.getStats(req.user?.organizationId);
     return { success: true, message: 'Project stats retrieved', data: stats };
   }
 
   @Get('projects/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   async getProject(@Param('id') id: string, @Req() req) {
     const project = await this.projectService.getProjectById(id, req.user?.organizationId);
     return { success: true, message: 'Project retrieved', data: project };
   }
 
   @Put('projects/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
   async updateProject(@Param('id') id: string, @Body() dto: UpdateProjectDto, @Req() req) {
     const project = await this.projectService.updateProject(id, dto, req.user.userId, req.user?.organizationId);
     return { success: true, message: 'Project updated successfully', data: project };
   }
 
   @Delete('projects/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'owner')
   async deleteProject(@Param('id') id: string, @Req() req) {
     const result = await this.projectService.deleteProject(id, req.user?.organizationId);
     return { success: true, ...result };
@@ -72,7 +86,8 @@ export class ProjectController {
   // ── Team Members ──
 
   @Post('projects/:id/team')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
   @HttpCode(HttpStatus.CREATED)
   async addTeamMember(@Param('id') id: string, @Body() dto: AddTeamMemberDto, @Req() req) {
     const project = await this.projectService.addTeamMember(id, dto, req.user?.organizationId);
@@ -80,7 +95,8 @@ export class ProjectController {
   }
 
   @Put('projects/:id/team/:userId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
   async updateTeamMember(
     @Param('id') id: string,
     @Param('userId') userId: string,
@@ -92,7 +108,8 @@ export class ProjectController {
   }
 
   @Delete('projects/:id/team/:userId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'owner')
   async removeTeamMember(@Param('id') id: string, @Param('userId') userId: string, @Req() req) {
     const project = await this.projectService.removeTeamMember(id, userId, req.user?.organizationId);
     return { success: true, message: 'Team member removed successfully', data: project };
@@ -101,7 +118,8 @@ export class ProjectController {
   // ── Milestones ──
 
   @Post('projects/:id/milestones')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
   @HttpCode(HttpStatus.CREATED)
   async addMilestone(@Param('id') id: string, @Body() dto: AddMilestoneDto, @Req() req) {
     const project = await this.projectService.addMilestone(id, dto, req.user?.organizationId);
@@ -109,7 +127,8 @@ export class ProjectController {
   }
 
   @Put('projects/:id/milestones/:milestoneId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
   async updateMilestone(
     @Param('id') id: string,
     @Param('milestoneId') milestoneId: string,
@@ -121,7 +140,8 @@ export class ProjectController {
   }
 
   @Delete('projects/:id/milestones/:milestoneId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'owner')
   async deleteMilestone(
     @Param('id') id: string,
     @Param('milestoneId') milestoneId: string,
@@ -134,7 +154,8 @@ export class ProjectController {
   // ── Risks ──
 
   @Post('projects/:id/risks')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
   @HttpCode(HttpStatus.CREATED)
   async addRisk(@Param('id') id: string, @Body() dto: AddRiskDto, @Req() req) {
     const project = await this.projectService.addRisk(id, dto, req.user.userId, req.user?.organizationId);
@@ -142,7 +163,8 @@ export class ProjectController {
   }
 
   @Put('projects/:id/risks/:riskId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
   async updateRisk(
     @Param('id') id: string,
     @Param('riskId') riskId: string,
@@ -154,7 +176,8 @@ export class ProjectController {
   }
 
   @Delete('projects/:id/risks/:riskId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'owner')
   async removeRisk(@Param('id') id: string, @Param('riskId') riskId: string, @Req() req) {
     const project = await this.projectService.removeRisk(id, riskId, req.user.userId, req.user?.organizationId);
     return { success: true, message: 'Risk removed successfully', data: project };
@@ -163,7 +186,7 @@ export class ProjectController {
   // ── Activities ──
 
   @Get('projects/:id/activities')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   async getActivities(@Param('id') id: string, @Req() req) {
     const activities = await this.projectService.getProjectActivities(id, req.user?.organizationId);
     return { success: true, message: 'Activities retrieved', data: activities };
@@ -172,7 +195,7 @@ export class ProjectController {
   // ── Dashboard ──
 
   @Get('projects/:id/dashboard')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   async getDashboard(@Param('id') id: string, @Req() req) {
     const dashboard = await this.projectService.getProjectDashboard(id, req.user?.organizationId);
     return { success: true, message: 'Dashboard retrieved', data: dashboard };
@@ -181,7 +204,8 @@ export class ProjectController {
   // ── Duplicate ──
 
   @Post('projects/:id/duplicate')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'owner')
   @HttpCode(HttpStatus.CREATED)
   async duplicateProject(@Param('id') id: string, @Body() dto: DuplicateProjectDto, @Req() req) {
     const project = await this.projectService.duplicateProject(id, dto.projectName, req.user.userId, req.user?.organizationId);
@@ -191,7 +215,8 @@ export class ProjectController {
   // ── Archive ──
 
   @Post('projects/:id/archive')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'owner')
   async archiveProject(@Param('id') id: string, @Req() req) {
     const project = await this.projectService.archiveProject(id, req.user.userId, req.user?.organizationId);
     return { success: true, message: 'Project archived successfully', data: project };
@@ -200,7 +225,8 @@ export class ProjectController {
   // ── Budget ──
 
   @Put('projects/:id/budget')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'owner')
   async updateBudget(@Param('id') id: string, @Body() dto: UpdateBudgetDto, @Req() req) {
     const project = await this.projectService.updateBudgetSpent(id, dto.spent, req.user?.organizationId);
     return { success: true, message: 'Budget updated successfully', data: project };

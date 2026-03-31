@@ -274,11 +274,29 @@ export class UpdateSprintDto {
 }
 
 export class CompleteSprintDto {
-  @IsEnum(['backlog', 'next_sprint'])
+  // Wave 1.2: added 'new_sprint' option — creates a new sprint and moves incomplete items there
+  @IsEnum(['backlog', 'next_sprint', 'new_sprint'])
   moveUnfinishedTo: string;
+
+  @IsOptional() @IsString()
+  newSprintName?: string; // required when moveUnfinishedTo = 'new_sprint'
+
+  @IsOptional() @IsArray() @IsString({ each: true })
+  forceCompleteIds?: string[]; // task IDs to mark done before completing
 }
 
 export class AddTasksToSprintDto {
   @IsArray() @IsString({ each: true })
   taskIds: string[];
+}
+
+export class ReorderTasksDto {
+  @IsArray() @IsString({ each: true })
+  taskIds: string[]; // ordered list of task IDs
+
+  @IsOptional() @IsString()
+  columnId?: string; // optional: specific column to reorder within
+
+  @IsOptional() @IsString()
+  sprintId?: string; // optional: specific sprint to reorder within
 }

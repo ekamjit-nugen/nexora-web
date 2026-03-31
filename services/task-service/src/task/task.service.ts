@@ -1,11 +1,15 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ITask } from './schemas/task.schema';
+import { IBoard } from './schemas/board.schema';
+import { ICounter } from './schemas/counter.schema';
 import { ITimesheet } from './schemas/timesheet.schema';
+import { IActivity } from './schemas/activity.schema';
+import { NotificationService } from './notification.service';
 import {
   CreateTaskDto, UpdateTaskDto, AddCommentDto,
-  LogTimeDto, TaskQueryDto, UpdateStatusDto,
+  LogTimeDto, TaskQueryDto, UpdateStatusDto, BulkUpdateDto,
 } from './dto/index';
 import {
   CreateTimesheetDto, UpdateTimesheetDto,
@@ -18,17 +22,26 @@ export class TaskService {
 
   constructor(
     @InjectModel('Task') private taskModel: Model<ITask>,
+    @InjectModel('Board') private boardModel: Model<IBoard>,
+    @InjectModel('Counter') private counterModel: Model<ICounter>,
     @InjectModel('Timesheet') private timesheetModel: Model<ITimesheet>,
+    @InjectModel('Activity') private activityModel: Model<IActivity>,
+    private notificationService: NotificationService,
   ) {}
 
+  private async getNextTaskKey(projectId: string, projectKey: string): Promise<string> {
+    const prefix = projectKey || projectId.slice(-4).toUpperCase();
+    const counter = await this.counterModel.findByIdAndUpdate(
+      `taskseq_${projectId}`,
+      { $inc: { sequence: 1 } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+    return `${prefix}-${counter.sequence}`;
+  }
+
   async createTask(dto: CreateTaskDto, userId: string, orgId?: string) {
-    // Auto-generate task key like IMT-1, IMT-2
-    let taskKey: string | undefined;
-    if (dto.projectKey || dto.projectId) {
-      const prefix = dto.projectKey || dto.projectId.slice(-4).toUpperCase();
-      const count = await this.taskModel.countDocuments({ projectId: dto.projectId });
-      taskKey = `${prefix}-${count + 1}`;
-    }
+    // Auto-generate task key atomically to prevent duplicates
+    const taskKey = await this.getNextTaskKey(dto.projectId, dto.projectKey);
 
     const { projectKey: _pk, ...taskData } = dto as any;
     const task = new this.taskModel({
@@ -40,6 +53,16 @@ export class TaskService {
     });
     await task.save();
     this.logger.log(`Task created: ${task.taskKey || task._id} - ${dto.title}`);
+    await this.logActivity({
+      projectId: task.projectId,
+      organizationId: orgId,
+      taskId: task._id.toString(),
+      action: 'task.created',
+      actorId: userId,
+      entityType: 'task',
+      entityTitle: task.title,
+      details: { type: task.type, priority: task.priority, status: task.status },
+    }).catch(() => {});
     return task;
   }
 
@@ -53,6 +76,11 @@ export class TaskService {
     if (status) filter.status = status;
     if (priority) filter.priority = priority;
     if (type) filter.type = type;
+    if (query.sprintId) filter.sprintId = query.sprintId;
+    if (query.boardId) filter.boardId = query.boardId;
+    if (query.columnId) filter.columnId = query.columnId;
+    if (query.parentTaskId) filter.parentTaskId = query.parentTaskId;
+    if (query.labels) filter.labels = { $in: query.labels.split(',') };
     if (search) {
       filter.$or = [
         { title: { $regex: search, $options: 'i' } },
@@ -83,17 +111,52 @@ export class TaskService {
     return task;
   }
 
-  async updateTask(id: string, dto: UpdateTaskDto, userId: string, orgId?: string) {
+  async updateTask(id: string, dto: UpdateTaskDto, userId: string, orgId?: string, orgRole?: string) {
     const filter: any = { _id: id, isDeleted: false };
     if (orgId) filter.organizationId = orgId;
-    const task = await this.taskModel.findOneAndUpdate(
+    const task = await this.taskModel.findOne(filter);
+    if (!task) throw new NotFoundException('Task not found');
+
+    // Ownership check: members can only edit tasks they created or are assigned to
+    if (orgRole && !['admin', 'owner', 'manager'].includes(orgRole)) {
+      if (task.createdBy !== userId && task.assigneeId !== userId) {
+        throw new ForbiddenException('You can only edit tasks you created or are assigned to');
+      }
+    }
+
+    const updatePayload: any = { ...dto, updatedBy: userId };
+
+    // Sync columnId when status changes via general update
+    if (dto.status && dto.status !== task.status && task.boardId && !dto.columnId) {
+      const board = await this.boardModel.findById(task.boardId);
+      if (board) {
+        const matchingColumn = board.columns.find(
+          col => col.statusMapping && col.statusMapping.includes(dto.status),
+        );
+        if (matchingColumn) {
+          updatePayload.columnId = matchingColumn.id;
+        }
+      }
+    }
+
+    const updated = await this.taskModel.findOneAndUpdate(
       filter,
-      { ...dto, updatedBy: userId },
+      updatePayload,
       { new: true },
     );
-    if (!task) throw new NotFoundException('Task not found');
-    this.logger.log(`Task updated: ${task._id}`);
-    return task;
+    if (!updated) throw new NotFoundException('Task not found');
+    this.logger.log(`Task updated: ${updated._id}`);
+    await this.logActivity({
+      projectId: updated.projectId,
+      organizationId: orgId,
+      taskId: updated._id.toString(),
+      action: dto.status ? 'task.status_changed' : 'task.updated',
+      actorId: userId,
+      entityType: 'task',
+      entityTitle: updated.title,
+      details: { ...(dto.status ? { from: task.status, to: dto.status } : {}), ...Object.keys(dto).reduce((a, k) => ({ ...a, [k]: (dto as any)[k] }), {}) },
+    }).catch(() => {});
+    return updated;
   }
 
   async deleteTask(id: string, orgId?: string) {
@@ -127,7 +190,80 @@ export class TaskService {
     );
     if (!task) throw new NotFoundException('Task not found');
     this.logger.log(`Comment added to task: ${task._id}`);
+
+    // Create mention notifications if mentionedUserIds provided
+    if (dto.mentionedUserIds && dto.mentionedUserIds.length > 0) {
+      try {
+        await this.notificationService.createMentionNotification({
+          organizationId: orgId,
+          mentionedUserIds: dto.mentionedUserIds,
+          taskId: task._id.toString(),
+          projectId: task.projectId,
+          taskKey: task.taskKey,
+          taskTitle: task.title,
+          actor: {
+            userId: userId,
+            userName: userId, // In production, fetch from user service
+            userEmail: userId,
+          },
+        });
+      } catch (error) {
+        this.logger.error(`Failed to create mention notifications: ${error.message}`);
+      }
+    }
+
     return task;
+  }
+
+  async updateComment(taskId: string, commentId: string, content: string, userId: string, orgId?: string) {
+    const filter: any = { _id: taskId, isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+    const task = await this.taskModel.findOne(filter);
+    if (!task) throw new NotFoundException('Task not found');
+    const comment = task.comments.find(c => c._id?.toString() === commentId);
+    if (!comment) throw new NotFoundException('Comment not found');
+    if (comment.userId !== userId) throw new Error('Can only edit your own comments');
+    comment.content = content;
+    comment.updatedAt = new Date();
+    comment.isEdited = true;
+    return task.save();
+  }
+
+  async deleteComment(taskId: string, commentId: string, userId: string, orgId?: string) {
+    const filter: any = { _id: taskId, isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+    const task = await this.taskModel.findOne(filter);
+    if (!task) throw new NotFoundException('Task not found');
+    const comment = task.comments.find(c => c._id?.toString() === commentId);
+    if (!comment) throw new NotFoundException('Comment not found');
+    if (comment.userId !== userId) throw new Error('Can only delete your own comments');
+    task.comments = task.comments.filter(c => c._id?.toString() !== commentId) as any;
+    return task.save();
+  }
+
+  async toggleReaction(taskId: string, commentId: string, emoji: string, userId: string, orgId?: string) {
+    const filter: any = { _id: taskId, isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+    const task = await this.taskModel.findOne(filter);
+    if (!task) throw new NotFoundException('Task not found');
+    const comment = task.comments.find(c => c._id?.toString() === commentId);
+    if (!comment) throw new NotFoundException('Comment not found');
+    if (!comment.reactions) comment.reactions = [];
+    const existing = comment.reactions.find(r => r.emoji === emoji);
+    if (existing) {
+      const idx = existing.userIds.indexOf(userId);
+      if (idx > -1) {
+        existing.userIds.splice(idx, 1);
+        if (existing.userIds.length === 0) {
+          comment.reactions = comment.reactions.filter(r => r.emoji !== emoji);
+        }
+      } else {
+        existing.userIds.push(userId);
+      }
+    } else {
+      comment.reactions.push({ emoji, userIds: [userId] });
+    }
+    return task.save();
   }
 
   async logTime(taskId: string, dto: LogTimeDto, userId: string, orgId?: string) {
@@ -145,6 +281,7 @@ export class TaskService {
             hours: dto.hours,
             description: dto.description || '',
             date: new Date(dto.date),
+            category: dto.category || 'development',
             createdAt: new Date(),
           },
         },
@@ -191,21 +328,148 @@ export class TaskService {
     return { total, byStatus: statusCounts, overdue };
   }
 
+  async getProjectTaskStats(projectId: string, orgId?: string) {
+    const baseFilter: any = { projectId, isDeleted: false };
+    if (orgId) baseFilter.organizationId = orgId;
+    const [total, completed, overdue] = await Promise.all([
+      this.taskModel.countDocuments(baseFilter),
+      this.taskModel.countDocuments({ ...baseFilter, status: 'done' }),
+      this.taskModel.countDocuments({
+        ...baseFilter,
+        status: { $nin: ['done', 'cancelled'] },
+        dueDate: { $lt: new Date() },
+      }),
+    ]);
+    return {
+      total,
+      completed,
+      overdue,
+      progressPercentage: total > 0 ? Math.round((completed / total) * 100) : 0,
+    };
+  }
+
+  async toggleFlag(taskId: string, orgId?: string) {
+    const filter: any = { _id: taskId, isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+    const task = await this.taskModel.findOne(filter);
+    if (!task) throw new NotFoundException('Task not found');
+    task.isFlagged = !task.isFlagged;
+    return task.save();
+  }
+
+  async toggleWatch(taskId: string, userId: string, orgId?: string) {
+    const filter: any = { _id: taskId, isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+    const task = await this.taskModel.findOne(filter);
+    if (!task) throw new NotFoundException('Task not found');
+    if (!task.watchers) task.watchers = [];
+    const idx = task.watchers.indexOf(userId);
+    if (idx > -1) task.watchers.splice(idx, 1);
+    else task.watchers.push(userId);
+    return task.save();
+  }
+
+  async toggleVote(taskId: string, userId: string, orgId?: string) {
+    const filter: any = { _id: taskId, isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+    const task = await this.taskModel.findOne(filter);
+    if (!task) throw new NotFoundException('Task not found');
+    if (!task.votes) task.votes = [];
+    const idx = task.votes.indexOf(userId);
+    if (idx > -1) task.votes.splice(idx, 1);
+    else task.votes.push(userId);
+    return task.save();
+  }
+
+  async duplicateTask(taskId: string, userId: string, orgId?: string) {
+    const filter: any = { _id: taskId, isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+    const original = await this.taskModel.findOne(filter).lean();
+    if (!original) throw new NotFoundException('Task not found');
+
+    const { _id, taskKey, createdAt, updatedAt, statusHistory, timeEntries, comments, attachments, completedAt, ...taskData } = original as any;
+    const newKey = await this.getNextTaskKey(taskData.projectId, taskData.projectKey || '');
+
+    const duplicate = new this.taskModel({
+      ...taskData,
+      taskKey: newKey,
+      title: `${taskData.title} (Copy)`,
+      status: 'backlog',
+      sprintId: null,
+      columnId: null,
+      loggedHours: 0,
+      isFlagged: false,
+      votes: [],
+      watchers: [],
+      dependencies: [],
+      statusHistory: [],
+      timeEntries: [],
+      comments: [],
+      attachments: [],
+      createdBy: userId,
+      reporterId: userId,
+      ...(orgId && { organizationId: orgId }),
+    });
+
+    return duplicate.save();
+  }
+
+  async bulkUpdate(dto: BulkUpdateDto, userId: string, orgId?: string) {
+    const { taskIds, addLabels, removeLabels, ...updates } = dto;
+
+    const setOps: any = { updatedBy: userId };
+    if (updates.assigneeId !== undefined) setOps.assigneeId = updates.assigneeId;
+    if (updates.priority) setOps.priority = updates.priority;
+    if (updates.status) setOps.status = updates.status;
+    if (updates.sprintId !== undefined) setOps.sprintId = updates.sprintId;
+
+    const updateQuery: any = {};
+    if (Object.keys(setOps).length > 0) updateQuery.$set = setOps;
+    if (addLabels?.length) updateQuery.$addToSet = { labels: { $each: addLabels } };
+    if (removeLabels?.length) updateQuery.$pull = { labels: { $in: removeLabels } };
+
+    const baseFilter: any = { _id: { $in: taskIds }, isDeleted: false };
+    if (orgId) baseFilter.organizationId = orgId;
+
+    const result = await this.taskModel.updateMany(baseFilter, updateQuery);
+    return { modifiedCount: result.modifiedCount };
+  }
+
   async updateStatus(taskId: string, dto: UpdateStatusDto, userId: string, orgId?: string) {
     const filter: any = { _id: taskId, isDeleted: false };
     if (orgId) filter.organizationId = orgId;
 
-    // Check if status is actually changing
     const existingTask = await this.taskModel.findOne(filter);
     if (!existingTask) throw new NotFoundException('Task not found');
 
-    const updateOps: any = { status: dto.status, updatedBy: userId };
+    const setOps: any = { status: dto.status, updatedBy: userId };
+
+    // Sync columnId with the new status via board's statusMapping
+    if (existingTask.boardId) {
+      const board = await this.boardModel.findById(existingTask.boardId);
+      if (board) {
+        const matchingColumn = board.columns.find(
+          col => col.statusMapping && col.statusMapping.includes(dto.status),
+        );
+        if (matchingColumn) {
+          setOps.columnId = matchingColumn.id;
+        }
+      }
+    }
+
+    if (dto.status === 'done' && existingTask.status !== 'done') {
+      setOps.completedAt = new Date();
+      setOps.resolution = dto.resolution || 'done';
+    } else if (dto.status !== 'done' && existingTask.status === 'done') {
+      setOps.completedAt = null;
+      setOps.resolution = null;
+    }
+
     if (dto.status !== existingTask.status) {
-      // Push to statusHistory when status changes
       const task = await this.taskModel.findOneAndUpdate(
         filter,
         {
-          $set: { status: dto.status, updatedBy: userId },
+          $set: setOps,
           $push: { statusHistory: { status: dto.status, changedAt: new Date(), changedBy: userId } },
         },
         { new: true },
@@ -215,13 +479,9 @@ export class TaskService {
       return task;
     }
 
-    const task = await this.taskModel.findOneAndUpdate(
-      filter,
-      updateOps,
-      { new: true },
-    );
+    const task = await this.taskModel.findOneAndUpdate(filter, { $set: setOps }, { new: true });
     if (!task) throw new NotFoundException('Task not found');
-    this.logger.log(`Task ${taskId} status changed to ${dto.status}`);
+    this.logger.log(`Task ${taskId} status updated: ${dto.status}`);
     return task;
   }
 
@@ -492,5 +752,140 @@ export class TaskService {
     });
 
     return { total, byStatus: statusCounts, totalHours };
+  }
+
+  async addDependency(taskId: string, itemId: string, type: string, orgId?: string) {
+    const filter: any = { _id: taskId, isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+    const task = await this.taskModel.findOne(filter);
+    if (!task) throw new NotFoundException('Task not found');
+
+    // Prevent self-dependency
+    if (taskId === itemId) throw new Error('Cannot add dependency to self');
+
+    // Check not already exists
+    const exists = (task.dependencies || []).some((d: any) => d.itemId === itemId && d.type === type);
+    if (!exists) {
+      if (!task.dependencies) task.dependencies = [];
+      (task.dependencies as any[]).push({ itemId, type });
+      await task.save();
+    }
+    return task;
+  }
+
+  async removeDependency(taskId: string, depItemId: string, orgId?: string) {
+    const filter: any = { _id: taskId, isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+    const task = await this.taskModel.findOne(filter);
+    if (!task) throw new NotFoundException('Task not found');
+
+    task.dependencies = (task.dependencies || []).filter((d: any) => d.itemId !== depItemId) as any;
+    await task.save();
+    return task;
+  }
+
+  async logActivity(data: {
+    projectId: string;
+    organizationId?: string;
+    boardId?: string;
+    taskId?: string;
+    sprintId?: string;
+    action: string;
+    actorId: string;
+    actorName?: string;
+    entityType: string;
+    entityTitle?: string;
+    details?: Record<string, any>;
+  }) {
+    try {
+      await this.activityModel.create(data);
+    } catch (e) {
+      this.logger.warn('Failed to log activity: ' + e.message);
+    }
+  }
+
+  async getProjectActivity(projectId: string, limit = 50, organizationId?: string) {
+    const filter: any = { projectId };
+    if (organizationId) filter.organizationId = organizationId;
+    return this.activityModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+  }
+
+  async getProjectAnalytics(projectId: string, orgId?: string) {
+    const filter: any = { projectId, isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+
+    const allTasks = await this.taskModel.find(filter).lean();
+
+    // Velocity by sprint (last 6 sprints) - compute from tasks with sprintId
+    const sprintMap = new Map<string, { total: number; completed: number }>();
+    for (const t of allTasks) {
+      if (!t.sprintId) continue;
+      const entry = sprintMap.get(t.sprintId) || { total: 0, completed: 0 };
+      entry.total += (t.storyPoints || 0);
+      if (t.status === 'done') entry.completed += (t.storyPoints || 0);
+      sprintMap.set(t.sprintId, entry);
+    }
+    const velocityData = Array.from(sprintMap.entries()).slice(-6).map(([sprintId, data]) => ({
+      sprintId,
+      planned: data.total,
+      completed: data.completed,
+    }));
+
+    // Status distribution (cumulative flow)
+    const statusCounts: Record<string, number> = {};
+    for (const t of allTasks) {
+      statusCounts[t.status] = (statusCounts[t.status] || 0) + 1;
+    }
+
+    // Type distribution
+    const typeCounts: Record<string, number> = {};
+    for (const t of allTasks) {
+      typeCounts[t.type] = (typeCounts[t.type] || 0) + 1;
+    }
+
+    // Priority distribution
+    const priorityCounts: Record<string, number> = {};
+    for (const t of allTasks) {
+      priorityCounts[t.priority] = (priorityCounts[t.priority] || 0) + 1;
+    }
+
+    // Assignee workload
+    const assigneeMap = new Map<string, { total: number; done: number; inProgress: number; points: number }>();
+    for (const t of allTasks) {
+      if (!t.assigneeId) continue;
+      const entry = assigneeMap.get(t.assigneeId) || { total: 0, done: 0, inProgress: 0, points: 0 };
+      entry.total++;
+      entry.points += (t.storyPoints || 0);
+      if (t.status === 'done') entry.done++;
+      if (t.status === 'in_progress') entry.inProgress++;
+      assigneeMap.set(t.assigneeId, entry);
+    }
+    const workloadData = Array.from(assigneeMap.entries()).map(([assigneeId, data]) => ({
+      assigneeId,
+      ...data,
+    }));
+
+    // Bug trend - bugs created over time (by week)
+    const bugTasks = allTasks.filter(t => t.type === 'bug');
+
+    // Completion over time
+    const doneTasks = allTasks.filter(t => t.status === 'done');
+
+    return {
+      totalTasks: allTasks.length,
+      statusDistribution: statusCounts,
+      typeDistribution: typeCounts,
+      priorityDistribution: priorityCounts,
+      velocityData,
+      workloadData,
+      bugCount: bugTasks.length,
+      doneCount: doneTasks.length,
+      totalPoints: allTasks.reduce((s, t) => s + (t.storyPoints || 0), 0),
+      completedPoints: doneTasks.reduce((s, t) => s + (t.storyPoints || 0), 0),
+    };
   }
 }

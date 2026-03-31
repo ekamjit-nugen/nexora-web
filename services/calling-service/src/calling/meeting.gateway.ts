@@ -4,6 +4,7 @@ import {
   SubscribeMessage,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
   ConnectedSocket,
   MessageBody,
 } from '@nestjs/websockets';
@@ -20,11 +21,14 @@ interface MeetingParticipantInfo {
 }
 
 @WebSocketGateway({
-  cors: { origin: '*', credentials: true },
+  cors: {
+    origin: (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3100').split(','),
+    credentials: true,
+  },
   namespace: '/meetings',
   transports: ['websocket', 'polling'],
 })
-export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
   @WebSocketServer() server: Server;
   private logger = new Logger('MeetingGateway');
 
@@ -39,6 +43,21 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect 
     private jwtService: JwtService,
     private meetingService: MeetingService,
   ) {}
+
+  async afterInit(server: any) {
+    const redisUrl = process.env.REDIS_URI || 'redis://redis:6379';
+    try {
+      const { createAdapter } = await import('@socket.io/redis-adapter');
+      const { createClient } = await import('redis');
+      const pubClient = createClient({ url: redisUrl });
+      const subClient = pubClient.duplicate();
+      await Promise.all([pubClient.connect(), subClient.connect()]);
+      server.adapter(createAdapter(pubClient, subClient));
+      console.log('Meeting gateway: Redis adapter connected');
+    } catch (error: any) {
+      console.warn('Meeting gateway: Redis adapter failed, using in-memory:', error.message);
+    }
+  }
 
   async handleConnection(client: Socket) {
     const token = client.handshake.auth.token || client.handshake.headers.authorization?.replace('Bearer ', '');

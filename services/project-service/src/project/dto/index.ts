@@ -346,3 +346,179 @@ export class DuplicateProjectDto {
   @IsString()
   projectName: string;
 }
+
+// ── Project Member DTOs ──
+
+export class AddProjectMemberDto {
+  @IsString()
+  userId: string;
+
+  @IsOptional() @IsEnum(['admin', 'lead', 'developer', 'viewer'])
+  role?: string;
+
+  @IsOptional() @IsArray() @IsString({ each: true })
+  permissions?: string[];
+}
+
+export class UpdateProjectMemberDto {
+  @IsOptional() @IsEnum(['admin', 'lead', 'developer', 'viewer'])
+  role?: string;
+
+  @IsOptional() @IsArray() @IsString({ each: true })
+  permissions?: string[];
+}
+
+// ── Component DTOs ──
+
+export class ComponentDto {
+  @IsString()
+  name: string;
+
+  @IsOptional() @IsString()
+  description?: string;
+
+  @IsOptional() @IsString()
+  lead?: string;
+
+  @IsOptional() @IsString()
+  defaultAssignee?: string;
+
+  @IsOptional() @IsString()
+  color?: string;
+}
+
+export class CreateComponentDto extends ComponentDto {}
+
+export class UpdateComponentDto {
+  @IsOptional() @IsString()
+  name?: string;
+
+  @IsOptional() @IsString()
+  description?: string;
+
+  @IsOptional() @IsString()
+  lead?: string;
+
+  @IsOptional() @IsString()
+  defaultAssignee?: string;
+
+  @IsOptional() @IsString()
+  color?: string;
+}
+
+// ── Release DTOs ──
+
+export class ReleaseDto {
+  @IsString()
+  name: string;
+
+  @IsOptional() @IsString()
+  description?: string;
+
+  @IsOptional() @IsDateString()
+  releaseDate?: string;
+
+  @IsOptional() @IsEnum(['planned', 'in_progress', 'released', 'archived'])
+  status?: string;
+
+  @IsOptional() @IsDateString()
+  startDate?: string;
+
+  @IsOptional() @IsString()
+  releaseNotes?: string;
+
+  @IsOptional() @IsArray() @IsString({ each: true })
+  issues?: string[];
+}
+
+export class CreateReleaseDto extends ReleaseDto {}
+
+export class UpdateReleaseDto {
+  @IsOptional() @IsString()
+  name?: string;
+
+  @IsOptional() @IsString()
+  description?: string;
+
+  @IsOptional() @IsDateString()
+  releaseDate?: string;
+
+  @IsOptional() @IsEnum(['planned', 'in_progress', 'released', 'archived'])
+  status?: string;
+
+  @IsOptional() @IsDateString()
+  startDate?: string;
+
+  @IsOptional() @IsDateString()
+  releasedDate?: string;
+
+  @IsOptional() @IsString()
+  releaseNotes?: string;
+
+  @IsOptional() @IsArray() @IsString({ each: true })
+  issues?: string[];
+}
+
+// ── Project Visibility DTO ──
+
+export class UpdateProjectVisibilityDto {
+  @IsEnum(['public', 'private', 'restricted'])
+  visibility: string;
+}
+
+// ── Bulk Invite DTO ──
+
+export class BulkInviteRowDto {
+  @IsString()
+  email: string;
+
+  @IsOptional() @IsEnum(['admin', 'manager', 'member', 'viewer'])
+  role?: string;
+
+  @IsOptional() @IsString()
+  firstName?: string;
+
+  @IsOptional() @IsString()
+  lastName?: string;
+
+  @IsOptional() @IsString()
+  department?: string;
+
+  @IsOptional() @IsString()
+  jobTitle?: string;
+}
+
+export class BulkInviteDto {
+  @IsArray() @ValidateNested({ each: true }) @Type(() => BulkInviteRowDto)
+  invites: BulkInviteRowDto[];
+}
+
+// ── Clone Task DTO ──
+
+export class CloneTaskDto {
+  @IsString()
+  title: string;
+
+  @IsString()
+  targetProjectId: string;
+
+  @IsOptional() @ValidateNested() @Type(() => CloneOptionsDto)
+  include?: CloneOptionsDto;
+}
+
+export class CloneOptionsDto {
+  @IsOptional() @IsBoolean()
+  description?: boolean;
+
+  @IsOptional() @IsBoolean()
+  attachments?: boolean;
+
+  @IsOptional() @IsBoolean()
+  subtasks?: boolean;
+
+  @IsOptional() @IsBoolean()
+  comments?: boolean;
+
+  @IsOptional() @IsBoolean()
+  links?: boolean;
+}

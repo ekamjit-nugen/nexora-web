@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { RouteGuard } from "@/components/route-guard";
 
 // ── Department Form Modal ──
 
@@ -403,6 +404,7 @@ export default function DepartmentsPage() {
   const totalEmployees = employees.length;
 
   return (
+    <RouteGuard minOrgRole="admin">
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
@@ -584,5 +586,6 @@ export default function DepartmentsPage() {
         onCancel={() => setConfirmState(s => ({...s, open: false}))}
       />
     </div>
+    </RouteGuard>
   );
 }

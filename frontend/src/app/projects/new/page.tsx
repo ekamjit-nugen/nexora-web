@@ -81,6 +81,9 @@ export default function NewProjectPage() {
   const [billingType, setBillingType] = useState("fixed");
   const [tags, setTags] = useState("");
 
+  const [milestones, setMilestones] = useState<Array<{ name: string; description: string; targetDate: string }>>([]);
+  const [newMilestoneName, setNewMilestoneName] = useState("");
+
   const [clients, setClients] = useState<Client[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -116,7 +119,7 @@ export default function NewProjectPage() {
       const data: any = { projectName, description: description || undefined, category, methodology, priority, clientId: clientId || undefined, departmentId: departmentId || undefined, startDate: startDate || undefined, endDate: endDate || undefined, tags: tags ? tags.split(",").map((t: string) => t.trim()).filter(Boolean) : undefined, settings: { boardType: mc?.boardType || "kanban", enableSprints: methodology === "scrum" || methodology === "scrumban", enableEpics: true, enableSubtasks: true, enableTimeTracking: true, estimationUnit: "story_points", sprintDuration: methodology === "scrum" || methodology === "scrumban" ? 14 : undefined } };
       if (budgetAmount) data.budget = { amount: Number(budgetAmount), currency: budgetCurrency, billingType };
       const project = await projectApi.create(data);
-      if (project.data?._id) { const pid = project.data._id; try { await boardApi.createFromTemplate({ projectId: pid, template: mc?.boardType || "kanban" }); } catch {} for (const uid of teamMemberIds) { try { await projectApi.addTeamMember(pid, { userId: uid, role: "member" }); } catch {} } toast.success("Project created!"); router.push(`/projects/${pid}`); }
+      if (project.data?._id) { const pid = project.data._id; try { await boardApi.createFromTemplate({ projectId: pid, templateId: mc?.boardType || "kanban" }); } catch {} for (const uid of teamMemberIds) { if (uid === user?._id) continue; try { await projectApi.addTeamMember(pid, { userId: uid, role: "member" }); } catch {} } for (const m of milestones) { try { await projectApi.addMilestone(pid, { name: m.name, description: m.description || undefined, targetDate: m.targetDate || undefined, status: "pending" }); } catch {} } toast.success("Project created!"); router.push(`/projects/${pid}`); }
       else { toast.success("Project created!"); router.push("/projects"); }
     } catch (e: any) { toast.error(e.message || "Failed"); } finally { setSaving(false); }
   };
@@ -364,6 +367,28 @@ export default function NewProjectPage() {
                     <label className="text-[11px] font-bold text-[#94A3B8] uppercase tracking-wider mb-2 block">Tags</label>
                     <Input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="react, redesign, q2-2026 (comma-separated)" className="h-11 text-sm bg-white border-[#E2E8F0] shadow-sm" />
                     {tags && <div className="flex flex-wrap gap-1.5 mt-2.5">{tags.split(",").map((t) => t.trim()).filter(Boolean).map((tag, i) => <span key={i} className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-[#EBF5FB] text-[#2E86C1] border border-[#BFDBFE]">{tag}</span>)}</div>}
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-[#94A3B8] uppercase tracking-wider mb-3 block">Milestones</label>
+                    {milestones.length > 0 && (
+                      <div className="space-y-2 mb-3">
+                        {milestones.map((m, i) => (
+                          <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0]">
+                            <svg className="w-3.5 h-3.5 text-[#2E86C1] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9" /></svg>
+                            <span className="text-[12px] font-medium text-[#334155] flex-1 truncate">{m.name}</span>
+                            {m.targetDate && <span className="text-[10px] text-[#94A3B8]">{m.targetDate}</span>}
+                            <button onClick={() => setMilestones(milestones.filter((_, j) => j !== i))} className="text-[#94A3B8] hover:text-red-500 transition-colors">
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex gap-2">
+                      <Input value={newMilestoneName} onChange={(e) => setNewMilestoneName(e.target.value)} placeholder="Milestone name" className="h-10 text-sm bg-white border-[#E2E8F0] shadow-sm" onKeyDown={(e) => { if (e.key === "Enter" && newMilestoneName.trim()) { setMilestones([...milestones, { name: newMilestoneName.trim(), description: "", targetDate: "" }]); setNewMilestoneName(""); }}} />
+                      <Button type="button" variant="outline" onClick={() => { if (newMilestoneName.trim()) { setMilestones([...milestones, { name: newMilestoneName.trim(), description: "", targetDate: "" }]); setNewMilestoneName(""); }}} className="h-10 px-3 border-[#E2E8F0] text-[#64748B] shrink-0">Add</Button>
+                    </div>
                   </div>
                 </div>
               )}

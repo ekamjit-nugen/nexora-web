@@ -8,7 +8,12 @@ export class LoginDto {
   @MinLength(8)
   password: string;
 
+  @IsOptional()
   rememberMe?: boolean;
+
+  @IsOptional()
+  @IsString()
+  organizationId?: string;
 }
 
 export class RegisterDto {

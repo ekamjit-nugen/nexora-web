@@ -11,6 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { RouteGuard } from "@/components/route-guard";
 
 // ── Permission Matrix Definition ──
 
@@ -487,6 +488,7 @@ export default function RolesPage() {
   const totalPossiblePerms = ALL_RESOURCES.reduce((sum, r) => sum + r.actions.length, 0);
 
   return (
+    <RouteGuard minOrgRole="admin">
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
@@ -1115,5 +1117,6 @@ export default function RolesPage() {
         onCancel={() => setConfirmState(s => ({...s, open: false}))}
       />
     </div>
+    </RouteGuard>
   );
 }

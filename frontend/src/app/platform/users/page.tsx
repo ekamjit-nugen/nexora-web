@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { RouteGuard } from "@/components/route-guard";
 
 interface PlatformUser {
   _id: string;
@@ -101,6 +102,7 @@ export default function PlatformUsersPage() {
   if (!user || !isPlatformAdmin) return null;
 
   return (
+    <RouteGuard requirePlatformAdmin>
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
@@ -274,5 +276,6 @@ export default function PlatformUsersPage() {
         )}
       </main>
     </div>
+    </RouteGuard>
   );
 }

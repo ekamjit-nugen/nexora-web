@@ -6,6 +6,7 @@ export interface IParticipant {
   joinedAt: Date;
   lastReadAt: Date;
   muted: boolean;
+  isPinned?: boolean;
 }
 
 export interface ILastMessage {
@@ -23,7 +24,6 @@ export interface IConversation extends Document {
   participants: IParticipant[];
   lastMessage: ILastMessage;
   isArchived: boolean;
-  isPinned: boolean;
   createdBy: string;
   isDeleted: boolean;
   createdAt: Date;
@@ -52,6 +52,7 @@ export const ConversationSchema = new Schema<IConversation>(
         joinedAt: { type: Date, default: Date.now },
         lastReadAt: { type: Date, default: Date.now },
         muted: { type: Boolean, default: false },
+        isPinned: { type: Boolean, default: false },
       },
     ],
     lastMessage: {
@@ -60,7 +61,6 @@ export const ConversationSchema = new Schema<IConversation>(
       sentAt: { type: Date, default: null },
     },
     isArchived: { type: Boolean, default: false },
-    isPinned: { type: Boolean, default: false },
     createdBy: { type: String, required: true },
     isDeleted: { type: Boolean, default: false },
   },

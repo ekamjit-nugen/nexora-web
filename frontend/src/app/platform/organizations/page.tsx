@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { RouteGuard } from "@/components/route-guard";
 
 interface PlatformOrganization {
   _id: string;
@@ -123,6 +124,7 @@ export default function PlatformOrganizationsPage() {
   };
 
   return (
+    <RouteGuard requirePlatformAdmin>
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
@@ -307,5 +309,6 @@ export default function PlatformOrganizationsPage() {
         )}
       </main>
     </div>
+    </RouteGuard>
   );
 }

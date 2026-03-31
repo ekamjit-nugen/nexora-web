@@ -16,6 +16,7 @@ export interface IProject extends Document {
   priority: string;
   methodology?: string;
   departmentId?: string;
+  visibility: 'public' | 'private' | 'restricted';
   budget?: {
     amount: number;
     currency: string;
@@ -32,6 +33,14 @@ export interface IProject extends Document {
     allocationPercentage: number;
     assignedAt: Date;
   }>;
+  components?: Array<{
+    _id?: any;
+    name: string;
+    description?: string;
+    lead?: string;
+    defaultAssignee?: string;
+    color?: string;
+  }>;
   milestones: Array<{
     _id?: any;
     name: string;
@@ -45,6 +54,17 @@ export interface IProject extends Document {
     ownerId?: string;
     linkedTaskIds?: string[];
     order?: number;
+  }>;
+  releases?: Array<{
+    _id?: any;
+    name: string;
+    description?: string;
+    releaseDate?: Date;
+    status: 'planned' | 'in_progress' | 'released' | 'archived';
+    startDate?: Date;
+    releasedDate?: Date;
+    releaseNotes?: string;
+    issues?: string[];
   }>;
   risks: Array<{
     _id?: any;
@@ -125,6 +145,12 @@ export const ProjectSchema = new Schema<IProject>(
       default: null,
     },
     departmentId: { type: String, default: null, index: true },
+    visibility: {
+      type: String,
+      enum: ['public', 'private', 'restricted'],
+      default: 'public',
+      index: true,
+    },
     budget: {
       amount: { type: Number, default: 0 },
       currency: { type: String, default: 'USD' },
@@ -151,6 +177,15 @@ export const ProjectSchema = new Schema<IProject>(
         assignedAt: { type: Date, default: Date.now },
       },
     ],
+    components: [
+      {
+        name: { type: String, required: true },
+        description: { type: String },
+        lead: { type: String },
+        defaultAssignee: { type: String },
+        color: { type: String },
+      },
+    ],
     milestones: [
       {
         name: { type: String, required: true },
@@ -168,6 +203,22 @@ export const ProjectSchema = new Schema<IProject>(
         ownerId: { type: String },
         linkedTaskIds: [{ type: String }],
         order: { type: Number, default: 0 },
+      },
+    ],
+    releases: [
+      {
+        name: { type: String, required: true },
+        description: { type: String },
+        releaseDate: { type: Date },
+        status: {
+          type: String,
+          enum: ['planned', 'in_progress', 'released', 'archived'],
+          default: 'planned',
+        },
+        startDate: { type: Date },
+        releasedDate: { type: Date },
+        releaseNotes: { type: String },
+        issues: [{ type: String }],
       },
     ],
     risks: [
@@ -218,7 +269,7 @@ export const ProjectSchema = new Schema<IProject>(
       estimationUnit: {
         type: String,
         enum: ['hours', 'story_points'],
-        default: 'hours',
+        default: 'story_points',
       },
       defaultView: {
         type: String,

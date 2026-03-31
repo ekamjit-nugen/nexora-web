@@ -9,6 +9,7 @@ import { Sidebar } from "@/components/sidebar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { RouteGuard } from "@/components/route-guard";
 
 interface UserOrg {
   _id: string;
@@ -120,6 +121,7 @@ export default function PlatformUserDetailPage() {
   };
 
   return (
+    <RouteGuard requirePlatformAdmin>
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
@@ -325,5 +327,6 @@ export default function PlatformUserDetailPage() {
         )}
       </main>
     </div>
+    </RouteGuard>
   );
 }

@@ -1,26 +1,38 @@
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { MongooseModule } from '@nestjs/mongoose';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { Reflector } from '@nestjs/core';
 import { TaskController, TimesheetController } from './task.controller';
 import { BoardController } from './board.controller';
 import { SprintController } from './sprint.controller';
+import { NotificationController } from './notification.controller';
 import { TaskService } from './task.service';
 import { BoardService } from './board.service';
 import { SprintService } from './sprint.service';
+import { NotificationService } from './notification.service';
 import { TaskSchema } from './schemas/task.schema';
+import { CounterSchema } from './schemas/counter.schema';
 import { TimesheetSchema } from './schemas/timesheet.schema';
 import { BoardSchema } from './schemas/board.schema';
 import { SprintSchema } from './schemas/sprint.schema';
+import { ActivitySchema } from './schemas/activity.schema';
+import { NotificationSchema } from './schemas/notification.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RolesGuard } from './guards/roles.guard';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     MongooseModule.forFeature([
       { name: 'Task', schema: TaskSchema },
+      { name: 'Counter', schema: CounterSchema },
       { name: 'Timesheet', schema: TimesheetSchema },
       { name: 'Board', schema: BoardSchema },
       { name: 'Sprint', schema: SprintSchema },
+      { name: 'Activity', schema: ActivitySchema },
+      { name: 'Notification', schema: NotificationSchema },
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -30,8 +42,8 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
       }),
     }),
   ],
-  controllers: [TaskController, TimesheetController, BoardController, SprintController],
-  providers: [TaskService, BoardService, SprintService, JwtAuthGuard],
-  exports: [TaskService, BoardService, SprintService],
+  controllers: [TaskController, TimesheetController, BoardController, SprintController, NotificationController],
+  providers: [TaskService, BoardService, SprintService, NotificationService, JwtAuthGuard, RolesGuard, Reflector],
+  exports: [TaskService, BoardService, SprintService, NotificationService],
 })
 export class TaskModule {}

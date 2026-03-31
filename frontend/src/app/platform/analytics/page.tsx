@@ -8,6 +8,7 @@ import { platformApi } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
+import { RouteGuard } from "@/components/route-guard";
 
 interface Analytics {
   totalOrganizations: number;
@@ -79,6 +80,7 @@ export default function PlatformAnalyticsPage() {
   ];
 
   return (
+    <RouteGuard requirePlatformAdmin>
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
@@ -203,5 +205,6 @@ export default function PlatformAnalyticsPage() {
         </div>
       </main>
     </div>
+    </RouteGuard>
   );
 }

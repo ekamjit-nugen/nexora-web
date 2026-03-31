@@ -1,18 +1,25 @@
 import {
   WebSocketGateway, WebSocketServer, SubscribeMessage,
-  OnGatewayConnection, OnGatewayDisconnect, ConnectedSocket, MessageBody,
+  OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, ConnectedSocket, MessageBody,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
 import { ChatService } from './chat.service';
+import { IConversation } from './schemas/conversation.schema';
+import { IChatSettings } from './schemas/chat-settings.schema';
 
 @WebSocketGateway({
-  cors: { origin: '*', credentials: true },
-  namespace: '/chat',
+  cors: {
+    origin: (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3100').split(','),
+    credentials: true,
+  },
   transports: ['websocket', 'polling'],
+  namespace: '/chat',
 })
-export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
   @WebSocketServer() server: Server;
   private logger = new Logger('ChatGateway');
 
@@ -24,7 +31,26 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private jwtService: JwtService,
     private chatService: ChatService,
+    @InjectModel('Conversation') private conversationModel: Model<IConversation>,
+    @InjectModel('ChatSettings') private chatSettingsModel: Model<IChatSettings>,
   ) {}
+
+  // ── Lifecycle ──
+
+  async afterInit(server: any) {
+    const redisUrl = process.env.REDIS_URI || 'redis://redis:6379';
+    try {
+      const { createAdapter } = await import('@socket.io/redis-adapter');
+      const { createClient } = await import('redis');
+      const pubClient = createClient({ url: redisUrl });
+      const subClient = pubClient.duplicate();
+      await Promise.all([pubClient.connect(), subClient.connect()]);
+      server.adapter(createAdapter(pubClient, subClient));
+      console.log('Chat gateway: Redis adapter connected');
+    } catch (error: any) {
+      console.warn('Chat gateway: Redis adapter failed, using in-memory:', error.message);
+    }
+  }
 
   // ── Connection handling ──
 
@@ -50,6 +76,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
       this.onlineUsers.get(userId).add(client.id);
 
+      // Join personal room
+      client.join(`user:${userId}`);
+
       // Join user's conversation rooms
       const conversations = await this.chatService.getMyConversations(userId);
       for (const conv of conversations) {
@@ -69,7 +98,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  handleDisconnect(client: Socket) {
+  async handleDisconnect(client: Socket) {
     const userId = this.socketUsers.get(client.id);
     if (userId) {
       const sockets = this.onlineUsers.get(userId);
@@ -83,6 +112,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
       this.socketUsers.delete(client.id);
       this.logger.log(`User disconnected: ${userId}`);
+
+      if (userId) {
+        try {
+          await this.chatSettingsModel.findOneAndUpdate(
+            { userId },
+            { lastSeenAt: new Date() },
+            { upsert: true },
+          );
+        } catch (e) {
+          // non-critical
+        }
+      }
     }
   }
 
@@ -95,6 +136,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const userId = this.socketUsers.get(client.id);
     if (!userId) return;
+
+    const user = (client as any).user;
+    const orgRole = user?.orgRole || 'member';
+    if (orgRole === 'viewer') {
+      client.emit('error', { message: 'Viewers cannot send messages' });
+      return;
+    }
 
     try {
       const message = await this.chatService.sendMessage(
@@ -120,6 +168,14 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const userId = this.socketUsers.get(client.id);
     if (!userId) return;
+
+    const user = (client as any).user;
+    const orgRole = user?.orgRole || 'member';
+    if (orgRole === 'viewer') {
+      client.emit('error', { message: 'Viewers cannot send messages' });
+      return;
+    }
+
     try {
       const message = await this.chatService.editMessage(data.messageId, userId, data.content);
       this.server.to(`conv:${data.conversationId}`).emit('message:edited', message);
@@ -135,6 +191,14 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const userId = this.socketUsers.get(client.id);
     if (!userId) return;
+
+    const user = (client as any).user;
+    const orgRole = user?.orgRole || 'member';
+    if (orgRole === 'viewer') {
+      client.emit('error', { message: 'Viewers cannot send messages' });
+      return;
+    }
+
     try {
       await this.chatService.deleteMessage(data.messageId, userId);
       this.server.to(`conv:${data.conversationId}`).emit('message:deleted', { messageId: data.messageId });
@@ -186,7 +250,30 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { conversationId: string },
   ) {
+    const userId = this.getUserId(client);
+    if (!userId || !data?.conversationId) {
+      client.emit('error', { message: 'Invalid request' });
+      return;
+    }
+
+    const conversation = await this.conversationModel.findOne({
+      _id: data.conversationId,
+      'participants.userId': userId,
+      isDeleted: false,
+    });
+
+    if (!conversation) {
+      client.emit('error', { message: 'You are not a participant of this conversation' });
+      return;
+    }
+
     client.join(`conv:${data.conversationId}`);
+  }
+
+  // ── Helpers ──
+
+  private getUserId(client: Socket): string | undefined {
+    return this.socketUsers.get(client.id);
   }
 
   // ── Helpers for REST controller to emit events ──
@@ -201,5 +288,19 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   isUserOnline(userId: string): boolean {
     return this.onlineUsers.has(userId);
+  }
+
+  async getUserPresence(userIds: string[]) {
+    const onlineIds = Array.from((this as any).onlineUsers?.keys() || []);
+    const settings = await this.chatSettingsModel.find(
+      { userId: { $in: userIds } },
+      { userId: 1, lastSeenAt: 1 },
+    ).lean();
+
+    return userIds.map(id => ({
+      userId: id,
+      online: onlineIds.includes(id),
+      lastSeenAt: (settings as any[]).find((s: any) => s.userId === id)?.lastSeenAt || null,
+    }));
   }
 }

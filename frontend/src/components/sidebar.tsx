@@ -8,7 +8,7 @@ import { Separator } from "@/components/ui/separator";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { useAuth } from "@/lib/auth-context";
 import { projectApi } from "@/lib/api";
-import type { User, Project } from "@/lib/api";
+import type { User, Project, OrgFeatures } from "@/lib/api";
 
 interface SidebarProps {
   user: User;
@@ -20,13 +20,15 @@ interface NavItem {
   href: string;
   icon: string;
   iconFill?: boolean;
-  roles?: string[];
+  minRole?: string;
+  feature?: keyof OrgFeatures;
 }
 
 interface NavSection {
   title: string;
   items: NavItem[];
-  roles?: string[];
+  minRole?: string;
+  feature?: keyof OrgFeatures;
 }
 
 const navSections: NavSection[] = [
@@ -40,53 +42,54 @@ const navSections: NavSection[] = [
   {
     title: "COMMUNICATION",
     items: [
-      { label: "Chat", href: "/messages", icon: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" },
-      { label: "Calls", href: "/calls", icon: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" },
+      { label: "Team Chat", href: "/messages", feature: "chat", icon: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" },
+      { label: "Calls", href: "/calls", minRole: "member", feature: "calls", icon: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" },
     ],
   },
   {
     title: "WORK",
+    minRole: "member",
     items: [
-      { label: "Projects", href: "/projects", icon: "M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" },
-      { label: "Tasks", href: "/tasks", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" },
+      { label: "Projects", href: "/projects", feature: "projects", icon: "M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" },
+      { label: "Tasks", href: "/tasks", feature: "tasks", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" },
+      { label: "Timesheets", href: "/timesheets", feature: "timesheets", icon: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" },
     ],
   },
   {
     title: "TIME & ATTENDANCE",
+    minRole: "member",
     items: [
-      { label: "Attendance", href: "/attendance", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" },
-      { label: "Leaves", href: "/leaves", icon: "M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" },
+      { label: "Attendance", href: "/attendance", feature: "attendance", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" },
+      { label: "Leaves", href: "/leaves", feature: "leaves", icon: "M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" },
     ],
   },
   {
     title: "PEOPLE",
     items: [
       { label: "Directory", href: "/directory", icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" },
-      { label: "Departments", href: "/departments", icon: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4", roles: ["admin", "super_admin", "hr"] },
+      { label: "Org Chart", href: "/org-chart", icon: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" },
+      { label: "Departments", href: "/departments", minRole: "admin", icon: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" },
     ],
   },
   {
     title: "FINANCE",
-    roles: ["admin", "super_admin", "hr", "manager"],
+    minRole: "manager",
     items: [
-      { label: "Clients", href: "/clients", icon: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" },
-      { label: "Invoices", href: "/invoices", icon: "M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" },
+      { label: "Clients", href: "/clients", feature: "clients", icon: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" },
+      { label: "Invoices", href: "/invoices", feature: "invoices", icon: "M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" },
+      { label: "Reports", href: "/reports", feature: "reports", icon: "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" },
     ],
   },
   {
     title: "ADMIN",
-    roles: ["admin", "super_admin"],
+    minRole: "admin",
     items: [
       { label: "Roles", href: "/roles", icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" },
-      { label: "Policies", href: "/policies", icon: "M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2", roles: ["admin", "super_admin", "hr"] },
+      { label: "Policies", href: "/policies", icon: "M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" },
     ],
   },
 ];
 
-function hasRequiredRole(userRoles: string[], requiredRoles?: string[]): boolean {
-  if (!requiredRoles || requiredRoles.length === 0) return true;
-  return userRoles.some((r) => requiredRoles.includes(r));
-}
 
 const platformSection: NavSection = {
   title: "PLATFORM",
@@ -101,9 +104,8 @@ const platformSection: NavSection = {
 
 export function Sidebar({ user, onLogout }: SidebarProps) {
   const pathname = usePathname();
-  const { currentOrg, organizations, switchOrg, isPlatformAdmin } = useAuth();
+  const { currentOrg, organizations, switchOrg, isPlatformAdmin, hasOrgRole, isFeatureEnabled } = useAuth();
   const initials = `${user.firstName?.[0] || ""}${user.lastName?.[0] || ""}`.toUpperCase();
-  const userRoles = user.roles || [];
 
   // Fetch all projects for board shortcuts
   const [projects, setProjects] = useState<Project[]>([]);
@@ -114,12 +116,17 @@ export function Sidebar({ user, onLogout }: SidebarProps) {
     }).catch(() => {});
   }, []);
 
-  // Filter sections and items based on user roles
+  // Filter sections and items based on org role hierarchy and feature flags
   const visibleSections = navSections
-    .filter((section) => hasRequiredRole(userRoles, section.roles))
+    .filter((section) => !section.minRole || hasOrgRole(section.minRole))
+    .filter((section) => !section.feature || isFeatureEnabled(section.feature))
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => hasRequiredRole(userRoles, item.roles)),
+      items: section.items.filter((item) => {
+        if (item.minRole && !hasOrgRole(item.minRole)) return false;
+        if (item.feature && !isFeatureEnabled(item.feature)) return false;
+        return true;
+      }),
     }))
     .filter((section) => section.items.length > 0);
 

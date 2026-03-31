@@ -1,9 +1,13 @@
 import { Schema, Document } from 'mongoose';
 
 export interface IComment {
+  _id?: any;
   userId: string;
   content: string;
   createdAt: Date;
+  updatedAt?: Date;
+  isEdited?: boolean;
+  reactions?: Array<{ emoji: string; userIds: string[] }>;
 }
 
 export interface ITimeEntry {
@@ -11,6 +15,7 @@ export interface ITimeEntry {
   hours: number;
   description: string;
   date: Date;
+  category: string;
   createdAt: Date;
 }
 
@@ -45,6 +50,18 @@ export interface ITask extends Document {
   sprintId?: string;
   columnId?: string;
   statusHistory?: Array<{ status: string; changedAt: Date; changedBy?: string }>;
+  dependencies?: Array<{itemId: string; type: string}>;
+  order?: number;
+  completedAt?: Date;
+  resolution?: string;
+  isFlagged?: boolean;
+  watchers?: string[];
+  votes?: string[];
+  components?: string[];
+  fixVersion?: string;
+  environment?: string;
+  originalEstimate?: number;
+  remainingEstimate?: number;
   isDeleted: boolean;
   deletedAt?: Date;
   createdBy: string;
@@ -88,6 +105,9 @@ export const TaskSchema = new Schema<ITask>(
         userId: { type: String, required: true },
         content: { type: String, required: true },
         createdAt: { type: Date, default: Date.now },
+        updatedAt: { type: Date, default: null },
+        isEdited: { type: Boolean, default: false },
+        reactions: [{ emoji: { type: String }, userIds: [{ type: String }] }],
       },
     ],
     timeEntries: [
@@ -96,6 +116,7 @@ export const TaskSchema = new Schema<ITask>(
         hours: { type: Number, required: true },
         description: { type: String, default: '' },
         date: { type: Date, required: true },
+        category: { type: String, default: 'development' },
         createdAt: { type: Date, default: Date.now },
       },
     ],
@@ -110,6 +131,25 @@ export const TaskSchema = new Schema<ITask>(
     boardId: { type: String, default: null, index: true },
     sprintId: { type: String, default: null },
     columnId: { type: String, default: null },
+    dependencies: [{
+      itemId: { type: String, required: true },
+      type: {
+        type: String,
+        enum: ['blocked_by', 'relates_to', 'duplicates', 'child_of'],
+        required: true,
+      },
+    }],
+    order: { type: Number, default: 0 },
+    completedAt: { type: Date, default: null },
+    resolution: { type: String, default: null },
+    isFlagged: { type: Boolean, default: false },
+    watchers: [{ type: String }],
+    votes: [{ type: String }],
+    components: [{ type: String }],
+    fixVersion: { type: String, default: null },
+    environment: { type: String, default: null },
+    originalEstimate: { type: Number, default: null },
+    remainingEstimate: { type: Number, default: null },
     statusHistory: [{
       status: { type: String },
       changedAt: { type: Date, default: Date.now },
@@ -129,3 +169,4 @@ TaskSchema.index({ assigneeId: 1, status: 1 });
 TaskSchema.index({ dueDate: 1 });
 TaskSchema.index({ isDeleted: 1 });
 TaskSchema.index({ boardId: 1, columnId: 1 });
+TaskSchema.index({ projectId: 1, taskKey: 1 }, { unique: true, sparse: true });

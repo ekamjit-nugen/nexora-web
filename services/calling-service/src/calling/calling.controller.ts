@@ -16,6 +16,7 @@ import {
 import { CallingService } from './calling.service';
 import { CallingGateway } from './calling.gateway';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { Roles, RolesGuard } from './guards/roles.guard';
 import {
   InitiateCallDto,
   AnswerCallDto,
@@ -25,6 +26,7 @@ import {
 } from './dto/index';
 
 @Controller('calls')
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class CallingController {
   private readonly logger = new Logger(CallingController.name);
 
@@ -37,11 +39,12 @@ export class CallingController {
    * Initiate a new call
    */
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @Roles('member', 'manager', 'admin', 'owner')
   @HttpCode(HttpStatus.CREATED)
   async initiateCall(@Body() dto: InitiateCallDto, @Req() req: any) {
     try {
-      const call = await this.callingService.initiateCall(req.user.sub || req.user.userId, 'default-org', dto);
+      const orgId = req.user?.organizationId || req.headers?.['x-organization-id'] || 'default-org';
+      const call = await this.callingService.initiateCall(req.user.sub || req.user.userId, orgId, dto);
       return { success: true, message: 'Call initiated', data: call };
     } catch (err) {
       throw new BadRequestException(err.message);
@@ -52,7 +55,6 @@ export class CallingController {
    * Answer an incoming call
    */
   @Post(':callId/answer')
-  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   async answerCall(@Param('callId') callId: string, @Body() dto: AnswerCallDto, @Req() req: any) {
     try {
@@ -72,7 +74,6 @@ export class CallingController {
    * Reject an incoming call
    */
   @Post(':callId/reject')
-  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   async rejectCall(@Param('callId') callId: string, @Body() dto: RejectCallDto, @Req() req: any) {
     try {
@@ -87,7 +88,6 @@ export class CallingController {
    * End an active call
    */
   @Post(':callId/end')
-  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   async endCall(@Param('callId') callId: string, @Req() req: any) {
     try {
@@ -102,11 +102,12 @@ export class CallingController {
    * Get call history for current user
    */
   @Get('history')
-  @UseGuards(JwtAuthGuard)
+  @Roles('member', 'manager', 'admin', 'owner')
   async getCallHistory(@Query() query: CallHistoryQueryDto, @Req() req: any) {
     try {
       const userId = req.user.sub || req.user.userId;
-      const result = await this.callingService.getCallHistory(userId, 'default-org', query);
+      const orgId = req.user?.organizationId || req.headers?.['x-organization-id'] || 'default-org';
+      const result = await this.callingService.getCallHistory(userId, orgId, query);
       return { success: true, message: 'Call history retrieved', data: result.calls, pagination: result.pagination };
     } catch (err) {
       throw new BadRequestException(err.message);
@@ -117,11 +118,11 @@ export class CallingController {
    * Get missed calls
    */
   @Get('missed')
-  @UseGuards(JwtAuthGuard)
   async getMissedCalls(@Query('limit') limit: number = 10, @Req() req: any) {
     try {
       const userId = req.user.sub || req.user.userId;
-      const missedCalls = await this.callingService.getMissedCalls(userId, 'default-org', limit);
+      const orgId = req.user?.organizationId || req.headers?.['x-organization-id'] || 'default-org';
+      const missedCalls = await this.callingService.getMissedCalls(userId, orgId, limit);
       return { success: true, message: 'Missed calls retrieved', data: missedCalls };
     } catch (err) {
       throw new BadRequestException(err.message);
@@ -132,11 +133,11 @@ export class CallingController {
    * Get recent calls for current user
    */
   @Get('recent')
-  @UseGuards(JwtAuthGuard)
   async getRecentCalls(@Req() req: any) {
     try {
       const userId = req.user.sub || req.user.userId;
-      const result = await this.callingService.getCallHistory(userId, 'default-org', { limit: 20, page: 1 });
+      const orgId = req.user?.organizationId || req.headers?.['x-organization-id'] || 'default-org';
+      const result = await this.callingService.getCallHistory(userId, orgId, { limit: 20, page: 1 });
       return { success: true, message: 'Recent calls retrieved', data: result.calls };
     } catch (err) {
       throw new BadRequestException(err.message);
@@ -147,15 +148,35 @@ export class CallingController {
    * Get call stats for current user
    */
   @Get('stats')
-  @UseGuards(JwtAuthGuard)
+  @Roles('manager', 'admin', 'owner')
   async getCallStats(@Req() req: any) {
     try {
       const userId = req.user.sub || req.user.userId;
-      const stats = await this.callingService.getCallStats(userId, 'default-org');
+      const orgId = req.user?.organizationId || req.headers?.['x-organization-id'] || 'default-org';
+      const stats = await this.callingService.getCallStats(userId, orgId);
       return { success: true, message: 'Call stats retrieved', data: stats };
     } catch (err) {
       throw new BadRequestException(err.message);
     }
+  }
+
+  /**
+   * Get ICE servers for WebRTC
+   */
+  @Get('ice-servers')
+  getIceServers() {
+    const stunServers = (process.env.STUN_SERVERS || 'stun:stun.l.google.com:19302').split(',');
+    const iceServers: any[] = stunServers.map((s: string) => ({ urls: s.trim() }));
+
+    if (process.env.TURN_SERVER_URL) {
+      iceServers.push({
+        urls: process.env.TURN_SERVER_URL,
+        username: process.env.TURN_USERNAME || '',
+        credential: process.env.TURN_CREDENTIAL || '',
+      });
+    }
+
+    return { success: true, data: { iceServers } };
   }
 
   /**
@@ -171,7 +192,6 @@ export class CallingController {
    * Update call notes
    */
   @Put(':id/notes')
-  @UseGuards(JwtAuthGuard)
   async updateCallNotes(@Param('id') id: string, @Body() body: { notes: string }, @Req() req: any) {
     try {
       const userId = req.user.sub || req.user.userId;
@@ -186,7 +206,6 @@ export class CallingController {
    * Get call details — MUST be after all specific GET routes
    */
   @Get(':callId')
-  @UseGuards(JwtAuthGuard)
   async getCallDetails(@Param('callId') callId: string, @Req() req: any) {
     try {
       const call = await this.callingService.getCallDetails(callId, req.user.sub || req.user.userId);

@@ -270,13 +270,15 @@ export class CallingService {
     };
   }
 
-  async updateCallNotes(callId: string, userId: string, notes: string) {
-    const call = await this.callModel.findById(callId);
+  async updateCallNotes(identifier: string, userId: string, notes: string) {
+    let call = await this.callModel.findOne({ callId: identifier });
     if (!call) {
-      throw new NotFoundException(`Call not found`);
+      call = await this.callModel.findById(identifier).catch(() => null);
     }
-    if (!call.participantIds.includes(userId)) {
-      throw new ForbiddenException('You are not a participant in this call');
+    if (!call) throw new NotFoundException('Call not found');
+
+    if (!call.participantIds?.includes(userId) && call.initiatorId !== userId) {
+      throw new ForbiddenException('Not a participant of this call');
     }
     call.notes = notes;
     await call.save();

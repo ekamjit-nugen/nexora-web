@@ -3,6 +3,12 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ProjectModule } from './project/project.module';
 import { HealthModule } from './health/health.module';
+import { RoleModule } from './rbac/role.module';
+import { TenantModule } from './multi-tenant/tenant.module';
+import { VersionModule } from './versioning/version.module';
+import { CollaborationModule } from './collaboration/collaboration.module';
+import { PWAModule } from './pwa/pwa.module';
+import { AuditModule } from './audit-blockchain/audit.module';
 
 @Module({
   imports: [
@@ -18,6 +24,12 @@ import { HealthModule } from './health/health.module';
     }),
     ProjectModule,
     HealthModule,
+    RoleModule,
+    TenantModule,
+    VersionModule,
+    CollaborationModule,
+    PWAModule,
+    AuditModule,
   ],
 })
 export class AppModule {}

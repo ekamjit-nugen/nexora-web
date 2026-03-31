@@ -20,7 +20,7 @@ export interface IReadReceipt {
 export interface IMessage extends Document {
   conversationId: string;
   senderId: string;
-  content: string;
+  content?: string;
   type: string;
   replyTo: string;
   fileUrl?: string;
@@ -42,7 +42,7 @@ export const MessageSchema = new Schema<IMessage>(
   {
     conversationId: { type: String, required: true, index: true },
     senderId: { type: String, required: true, index: true },
-    content: { type: String, required: true },
+    content: { type: String, required: false, default: '' },
     type: {
       type: String,
       enum: ['text', 'file', 'image', 'video', 'system'],

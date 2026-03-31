@@ -50,8 +50,9 @@ export class AddParticipantsDto {
 }
 
 export class SendMessageDto {
+  @IsOptional()
   @IsString()
-  content: string;
+  content?: string;
 
   @IsOptional()
   @IsEnum(['text', 'file', 'image', 'system'])

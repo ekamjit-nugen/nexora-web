@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth-context";
 import { orgApi, roleApi } from "@/lib/api";
 import type { User } from "@/lib/api";
 import { toast } from "sonner";
+import { RouteGuard } from "@/components/route-guard";
 
 interface MemberDisplay {
   _id: string;
@@ -166,6 +167,7 @@ export default function MembersSettingsPage() {
   const pendingMembers = members.filter((m) => m.status === "invited");
 
   return (
+    <RouteGuard minOrgRole="admin">
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-semibold text-[#0F172A]">Members</h2>
@@ -362,5 +364,6 @@ export default function MembersSettingsPage() {
         </div>
       )}
     </div>
+    </RouteGuard>
   );
 }

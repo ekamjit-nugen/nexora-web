@@ -8,7 +8,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import {
   CreateBoardDto, UpdateBoardDto, AddColumnDto,
   UpdateColumnDto, ReorderColumnsDto, MoveTaskDto,
-  CreateFromTemplateDto,
+  CreateFromTemplateDto, ReorderTasksDto,
 } from './dto/board.dto';
 
 @Controller('boards')
@@ -107,5 +107,16 @@ export class BoardController {
   async moveTask(@Param('id') id: string, @Body() dto: MoveTaskDto) {
     const task = await this.boardService.moveTask(id, dto);
     return { success: true, message: 'Task moved successfully', data: task };
+  }
+
+  @Put(':id/tasks/reorder')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async reorderTasks(
+    @Param('id') id: string,
+    @Body() dto: ReorderTasksDto,
+  ) {
+    const tasks = await this.boardService.reorderTasks(dto.taskIds, dto.columnId, dto.sprintId);
+    return { success: true, message: 'Tasks reordered successfully', data: tasks };
   }
 }

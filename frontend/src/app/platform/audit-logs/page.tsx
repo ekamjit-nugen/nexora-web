@@ -9,6 +9,7 @@ import { Sidebar } from "@/components/sidebar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { RouteGuard } from "@/components/route-guard";
 
 interface AuditLog {
   _id: string;
@@ -96,6 +97,7 @@ export default function PlatformAuditLogsPage() {
   };
 
   return (
+    <RouteGuard requirePlatformAdmin>
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
@@ -232,5 +234,6 @@ export default function PlatformAuditLogsPage() {
         )}
       </main>
     </div>
+    </RouteGuard>
   );
 }

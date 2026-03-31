@@ -53,7 +53,7 @@ services:
       MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/nexora_auth?authSource=admin
       REDIS_URI: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
-      JWT_EXPIRY: ${JWT_EXPIRY:-7d}
+      JWT_EXPIRY: ${JWT_EXPIRY:-15m}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_CALLBACK_URL: ${GOOGLE_CALLBACK_URL:-}
@@ -171,6 +171,7 @@ services:
       PROJECT_SERVICE_PORT: 3020
       MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/nexora_projects?authSource=admin
       JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
+      TASK_SERVICE_URL: http://task-service:3021
     depends_on:
       mongodb:
         condition: service_healthy
@@ -195,6 +196,7 @@ services:
       TASK_SERVICE_PORT: 3021
       MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/nexora_tasks?authSource=admin
       JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
+      ATTENDANCE_SERVICE_URL: http://attendance-service:3011
     depends_on:
       mongodb:
         condition: service_healthy
@@ -245,10 +247,14 @@ services:
       JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
       LLM_BASE_URL: http://host.docker.internal:7/v1/chat/completions
       LLM_MODEL: deepseek
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3100
+      REDIS_URI: redis://redis:6379
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       mongodb:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - nexora-network
@@ -297,8 +303,12 @@ services:
       JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
       STUN_SERVERS: stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
       LOG_LEVEL: ${LOG_LEVEL:-debug}
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3100
+      REDIS_URI: redis://redis:6379
     depends_on:
       mongodb:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - nexora-network
@@ -329,6 +339,7 @@ services:
       POLICY_SERVICE_URL: http://policy-service:3013
       PROJECT_SERVICE_URL: http://project-service:3020
       TASK_SERVICE_URL: http://task-service:3021
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3100
     depends_on:
       auth-service:
         condition: service_healthy

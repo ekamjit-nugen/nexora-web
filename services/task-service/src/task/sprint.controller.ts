@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { SprintService } from './sprint.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RolesGuard, Roles } from './guards/roles.guard';
 import {
   CreateSprintDto, UpdateSprintDto,
   CompleteSprintDto, AddTasksToSprintDto,
@@ -17,11 +18,19 @@ export class SprintController {
   constructor(private sprintService: SprintService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
   @HttpCode(HttpStatus.CREATED)
   async createSprint(@Body() dto: CreateSprintDto, @Req() req) {
     const sprint = await this.sprintService.createSprint(dto, req.user.userId);
     return { success: true, message: 'Sprint created successfully', data: sprint };
+  }
+
+  @Get('project/:projectId')
+  @UseGuards(JwtAuthGuard)
+  async getSprintsByProject(@Param('projectId') projectId: string) {
+    const sprints = await this.sprintService.getSprintsByProject(projectId);
+    return { success: true, message: 'Sprints retrieved', data: sprints };
   }
 
   @Get('board/:boardId')
@@ -60,14 +69,16 @@ export class SprintController {
   }
 
   @Put(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
   async updateSprint(@Param('id') id: string, @Body() dto: UpdateSprintDto) {
     const sprint = await this.sprintService.updateSprint(id, dto);
     return { success: true, message: 'Sprint updated successfully', data: sprint };
   }
 
   @Post(':id/start')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
   @HttpCode(HttpStatus.OK)
   async startSprint(@Param('id') id: string) {
     const sprint = await this.sprintService.startSprint(id);
@@ -75,15 +86,20 @@ export class SprintController {
   }
 
   @Post(':id/complete')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
   @HttpCode(HttpStatus.OK)
   async completeSprint(@Param('id') id: string, @Body() dto: CompleteSprintDto) {
-    const sprint = await this.sprintService.completeSprint(id, dto.moveUnfinishedTo);
-    return { success: true, message: 'Sprint completed successfully', data: sprint };
+    const result = await this.sprintService.completeSprint(id, dto.moveUnfinishedTo, {
+      newSprintName: dto.newSprintName,
+      forceCompleteIds: dto.forceCompleteIds,
+    });
+    return { success: true, message: 'Sprint completed successfully', data: result };
   }
 
   @Post(':id/tasks')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
   @HttpCode(HttpStatus.OK)
   async addTasks(@Param('id') id: string, @Body() dto: AddTasksToSprintDto) {
     const sprint = await this.sprintService.addTasksToSprint(id, dto.taskIds);
@@ -91,7 +107,8 @@ export class SprintController {
   }
 
   @Delete(':id/tasks/:taskId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
   async removeTask(@Param('id') id: string, @Param('taskId') taskId: string) {
     const sprint = await this.sprintService.removeTaskFromSprint(id, taskId);
     return { success: true, message: 'Task removed from sprint', data: sprint };

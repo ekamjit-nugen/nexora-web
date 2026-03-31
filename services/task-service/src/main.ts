@@ -4,6 +4,11 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
+  if (!process.env.JWT_SECRET) {
+    console.error('FATAL: JWT_SECRET not set');
+    process.exit(1);
+  }
+
   const logger = new Logger('NexoraTaskService');
   const app = await NestFactory.create(AppModule, {
     logger: ['error', 'warn', 'debug'],

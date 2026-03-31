@@ -160,6 +160,37 @@ export class PlatformAdminService {
   }
 
   /**
+   * Update organization feature flags
+   */
+  async updateOrganizationFeatures(
+    orgId: string,
+    features: Record<string, { enabled: boolean }>,
+    performedBy: string,
+    ip: string,
+  ) {
+    const org = await this.organizationModel.findById(orgId);
+    if (!org) {
+      throw new HttpException('Organization not found', HttpStatus.NOT_FOUND);
+    }
+
+    // Merge incoming feature flags with existing ones
+    const current = (org as any).features || {};
+    const updated: Record<string, { enabled: boolean }> = { ...current };
+    for (const [key, val] of Object.entries(features)) {
+      if (typeof val?.enabled === 'boolean') {
+        updated[key] = { ...((current[key] as any) || {}), enabled: val.enabled };
+      }
+    }
+    (org as any).features = updated;
+    org.markModified('features');
+    await org.save();
+
+    await this.logAudit('organization.features_update', performedBy, 'organization', orgId, { features: updated }, ip);
+
+    return org;
+  }
+
+  /**
    * Get all platform users with pagination and search
    */
   async getAllUsers(page: number = 1, limit: number = 20, search?: string) {

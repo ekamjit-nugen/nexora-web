@@ -55,11 +55,40 @@ export class ProjectService {
   async createProject(dto: CreateProjectDto, createdBy: string, orgId?: string) {
     const projectKey = await this.generateProjectKey(dto.projectName, orgId);
 
+    const methodologyDefaults: Record<string, { enableSprints: boolean; enableEpics: boolean; estimationUnit: string }> = {
+      scrum:     { enableSprints: true,  enableEpics: true,  estimationUnit: 'story_points' },
+      kanban:    { enableSprints: false, enableEpics: true,  estimationUnit: 'story_points' },
+      scrumban:  { enableSprints: true,  enableEpics: true,  estimationUnit: 'story_points' },
+      waterfall: { enableSprints: false, enableEpics: true,  estimationUnit: 'hours' },
+      xp:        { enableSprints: true,  enableEpics: false, estimationUnit: 'story_points' },
+      lean:      { enableSprints: false, enableEpics: false, estimationUnit: 'story_points' },
+      safe:      { enableSprints: true,  enableEpics: true,  estimationUnit: 'story_points' },
+      custom:    { enableSprints: false, enableEpics: false, estimationUnit: 'story_points' },
+    };
+    const mDefaults = methodologyDefaults[dto.methodology as string] || methodologyDefaults.custom;
+
+    const projectData: any = { ...dto };
+    if (projectData.settings) {
+      projectData.settings.enableSprints  = projectData.settings.enableSprints  ?? mDefaults.enableSprints;
+      projectData.settings.enableEpics    = projectData.settings.enableEpics    ?? mDefaults.enableEpics;
+      projectData.settings.estimationUnit = projectData.settings.estimationUnit ?? mDefaults.estimationUnit;
+    } else {
+      projectData.settings = { ...mDefaults };
+    }
+
     const project = new this.projectModel({
-      ...dto,
+      ...projectData,
       projectKey,
       createdBy,
       ...(orgId && { organizationId: orgId }),
+    });
+    project.team.push({
+      userId: createdBy,
+      role: 'owner',
+      projectRole: 'Project Owner',
+      skills: [],
+      allocationPercentage: 100,
+      assignedAt: new Date(),
     });
     await project.save();
     this.logger.log(`Project created: ${project._id} - ${dto.projectName} [${projectKey}]`);
@@ -345,14 +374,28 @@ export class ProjectService {
 
   // ── My Projects ──
 
-  async getMyProjects(userId: string, orgId?: string) {
+  async getMyProjects(userId: string, orgId?: string, page = 1, limit = 20) {
     const filter: any = {
       isDeleted: false,
       'team.userId': userId,
     };
     if (orgId) filter.organizationId = orgId;
-    const projects = await this.projectModel.find(filter).sort({ updatedAt: -1 });
-    return projects;
+
+    const skip = (page - 1) * limit;
+    const [projects, total] = await Promise.all([
+      this.projectModel.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(limit).lean(),
+      this.projectModel.countDocuments(filter),
+    ]);
+
+    return {
+      data: projects,
+      pagination: {
+        total,
+        page,
+        limit,
+        pages: Math.ceil(total / limit),
+      },
+    };
   }
 
   // ── Stats ──
@@ -682,15 +725,17 @@ export class ProjectService {
 
     // Burn rate: spent / weeksElapsed
     const startDate = project.startDate ? new Date(project.startDate) : project.createdAt;
-    const weeksElapsed = Math.max((now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 7), 0.01); // avoid division by zero
-    const burnRate = budgetSpent / weeksElapsed;
+    const weeksElapsed = (now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 7);
+    const burnRate = weeksElapsed > 0 ? budgetSpent / weeksElapsed : 0;
 
     // Projected total: burnRate * totalWeeks
     const endDate = project.endDate ? new Date(project.endDate) : null;
     const totalWeeks = endDate
       ? Math.max((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 7), 0.01)
       : 0;
-    const projectedTotal = totalWeeks > 0 ? Math.round(burnRate * totalWeeks) : 0;
+    const projectedTotal = weeksElapsed > 0 && totalWeeks > 0
+      ? Math.round(burnRate * totalWeeks)
+      : budgetSpent;
 
     // Health color based on utilization
     let healthColor: string;
@@ -726,8 +771,8 @@ export class ProjectService {
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, 10);
 
-    // Unassigned slots: report current team size (placeholder until slot-based allocation is added)
-    const unassignedSlots = project.team.length;
+    // Unassigned slots: placeholder until role capacity planning is built
+    const unassignedSlots = 0;
 
     return {
       project,
@@ -749,6 +794,17 @@ export class ProjectService {
     if (orgId) filter.organizationId = orgId;
     const project = await this.projectModel.findOne(filter);
     if (!project) throw new NotFoundException('Project not found');
+
+    // Validate milestone completion before archiving
+    const pendingMilestones = (project.milestones || []).filter(
+      m => m.status !== 'completed' && m.status !== 'missed',
+    );
+    if (pendingMilestones.length > 0) {
+      throw new BadRequestException(
+        `Cannot archive: ${pendingMilestones.length} milestone(s) are still pending or in progress. ` +
+        `Complete or mark them as missed first.`,
+      );
+    }
 
     project.status = 'completed';
     project.actualEndDate = new Date();

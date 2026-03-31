@@ -52,16 +52,29 @@ export class AuthController {
 
   /**
    * User login with email and password
+   * Wave 1.1: Sets httpOnly cookie for browser clients while still returning
+   * tokens in the response body for API/script clients.
    */
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  async login(@Body() loginDto: LoginDto, @Req() request: any) {
+  async login(@Body() loginDto: LoginDto, @Req() request: any, @Res({ passthrough: true }) response: any) {
     this.logger.log(`Login attempt for: ${loginDto.email}`);
     const tokens = await this.authService.login(
       loginDto.email,
       loginDto.password,
+      loginDto.organizationId,
     );
-    
+
+    // Set httpOnly cookie for browser clients (XSS mitigation — Wave 1.1)
+    const isProduction = process.env.NODE_ENV === 'production';
+    response.cookie('nexora_token', tokens.accessToken, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'strict' : 'lax',
+      maxAge: tokens.expiresIn * 1000,
+      path: '/',
+    });
+
     return {
       success: true,
       message: 'Login successful',
@@ -71,14 +84,25 @@ export class AuthController {
 
   /**
    * Refresh JWT token
+   * Wave 1.1: Also refreshes the httpOnly cookie.
    */
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  async refreshToken(@Body() refreshTokenDto: RefreshTokenDto) {
+  async refreshToken(@Body() refreshTokenDto: RefreshTokenDto, @Res({ passthrough: true }) response: any) {
     this.logger.debug('Token refresh request');
     const tokens = await this.authService.refreshToken(
       refreshTokenDto.refreshToken,
     );
+
+    const isProduction = process.env.NODE_ENV === 'production';
+    response.cookie('nexora_token', tokens.accessToken, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'strict' : 'lax',
+      maxAge: tokens.expiresIn * 1000,
+      path: '/',
+    });
+
     return {
       success: true,
       message: 'Token refreshed successfully',
@@ -223,13 +247,24 @@ export class AuthController {
 
   /**
    * Logout
+   * Wave 1.1: Clears httpOnly cookie in addition to server-side token invalidation.
    */
   @Post('logout')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
-  async logout(@Req() request: any) {
+  async logout(@Req() request: any, @Res({ passthrough: true }) response: any) {
     this.logger.log(`Logout for user: ${request.user.userId}`);
     await this.authService.logout(request.headers.authorization);
+
+    // Clear httpOnly cookie (Wave 1.1)
+    response.cookie('nexora_token', '', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+      maxAge: 0,
+      path: '/',
+    });
+
     return {
       success: true,
       message: 'Logout successful',
@@ -392,8 +427,8 @@ export class AuthController {
   @Get('users')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
-  async getAllUsers() {
-    const users = await this.authService.getAllUsers();
+  async getAllUsers(@Req() request: any) {
+    const users = await this.authService.getAllUsers(request.user?.organizationId);
     return {
       success: true,
       message: 'Users retrieved successfully',

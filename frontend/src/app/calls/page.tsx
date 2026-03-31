@@ -8,6 +8,7 @@ import { callApi, hrApi } from "@/lib/api";
 import type { CallLog, Employee } from "@/lib/api";
 import { useGlobalSocket } from "@/lib/socket-context";
 import { toast } from "sonner";
+import { RouteGuard } from "@/components/route-guard";
 
 // ── Helpers ──
 
@@ -62,7 +63,12 @@ function CallDetailModal({
 }) {
   const [notes, setNotes] = useState(call.notes || "");
   const [saving, setSaving] = useState(false);
-  const isOutgoing = call.callerId === currentUserId;
+  const isOutgoing = call.initiatorId === currentUserId;
+  const getCallerName = (c: CallLog) => c.initiatorId?.slice(-6) || 'Unknown';
+  const getReceiverName = (c: CallLog) => {
+    const otherId = c.participantIds?.find(id => id !== c.initiatorId);
+    return otherId?.slice(-6) || 'Unknown';
+  };
 
   async function saveNotes() {
     setSaving(true);
@@ -94,12 +100,12 @@ function CallDetailModal({
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 rounded-full bg-[#2E86C1] flex items-center justify-center text-white font-semibold">
                 {getInitials(
-                  (isOutgoing ? call.receiverName : call.callerName)?.split(" ")[0],
-                  (isOutgoing ? call.receiverName : call.callerName)?.split(" ")[1]
+                  (isOutgoing ? getReceiverName(call) : getCallerName(call))?.split(" ")[0],
+                  (isOutgoing ? getReceiverName(call) : getCallerName(call))?.split(" ")[1]
                 )}
               </div>
               <div>
-                <p className="font-semibold text-[#0F172A]">{(isOutgoing ? call.receiverName : call.callerName) || "Unknown"}</p>
+                <p className="font-semibold text-[#0F172A]">{(isOutgoing ? getReceiverName(call) : getCallerName(call)) || "Unknown"}</p>
                 <p className="text-sm text-[#64748B]">{isOutgoing ? "Outgoing" : "Incoming"} {call.type} call</p>
               </div>
             </div>
@@ -191,7 +197,7 @@ function ActiveCallScreen({
   const [speaker, setSpeaker] = useState(false);
 
   useEffect(() => {
-    const start = new Date(call.startTime).getTime();
+    const start = new Date(call.startTime || call.createdAt).getTime();
     const iv = setInterval(() => {
       setElapsed(Math.floor((Date.now() - start) / 1000));
     }, 1000);
@@ -286,33 +292,14 @@ export default function CallsPage() {
       callApi.getStats(),
     ]);
 
-    // Build employee lookup map by userId and _id
+    // Build employee list for name lookup
     const emps: Employee[] = empRes.status === "fulfilled" ? empRes.value.data || [] : [];
     setEmployees(emps);
-    const empMap: Record<string, Employee> = {};
-    for (const e of emps) {
-      empMap[e.userId] = e;
-      empMap[e._id] = e;
-    }
 
-    // Map raw call data to include resolved names
+    // Load call data
     if (callRes.status === "fulfilled") {
-      const rawCalls = callRes.value.data || [];
-      const enriched = rawCalls.map((c: any) => {
-        // Backend returns initiatorId + participantIds; frontend expects callerId/receiverId/callerName/receiverName
-        const callerId = c.callerId || c.initiatorId || "";
-        const receiverId = c.receiverId || (c.participantIds || []).find((id: string) => id !== callerId) || "";
-        const callerEmp = empMap[callerId];
-        const receiverEmp = empMap[receiverId];
-        return {
-          ...c,
-          callerId,
-          receiverId,
-          callerName: c.callerName || (callerEmp ? `${callerEmp.firstName} ${callerEmp.lastName}` : ""),
-          receiverName: c.receiverName || (receiverEmp ? `${receiverEmp.firstName} ${receiverEmp.lastName}` : ""),
-        };
-      });
-      setRecentCalls(enriched);
+      const rawCalls: CallLog[] = callRes.value.data || [];
+      setRecentCalls(rawCalls);
     }
 
     if (statsRes.status === "fulfilled") setStats(statsRes.value.data || null);
@@ -334,17 +321,14 @@ export default function CallsPage() {
       const res = await callApi.create({
         recipientId: emp.userId || emp._id,
         type,
-      } as any);
+      });
       const newCall = res.data!;
       setActiveCall(newCall);
       toast.success(`${type === "video" ? "Video" : "Audio"} call initiated with ${emp.firstName}`);
 
-      // Simulate: auto-answer after 3s
-      setTimeout(async () => {
-        try {
-          const updated = await callApi.update(newCall._id, { status: "answered" } as Partial<CallLog>);
-          setActiveCall(updated.data || { ...newCall, status: "answered" });
-        } catch { /* ignore */ }
+      // Simulate: auto-answer after 3s (note: update endpoint removed; optimistic update only)
+      setTimeout(() => {
+        setActiveCall((prev) => prev ? { ...prev, status: "answered" } : prev);
       }, 3000);
     } catch {
       toast.error("Failed to initiate call");
@@ -354,15 +338,9 @@ export default function CallsPage() {
   // End call
   async function endCall() {
     if (!activeCall) return;
-    try {
-      await callApi.update(activeCall._id, { status: "ended" } as Partial<CallLog>);
-      toast.success("Call ended");
-      setActiveCall(null);
-      loadData(); // refresh
-    } catch {
-      toast.error("Failed to end call");
-      setActiveCall(null);
-    }
+    toast.success("Call ended");
+    setActiveCall(null);
+    loadData(); // refresh
   }
 
   // Handle notes update from modal
@@ -391,12 +369,13 @@ export default function CallsPage() {
   });
 
   const activeCallOtherName = activeCall
-    ? activeCall.callerId === user._id
-      ? activeCall.receiverName || "Unknown"
-      : activeCall.callerName || "Unknown"
+    ? activeCall.initiatorId === user._id
+      ? (activeCall.participantIds?.find(id => id !== activeCall.initiatorId) || "Unknown")
+      : activeCall.initiatorId?.slice(-6) || "Unknown"
     : "";
 
   return (
+    <RouteGuard minOrgRole="member">
     <div className="min-h-screen bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
@@ -528,8 +507,14 @@ export default function CallsPage() {
                     </div>
                   ) : (
                     recentCalls.map((call) => {
-                      const isOutgoing = call.callerId === user._id;
-                      const otherName = isOutgoing ? call.receiverName : call.callerName;
+                      const isOutgoing = call.initiatorId === user._id;
+                      const otherEmpId = isOutgoing
+                        ? call.participantIds?.find(id => id !== call.initiatorId)
+                        : call.initiatorId;
+                      const otherEmp = employees.find(e => e.userId === otherEmpId || e._id === otherEmpId);
+                      const otherName = otherEmp
+                        ? `${otherEmp.firstName} ${otherEmp.lastName}`
+                        : otherEmpId?.slice(-6) || 'Unknown';
                       const initials = getInitials(
                         otherName?.split(" ")[0],
                         otherName?.split(" ")[1]
@@ -594,5 +579,6 @@ export default function CallsPage() {
         />
       )}
     </div>
+    </RouteGuard>
   );
 }

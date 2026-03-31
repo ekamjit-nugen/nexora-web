@@ -7,6 +7,7 @@ import { invoiceApi, clientApi } from "@/lib/api";
 import type { Invoice, InvoiceItem, InvoiceTemplate, InvoiceStats, Client } from "@/lib/api";
 import { toast } from "sonner";
 import { ConfirmModal } from "@/components/confirm-modal";
+import { RouteGuard } from "@/components/route-guard";
 
 const STATUS_COLORS: Record<string, string> = {
   draft: "bg-gray-100 text-gray-700",
@@ -487,6 +488,7 @@ export default function InvoicesPage() {
   if (!user) return null;
 
   return (
+    <RouteGuard minOrgRole="manager">
     <div className="flex h-screen bg-gray-50">
       <Sidebar user={user} onLogout={logout} />
 
@@ -1706,5 +1708,6 @@ export default function InvoicesPage() {
         onCancel={() => setConfirmOpen(false)}
       />
     </div>
+    </RouteGuard>
   );
 }

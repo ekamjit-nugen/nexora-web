@@ -23,6 +23,8 @@ export class JwtAuthGuard implements CanActivate {
         lastName: payload.lastName,
         roles: payload.roles,
         organizationId: payload.organizationId || null,
+        orgRole: payload.orgRole || 'member',
+        isPlatformAdmin: payload.isPlatformAdmin || false,
       };
       return true;
     } catch {

@@ -731,11 +731,9 @@ export default function DirectoryPage() {
   const initiateCall = async (emp: Employee, type: "audio" | "video") => {
     try {
       await callApi.create({
-        receiverId: emp.userId || emp._id,
-        receiverName: `${emp.firstName} ${emp.lastName}`,
-        callerName: user ? `${user.firstName} ${user.lastName}` : undefined,
+        recipientId: emp.userId || emp._id,
         type,
-      } as Partial<CallLog>);
+      });
       toast.success(`${type === "video" ? "Video" : "Audio"} call initiated with ${emp.firstName}`);
       router.push("/calls");
     } catch {

@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsDateString, IsArray, IsNumber, Min, Max } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsDateString, IsArray, IsNumber, IsBoolean, Min, Max } from 'class-validator';
 
 // ── Task DTOs ──
 
@@ -53,6 +53,30 @@ export class CreateTaskDto {
 
   @IsOptional() @IsString()
   projectKey?: string;
+
+  @IsOptional() @IsString()
+  resolution?: string;
+
+  @IsOptional() @IsBoolean()
+  isFlagged?: boolean;
+
+  @IsOptional() @IsArray() @IsString({ each: true })
+  watchers?: string[];
+
+  @IsOptional() @IsArray() @IsString({ each: true })
+  components?: string[];
+
+  @IsOptional() @IsString()
+  fixVersion?: string;
+
+  @IsOptional() @IsString()
+  environment?: string;
+
+  @IsOptional() @IsNumber()
+  originalEstimate?: number;
+
+  @IsOptional() @IsNumber()
+  remainingEstimate?: number;
 }
 
 export class UpdateTaskDto {
@@ -91,28 +115,69 @@ export class UpdateTaskDto {
 
   @IsOptional() @IsNumber()
   estimatedHours?: number;
+
+  @IsOptional() @IsString()
+  sprintId?: string | null;
+
+  @IsOptional() @IsString()
+  columnId?: string;
+
+  @IsOptional() @IsString()
+  boardId?: string;
+
+  @IsOptional() @IsString()
+  resolution?: string;
+
+  @IsOptional() @IsBoolean()
+  isFlagged?: boolean;
+
+  @IsOptional() @IsArray() @IsString({ each: true })
+  components?: string[];
+
+  @IsOptional() @IsString()
+  fixVersion?: string;
+
+  @IsOptional() @IsString()
+  environment?: string;
+
+  @IsOptional() @IsNumber()
+  originalEstimate?: number;
+
+  @IsOptional() @IsNumber()
+  remainingEstimate?: number;
 }
 
 export class AddCommentDto {
   @IsString()
   content: string;
+
+  @IsOptional() @IsArray() @IsString({ each: true })
+  mentionedUserIds?: string[];
 }
 
 export class LogTimeDto {
   @IsNumber()
-  @Min(0.1)
+  @Min(0.25)
   hours: number;
+
+  @IsDateString()
+  date: string;
 
   @IsOptional() @IsString()
   description?: string;
 
-  @IsDateString()
-  date: string;
+  @IsOptional()
+  @IsEnum(['development', 'design', 'meeting', 'review', 'testing', 'documentation', 'admin', 'training', 'other'])
+  category?: string;
 }
 
 export class UpdateStatusDto {
   @IsEnum(['backlog', 'todo', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled'])
   status: string;
+
+  @IsOptional()
+  @IsEnum(['done', 'wont_do', 'duplicate', 'cannot_reproduce', 'incomplete'])
+  resolution?: string;
 }
 
 export class TaskQueryDto {
@@ -145,4 +210,48 @@ export class TaskQueryDto {
 
   @IsOptional() @IsString()
   sort?: string;
+
+  @IsOptional()
+  @IsString()
+  sprintId?: string;
+
+  @IsOptional()
+  @IsString()
+  boardId?: string;
+
+  @IsOptional()
+  @IsString()
+  columnId?: string;
+
+  @IsOptional()
+  @IsString()
+  parentTaskId?: string;
+
+  @IsOptional()
+  @IsString()
+  labels?: string;
+}
+
+export class BulkUpdateDto {
+  @IsArray()
+  @IsString({ each: true })
+  taskIds: string[];
+
+  @IsOptional() @IsString()
+  assigneeId?: string;
+
+  @IsOptional() @IsString()
+  priority?: string;
+
+  @IsOptional() @IsString()
+  status?: string;
+
+  @IsOptional() @IsString()
+  sprintId?: string;
+
+  @IsOptional() @IsArray() @IsString({ each: true })
+  addLabels?: string[];
+
+  @IsOptional() @IsArray() @IsString({ each: true })
+  removeLabels?: string[];
 }

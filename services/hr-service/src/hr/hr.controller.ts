@@ -292,9 +292,9 @@ export class HrController {
     return { success: true, ...result };
   }
 
-  // ── Call Logs ──
+  // ── Call Logs (CRM) — routes use /call-logs to avoid collision with calling-service /calls ──
 
-  @Post('calls')
+  @Post('call-logs')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)
   async createCallLog(@Body() dto: CreateCallLogDto, @Req() req) {
@@ -302,35 +302,35 @@ export class HrController {
     return { success: true, message: 'Call log created successfully', data: callLog };
   }
 
-  @Get('calls')
+  @Get('call-logs')
   @UseGuards(JwtAuthGuard)
   async getCallLogs(@Query() query: CallLogQueryDto, @Req() req) {
     const result = await this.hrService.getCallLogs(query, req.user?.organizationId);
     return { success: true, message: 'Call logs retrieved', data: result.data, pagination: result.pagination };
   }
 
-  @Get('calls/stats')
+  @Get('call-logs/stats')
   @UseGuards(JwtAuthGuard)
   async getCallStats(@Query('userId') userId: string, @Req() req) {
     const stats = await this.hrService.getCallStats(userId || req.user.userId, req.user?.organizationId);
     return { success: true, message: 'Call stats retrieved', data: stats };
   }
 
-  @Get('calls/recent')
+  @Get('call-logs/recent')
   @UseGuards(JwtAuthGuard)
   async getRecentCalls(@Req() req) {
     const calls = await this.hrService.getRecentCalls(req.user.userId, req.user?.organizationId);
     return { success: true, message: 'Recent calls retrieved', data: calls };
   }
 
-  @Get('calls/:id')
+  @Get('call-logs/:id')
   @UseGuards(JwtAuthGuard)
   async getCallLogById(@Param('id') id: string, @Req() req) {
     const callLog = await this.hrService.getCallLogById(id, req.user?.organizationId);
     return { success: true, message: 'Call log retrieved', data: callLog };
   }
 
-  @Put('calls/:id')
+  @Put('call-logs/:id')
   @UseGuards(JwtAuthGuard)
   async updateCallLog(@Param('id') id: string, @Body() dto: UpdateCallLogDto, @Req() req) {
     const callLog = await this.hrService.updateCallLog(id, dto, req.user?.organizationId);

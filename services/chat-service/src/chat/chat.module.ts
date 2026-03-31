@@ -11,6 +11,7 @@ import { MessageSchema } from './schemas/message.schema';
 import { ChatSettingsSchema } from './schemas/chat-settings.schema';
 import { FlaggedMessageSchema } from './schemas/flagged-message.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RolesGuard } from './guards/roles.guard';
 
 @Module({
   imports: [
@@ -29,7 +30,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
     }),
   ],
   controllers: [ChatController],
-  providers: [ChatService, ChatGateway, ModerationService, JwtAuthGuard],
+  providers: [ChatService, ChatGateway, ModerationService, JwtAuthGuard, RolesGuard],
   exports: [ChatService, ChatGateway, ModerationService],
 })
 export class ChatModule {}

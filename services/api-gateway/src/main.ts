@@ -4,6 +4,8 @@ import compression from 'compression';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import axios from 'axios';
 import * as jwt from 'jsonwebtoken';
+// @ts-ignore
+import rateLimit from 'express-rate-limit';
 
 const app = express();
 const port = process.env.GATEWAY_PORT || 3005;
@@ -26,7 +28,7 @@ const SERVICES = {
 const ROUTES: Array<{ paths: string[]; target: string; name: string }> = [
   { paths: ['/api/v1/platform'], target: SERVICES.auth, name: 'auth-service' },
   { paths: ['/api/v1/auth'], target: SERVICES.auth, name: 'auth-service' },
-  { paths: ['/api/v1/employees', '/api/v1/departments', '/api/v1/designations', '/api/v1/teams', '/api/v1/clients', '/api/v1/invoices'], target: SERVICES.hr, name: 'hr-service' },
+  { paths: ['/api/v1/employees', '/api/v1/departments', '/api/v1/designations', '/api/v1/teams', '/api/v1/clients', '/api/v1/invoices', '/api/v1/call-logs'], target: SERVICES.hr, name: 'hr-service' },
   { paths: ['/api/v1/attendance', '/api/v1/shifts', '/api/v1/alerts'], target: SERVICES.attendance, name: 'attendance-service' },
   { paths: ['/api/v1/policies'], target: SERVICES.policy, name: 'policy-service' },
   { paths: ['/api/v1/leaves', '/api/v1/leave-policies'], target: SERVICES.leave, name: 'leave-service' },
@@ -47,15 +49,41 @@ app.use(compression({
     }
     return compression.filter(req, req.res);
   },
-}));
+}) as any);
+// CORS — restrict to allowed origins
+const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3100').split(',');
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  const origin = req.headers.origin;
+  if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin || ALLOWED_ORIGINS[0]);
+  }
   res.header('Access-Control-Allow-Credentials', 'true');
   res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, X-Organization-Id');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
+
+// Rate limiting
+const globalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  message: { success: false, message: 'Too many requests, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: { success: false, message: 'Too many authentication attempts' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use(globalLimiter as any);
+app.use('/api/v1/auth/login', authLimiter as any);
+app.use('/api/v1/auth/send-otp', authLimiter as any);
+app.use('/api/v1/auth/verify-otp', authLimiter as any);
+app.use('/api/v1/auth/register', authLimiter as any);
 
 // Extract organizationId from JWT and forward as header to downstream services
 app.use((req, _res, next) => {
@@ -106,7 +134,10 @@ app.post('/api/v1/ai/chat/stream', express.json({ limit: '5mb' }), async (req: a
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
-    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+    const streamOrigin = req.headers.origin;
+    if (streamOrigin && ALLOWED_ORIGINS.includes(streamOrigin)) {
+      res.setHeader('Access-Control-Allow-Origin', streamOrigin);
+    }
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.flushHeaders();
 
@@ -131,6 +162,15 @@ app.post('/api/v1/ai/chat/stream', express.json({ limit: '5mb' }), async (req: a
     res.end(JSON.stringify({ success: false, message: 'AI service unavailable' }));
   }
 });
+
+// Attendance-specific policies — must be registered BEFORE the generic /api/v1/policies route
+// (attendance-service exposes policies at /api/v1/policies internally; the gateway /api/v1/policies
+// routes to policy-service, so we intercept /api/v1/attendance/policies first and rewrite the path)
+app.use('/api/v1/attendance/policies', createProxyMiddleware({
+  target: SERVICES.attendance,
+  changeOrigin: true,
+  pathRewrite: { '^/api/v1/attendance/policies': '/api/v1/policies' },
+}));
 
 // Register proxy routes
 for (const route of ROUTES) {

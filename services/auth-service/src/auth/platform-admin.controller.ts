@@ -91,6 +91,21 @@ export class PlatformAdminController {
   }
 
   /**
+   * Update organization feature flags
+   */
+  @Put('organizations/:id/features')
+  @HttpCode(HttpStatus.OK)
+  async updateOrganizationFeatures(
+    @Param('id') id: string,
+    @Body() body: { features: Record<string, { enabled: boolean }> },
+    @Req() req: any,
+  ) {
+    this.logger.log(`Platform admin updating features for organization: ${id}`);
+    const data = await this.platformAdminService.updateOrganizationFeatures(id, body.features, req.user.userId, req.ip);
+    return { success: true, message: 'Organization features updated successfully', data };
+  }
+
+  /**
    * List all platform users
    */
   @Get('users')

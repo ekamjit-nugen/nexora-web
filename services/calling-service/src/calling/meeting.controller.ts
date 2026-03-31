@@ -17,6 +17,7 @@ import {
 import { MeetingService } from './meeting.service';
 import { MeetingGateway } from './meeting.gateway';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { Roles, RolesGuard } from './guards/roles.guard';
 import {
   ScheduleMeetingDto,
   UpdateMeetingDto,
@@ -25,6 +26,7 @@ import {
 } from './dto/index';
 
 @Controller('meetings')
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class MeetingController {
   private readonly logger = new Logger(MeetingController.name);
 
@@ -35,7 +37,7 @@ export class MeetingController {
 
   /** Schedule a new meeting */
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @Roles('member', 'manager', 'admin', 'owner')
   @HttpCode(HttpStatus.CREATED)
   async scheduleMeeting(@Body() dto: ScheduleMeetingDto, @Req() req: any) {
     try {
@@ -192,7 +194,7 @@ export class MeetingController {
 
   /** Toggle recording */
   @Post(':meetingId/recording')
-  @UseGuards(JwtAuthGuard)
+  @Roles('manager', 'admin', 'owner')
   @HttpCode(HttpStatus.OK)
   async toggleRecording(
     @Param('meetingId') meetingId: string,

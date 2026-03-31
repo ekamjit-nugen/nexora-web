@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { projectApi, Project } from "@/lib/api";
+import { projectApi, hrApi, Project, Employee } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -34,9 +34,13 @@ const methodologyLabels: Record<string, string> = {
 };
 
 export default function ProjectsPage() {
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading, logout, hasOrgRole } = useAuth();
   const router = useRouter();
+  const canCreateProject = hasOrgRole('manager');
+  const canDeleteProject = hasOrgRole('admin');
+  const canEditProject = hasOrgRole('manager');
   const [projects, setProjects] = useState<Project[]>([]);
+  const [employeeMap, setEmployeeMap] = useState<Map<string, Employee>>(new Map());
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -52,8 +56,17 @@ export default function ProjectsPage() {
       const params: Record<string, string> = {};
       if (search) params.search = search;
       if (statusFilter !== "all") params.status = statusFilter;
-      const res = await projectApi.getAll(params);
+      const [res, empRes] = await Promise.all([
+        projectApi.getAll(params),
+        hrApi.getEmployees().catch(() => ({ data: [] })),
+      ]);
       setProjects(Array.isArray(res.data) ? res.data : []);
+      const map = new Map<string, Employee>();
+      (Array.isArray(empRes.data) ? empRes.data : []).forEach((emp: Employee) => {
+        if (emp.userId) map.set(emp.userId, emp);
+        map.set(emp._id, emp);
+      });
+      setEmployeeMap(map);
     } catch (err: any) {
       toast.error(err.message || "Failed to load projects");
     } finally {
@@ -141,12 +154,14 @@ export default function ProjectsPage() {
             <h1 className="text-2xl font-bold text-[#0F172A]">Projects</h1>
             <p className="text-[13px] text-[#94A3B8] mt-1">Manage and track your team&apos;s projects</p>
           </div>
-          <Button onClick={() => router.push("/projects/new")} className="gap-2 h-10 px-5 bg-[#2E86C1] hover:bg-[#2471A3]">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            New Project
-          </Button>
+          {canCreateProject && (
+            <Button onClick={() => router.push("/projects/new")} className="gap-2 h-10 px-5 bg-[#2E86C1] hover:bg-[#2471A3]">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              New Project
+            </Button>
+          )}
         </div>
 
         {/* Stat Cards */}
@@ -223,10 +238,12 @@ export default function ProjectsPage() {
               </div>
               <h3 className="text-sm font-semibold text-[#334155] mb-1">No projects yet</h3>
               <p className="text-[13px] text-[#94A3B8] mb-4">Create your first project to get started</p>
-              <Button onClick={() => router.push("/projects/new")} className="gap-2 bg-[#2E86C1] hover:bg-[#2471A3]">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
-                New Project
-              </Button>
+              {canCreateProject && (
+                <Button onClick={() => router.push("/projects/new")} className="gap-2 bg-[#2E86C1] hover:bg-[#2471A3]">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+                  New Project
+                </Button>
+              )}
             </CardContent>
           </Card>
         ) : (
@@ -261,25 +278,29 @@ export default function ProjectsPage() {
                               <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v.01M12 12v.01M12 19v.01" />
                             </svg>
                           </button>
-                          {menuOpen === project._id && (
+                          {menuOpen === project._id && (canEditProject || canDeleteProject) && (
                             <>
                               <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setMenuOpen(null); }} />
                               <div className="absolute right-0 top-full mt-1 w-40 bg-white rounded-xl border border-[#E2E8F0] shadow-lg z-50 py-1">
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); openEdit(project); }}
-                                  className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-[#334155] hover:bg-[#F8FAFC]"
-                                >
-                                  <svg className="w-3.5 h-3.5 text-[#64748B]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                                  Edit
-                                </button>
-                                <div className="border-t border-[#F1F5F9] my-0.5" />
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); setDeleteProject(project); setMenuOpen(null); }}
-                                  className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-red-600 hover:bg-red-50"
-                                >
-                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                  Delete
-                                </button>
+                                {canEditProject && (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); openEdit(project); }}
+                                    className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-[#334155] hover:bg-[#F8FAFC]"
+                                  >
+                                    <svg className="w-3.5 h-3.5 text-[#64748B]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                                    Edit
+                                  </button>
+                                )}
+                                {canEditProject && canDeleteProject && <div className="border-t border-[#F1F5F9] my-0.5" />}
+                                {canDeleteProject && (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setDeleteProject(project); setMenuOpen(null); }}
+                                    className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-red-600 hover:bg-red-50"
+                                  >
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                    Delete
+                                  </button>
+                                )}
                               </div>
                             </>
                           )}
@@ -307,9 +328,11 @@ export default function ProjectsPage() {
                     <div className="flex items-center justify-between pt-3 border-t border-[#F1F5F9]">
                       <div className="flex -space-x-1.5">
                         {project.team?.slice(0, 4).map((member, i) => {
-                          const initial = (member.name || member.email || "").charAt(0).toUpperCase();
+                          const emp = employeeMap.get(member.userId) || employeeMap.get(member.userId);
+                          const name = emp ? `${emp.firstName} ${emp.lastName}` : "";
+                          const initial = name.charAt(0).toUpperCase();
                           return (
-                            <div key={i} className="w-6 h-6 rounded-full bg-[#2E86C1] flex items-center justify-center text-white text-[9px] font-bold border-2 border-white" title={member.name || member.email || "Team member"}>
+                            <div key={i} className="w-6 h-6 rounded-full bg-[#2E86C1] flex items-center justify-center text-white text-[9px] font-bold border-2 border-white" title={name || "Team member"}>
                               {initial || (
                                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
                               )}

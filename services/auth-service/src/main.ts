@@ -1,9 +1,15 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import helmet from 'helmet';
+import * as cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
+  if (!process.env.JWT_SECRET) {
+    console.error('FATAL: JWT_SECRET environment variable is not set. Exiting.');
+    process.exit(1);
+  }
+
   const logger = new Logger('NexoraAuthService');
   const app = await NestFactory.create(AppModule, {
     logger: ['error', 'warn', 'debug'],
@@ -14,6 +20,9 @@ async function bootstrap() {
     origin: true,
     credentials: true,
   });
+
+  // Cookie parser (Wave 1.1: httpOnly cookie auth)
+  app.use(cookieParser());
 
   // Security middleware
   app.use(helmet());

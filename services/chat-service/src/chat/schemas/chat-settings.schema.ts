@@ -2,6 +2,7 @@ import { Schema, Document } from 'mongoose';
 
 export interface IChatSettings extends Document {
   userId: string;
+  lastSeenAt: Date;
   readReceipts: {
     showMyReadStatus: boolean;
     showOthersReadStatus: boolean;
@@ -26,6 +27,7 @@ export interface IChatSettings extends Document {
 export const ChatSettingsSchema = new Schema<IChatSettings>(
   {
     userId: { type: String, required: true, unique: true, index: true },
+    lastSeenAt: { type: Date },
     readReceipts: {
       showMyReadStatus: { type: Boolean, default: true },
       showOthersReadStatus: { type: Boolean, default: true },

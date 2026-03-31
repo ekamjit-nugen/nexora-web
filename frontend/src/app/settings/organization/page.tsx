@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { orgApi } from "@/lib/api";
 import { toast } from "sonner";
+import { RouteGuard } from "@/components/route-guard";
 
 const industries = [
   "Technology",
@@ -147,6 +148,7 @@ export default function OrganizationSettingsPage() {
     "w-full rounded-lg border border-[#E2E8F0] px-4 py-2.5 text-sm text-[#0F172A] focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors";
 
   return (
+    <RouteGuard minOrgRole="admin">
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-semibold text-[#0F172A]">Organization</h2>
@@ -313,5 +315,6 @@ export default function OrganizationSettingsPage() {
         </div>
       )}
     </div>
+    </RouteGuard>
   );
 }

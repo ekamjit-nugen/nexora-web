@@ -107,6 +107,13 @@ export class ChatService {
       .sort({ 'lastMessage.sentAt': -1, updatedAt: -1 })
       .lean();
 
+    // Sort: pinned conversations first
+    conversations.sort((a: any, b: any) => {
+      const aPinned = a.participants?.find((p: any) => p.userId?.toString() === userId)?.isPinned ? 1 : 0;
+      const bPinned = b.participants?.find((p: any) => p.userId?.toString() === userId)?.isPinned ? 1 : 0;
+      return bPinned - aPinned;
+    });
+
     return conversations;
   }
 
@@ -158,6 +165,17 @@ export class ChatService {
     );
 
     this.logger.log(`Added ${newUserIds.length} participants to conversation ${conversationId}`);
+
+    // Notify new participants via socket
+    if ((this as any).chatGateway?.server) {
+      for (const userId of userIds) {
+        (this as any).chatGateway.server.to(`user:${userId}`).emit('conversation:added', {
+          conversationId,
+          addedBy,
+        });
+      }
+    }
+
     return updated;
   }
 
@@ -256,7 +274,7 @@ export class ChatService {
           messageId: message._id.toString(),
           conversationId,
           senderId,
-          senderName: senderId,
+          senderName: `User ${senderId.toString().slice(-6)}`,
           content,
           reason: moderationResult.reason,
           severity: moderationResult.severity || 'warning',
@@ -272,7 +290,16 @@ export class ChatService {
     return message;
   }
 
-  async getMessages(conversationId: string, page: number = 1, limit: number = 50) {
+  async getMessages(conversationId: string, userId: string, page: number = 1, limit: number = 50) {
+    const conversation = await this.conversationModel.findOne({
+      _id: conversationId,
+      'participants.userId': userId,
+      isDeleted: false,
+    });
+    if (!conversation) {
+      throw new ForbiddenException('You are not a participant of this conversation');
+    }
+
     const skip = (page - 1) * limit;
 
     const [data, total] = await Promise.all([
@@ -354,35 +381,65 @@ export class ChatService {
     return { message: 'Marked as read' };
   }
 
-  async getUnreadCount(userId: string) {
-    // Get all conversations the user is part of
-    const conversations = await this.conversationModel
-      .find({
-        'participants.userId': userId,
-        isDeleted: false,
-      })
-      .lean();
+  async addReaction(messageId: string, userId: string, emoji: string) {
+    const message = await this.messageModel.findById(messageId);
+    if (!message) throw new NotFoundException('Message not found');
 
-    let totalUnread = 0;
+    const existingIdx = message.reactions?.findIndex(
+      (r: any) => r.emoji === emoji && (r.userId === userId || r.userId?.toString() === userId)
+    );
 
-    for (const conv of conversations) {
-      const participant = conv.participants.find((p) => p.userId === userId);
-      if (!participant) continue;
-
-      const unreadCount = await this.messageModel.countDocuments({
-        conversationId: conv._id.toString(),
-        isDeleted: false,
-        createdAt: { $gt: participant.lastReadAt },
-        senderId: { $ne: userId },
-      });
-
-      if (unreadCount > 0) totalUnread++;
+    if (existingIdx !== undefined && existingIdx >= 0) {
+      // Toggle off — remove existing reaction
+      message.reactions.splice(existingIdx, 1);
+    } else {
+      // Add reaction
+      if (!message.reactions) message.reactions = [];
+      message.reactions.push({ emoji, userId } as any);
     }
 
-    return { unreadConversations: totalUnread };
+    await message.save();
+    return message;
   }
 
-  async searchMessages(conversationId: string, query: string) {
+  async getUnreadCount(userId: string) {
+    const result = await this.conversationModel.aggregate([
+      { $match: { 'participants.userId': userId, isDeleted: false } },
+      { $project: {
+        lastRead: {
+          $filter: { input: '$participants', as: 'p',
+            cond: { $eq: ['$$p.userId', userId] }
+          }
+        }
+      }},
+      { $lookup: { from: 'messages', let: { convId: '$_id', lr: { $arrayElemAt: ['$lastRead.lastReadAt', 0] } },
+        pipeline: [
+          { $match: { $expr: { $and: [
+            { $eq: ['$conversationId', '$$convId'] },
+            { $gt: ['$createdAt', { $ifNull: ['$$lr', new Date(0)] }] },
+            { $ne: ['$senderId', userId] },
+            { $ne: ['$isDeleted', true] }
+          ]}}}
+        ],
+        as: 'unread'
+      }},
+      { $match: { 'unread.0': { $exists: true } } },
+      { $count: 'total' }
+    ]);
+    const count = result[0]?.total || 0;
+    return { unreadConversations: count, count };
+  }
+
+  async searchMessages(conversationId: string, query: string, userId: string) {
+    const conversation = await this.conversationModel.findOne({
+      _id: conversationId,
+      'participants.userId': userId,
+      isDeleted: false,
+    });
+    if (!conversation) {
+      throw new ForbiddenException('You are not a participant of this conversation');
+    }
+
     const messages = await this.messageModel
       .find({
         conversationId,
@@ -396,22 +453,16 @@ export class ChatService {
   }
 
   async pinConversation(conversationId: string, userId: string) {
-    const conversation = await this.conversationModel.findOne({
-      _id: conversationId,
-      isDeleted: false,
-      'participants.userId': userId,
-    });
-
+    const conversation = await this.conversationModel.findById(conversationId);
     if (!conversation) throw new NotFoundException('Conversation not found');
 
-    const updated = await this.conversationModel.findByIdAndUpdate(
-      conversationId,
-      { isPinned: !conversation.isPinned },
-      { new: true },
-    );
+    const participant = conversation.participants.find(p => p.userId === userId || p.userId?.toString() === userId);
+    if (!participant) throw new ForbiddenException('Not a participant');
 
-    this.logger.log(`Conversation ${conversationId} pin toggled by ${userId}`);
-    return updated;
+    (participant as any).isPinned = !(participant as any).isPinned;
+    await conversation.save();
+
+    return { success: true, data: { isPinned: (participant as any).isPinned } };
   }
 
   async muteConversation(conversationId: string, userId: string) {

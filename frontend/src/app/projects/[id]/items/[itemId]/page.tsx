@@ -70,11 +70,27 @@ export default function ItemDetailPage() {
 
   // Comments
   const [addingComment, setAddingComment] = useState(false);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingCommentText, setEditingCommentText] = useState("");
+
+  // Children
+  const [children, setChildren] = useState<Task[]>([]);
+  const [addingChild, setAddingChild] = useState(false);
+  const [childTitle, setChildTitle] = useState("");
+  const [childType, setChildType] = useState("sub_task");
+
+  // Dependencies
+  const [depSearch, setDepSearch] = useState("");
+  const [depSearchResults, setDepSearchResults] = useState<Task[]>([]);
+  const [depType, setDepType] = useState("blocked_by");
+  const [addingDep, setAddingDep] = useState(false);
+  const [showDepModal, setShowDepModal] = useState(false);
 
   // Time log
   const [logHours, setLogHours] = useState("");
   const [logDate, setLogDate] = useState(new Date().toISOString().split("T")[0]);
   const [logDesc, setLogDesc] = useState("");
+  const [logCategory, setLogCategory] = useState("development");
   const [loggingTime, setLoggingTime] = useState(false);
 
   useEffect(() => {
@@ -85,13 +101,15 @@ export default function ItemDetailPage() {
     if (!user) return;
     setLoading(true);
     try {
-      const [pRes, tRes, eRes] = await Promise.all([
+      const [pRes, tRes, eRes, childRes] = await Promise.all([
         projectApi.getById(projectId),
         taskApi.getById(itemId),
         hrApi.getEmployees(),
+        taskApi.getChildren(itemId).catch(() => ({ data: [] })),
       ]);
       setProject(pRes.data || null);
       setEmployees(Array.isArray(eRes.data) ? eRes.data : []);
+      setChildren(Array.isArray(childRes.data) ? childRes.data : []);
       const t = tRes.data;
       if (t) {
         setTask(t);
@@ -150,7 +168,7 @@ export default function ItemDetailPage() {
     if (!logHours || Number(logHours) <= 0) { toast.error("Enter valid hours"); return; }
     setLoggingTime(true);
     try {
-      await taskApi.logTime(itemId, { hours: Number(logHours), date: logDate, description: logDesc || undefined });
+      await taskApi.logTime(itemId, { hours: Number(logHours), date: logDate, description: logDesc || undefined, category: logCategory });
       setLogHours("");
       setLogDesc("");
       toast.success("Time logged");
@@ -160,6 +178,80 @@ export default function ItemDetailPage() {
     } finally {
       setLoggingTime(false);
     }
+  };
+
+  const handleToggleFlag = async () => {
+    try { const res = await taskApi.toggleFlag(itemId); setTask(res.data || task); } catch { toast.error("Failed"); }
+  };
+  const handleToggleWatch = async () => {
+    try { const res = await taskApi.toggleWatch(itemId); setTask(res.data || task); } catch { toast.error("Failed"); }
+  };
+  const handleToggleVote = async () => {
+    try { const res = await taskApi.toggleVote(itemId); setTask(res.data || task); } catch { toast.error("Failed"); }
+  };
+
+  const handleAddChild = async () => {
+    if (!childTitle.trim()) return;
+    try {
+      await taskApi.create({ title: childTitle, type: childType as Task["type"], projectId, projectKey: project?.projectKey, parentTaskId: itemId, status: "todo", priority: "medium" });
+      setChildTitle(""); setAddingChild(false);
+      toast.success("Sub-item created");
+      fetchData();
+    } catch (err: any) { toast.error(err.message || "Failed"); }
+  };
+
+  const handleDepSearch = async (q: string) => {
+    setDepSearch(q);
+    if (q.length < 2) { setDepSearchResults([]); return; }
+    try {
+      const res = await taskApi.getAll({ projectId, search: q });
+      const results = (Array.isArray(res.data) ? res.data : []).filter((t) => t._id !== itemId);
+      setDepSearchResults(results.slice(0, 8));
+    } catch { setDepSearchResults([]); }
+  };
+
+  const handleAddDep = async (depItemId: string) => {
+    setAddingDep(true);
+    try {
+      const res = await taskApi.addDependency(itemId, depItemId, depType);
+      setTask(res.data || task);
+      setShowDepModal(false); setDepSearch(""); setDepSearchResults([]);
+      toast.success("Dependency added");
+    } catch (err: any) { toast.error(err.message || "Failed"); }
+    finally { setAddingDep(false); }
+  };
+
+  const handleRemoveDep = async (depItemId: string) => {
+    try {
+      const res = await taskApi.removeDependency(itemId, depItemId);
+      setTask(res.data || task);
+      toast.success("Dependency removed");
+    } catch (err: any) { toast.error(err.message || "Failed"); }
+  };
+
+  const handleEditComment = async (commentId: string) => {
+    if (!editingCommentText.trim()) return;
+    try {
+      const res = await taskApi.updateComment(itemId, commentId, editingCommentText);
+      setTask(res.data || task);
+      setEditingCommentId(null); setEditingCommentText("");
+      toast.success("Comment updated");
+    } catch (err: any) { toast.error(err.message || "Failed"); }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    try {
+      const res = await taskApi.deleteComment(itemId, commentId);
+      setTask(res.data || task);
+      toast.success("Comment deleted");
+    } catch (err: any) { toast.error(err.message || "Failed"); }
+  };
+
+  const handleToggleReaction = async (commentId: string, emoji: string) => {
+    try {
+      const res = await taskApi.toggleReaction(itemId, commentId, emoji);
+      setTask(res.data || task);
+    } catch { /* silent */ }
   };
 
   const markDirty = () => { if (!dirty) setDirty(true); };
@@ -202,8 +294,40 @@ export default function ItemDetailPage() {
               </span>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            {dirty && <span className="text-[11px] text-amber-600 font-medium">Unsaved changes</span>}
+          <div className="flex items-center gap-2">
+            {/* Flag */}
+            <button
+              onClick={handleToggleFlag}
+              title="Flag"
+              className={`p-2 rounded-lg transition-colors ${task.isFlagged ? "bg-amber-50 text-amber-500" : "text-[#94A3B8] hover:bg-[#F1F5F9] hover:text-amber-500"}`}
+            >
+              <svg className="w-4 h-4" fill={task.isFlagged ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v18m0-13.5h14.25l-2.5 3.5 2.5 3.5H3" />
+              </svg>
+            </button>
+            {/* Watch */}
+            <button
+              onClick={handleToggleWatch}
+              title="Watch"
+              className={`p-2 rounded-lg transition-colors ${task.watchers?.includes(user._id) ? "bg-blue-50 text-blue-500" : "text-[#94A3B8] hover:bg-[#F1F5F9] hover:text-blue-500"}`}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+            {/* Vote */}
+            <button
+              onClick={handleToggleVote}
+              title="Vote"
+              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition-colors text-[12px] font-medium ${task.votes?.includes(user._id) ? "bg-violet-50 text-violet-600" : "text-[#94A3B8] hover:bg-[#F1F5F9] hover:text-violet-600"}`}
+            >
+              <svg className="w-3.5 h-3.5" fill={task.votes?.includes(user._id) ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6.633 10.5c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 012.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 00.322-1.672V3a.75.75 0 01.75-.75A2.25 2.25 0 0116.5 4.5c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 01-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 00-1.423-.23H5.904M14.25 9h2.25M5.904 18.669A1.989 1.989 0 013.916 17.5v-2.38a2 2 0 00-.91-1.686L2.37 12.5" />
+              </svg>
+              {(task.votes?.length || 0) > 0 && <span>{task.votes!.length}</span>}
+            </button>
+            {dirty && <span className="text-[11px] text-amber-600 font-medium ml-1">Unsaved changes</span>}
             <Button onClick={handleSave} disabled={saving || !dirty} className="bg-[#2E86C1] hover:bg-[#2471A3] h-9 min-w-[100px]">
               {saving ? "Saving..." : "Save"}
             </Button>
@@ -259,6 +383,154 @@ export default function ItemDetailPage() {
               )}
             </div>
 
+            {/* Dependencies */}
+            {(() => {
+              const deps: Array<{ itemId: string; type: string }> = (task as any).dependencies || [];
+              const blockedByDeps = deps.filter((d) => d.type === "blocked_by");
+              const blocksDeps = deps.filter((d) => d.type === "blocks");
+              const relatesDeps = deps.filter((d) => d.type === "relates_to");
+              return (
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="text-[11px] font-bold text-[#94A3B8] uppercase tracking-wider flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" /></svg>
+                      Dependencies ({deps.length})
+                    </label>
+                    <button onClick={() => setShowDepModal(true)} className="text-[11px] font-medium text-[#2E86C1] hover:underline">+ Add</button>
+                  </div>
+
+                  {/* Dep modal */}
+                  {showDepModal && (
+                    <div className="mb-4 p-4 bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] space-y-3">
+                      <div className="flex gap-2">
+                        <select value={depType} onChange={(e) => setDepType(e.target.value)} className="h-9 text-sm border border-[#E2E8F0] rounded-lg px-2 bg-white text-[#0F172A]">
+                          <option value="blocked_by">Blocked By</option>
+                          <option value="blocks">Blocks</option>
+                          <option value="relates_to">Relates To</option>
+                          <option value="duplicates">Duplicates</option>
+                        </select>
+                        <input
+                          value={depSearch}
+                          onChange={(e) => handleDepSearch(e.target.value)}
+                          placeholder="Search tasks..."
+                          className="flex-1 h-9 text-sm border border-[#E2E8F0] rounded-lg px-3 bg-white text-[#0F172A] outline-none focus:ring-2 focus:ring-[#2E86C1]"
+                        />
+                        <button onClick={() => { setShowDepModal(false); setDepSearch(""); setDepSearchResults([]); }} className="text-[#94A3B8] hover:text-[#64748B] text-xs">✕</button>
+                      </div>
+                      {depSearchResults.length > 0 && (
+                        <div className="border border-[#E2E8F0] rounded-lg overflow-hidden bg-white">
+                          {depSearchResults.map((t) => (
+                            <button key={t._id} onClick={() => handleAddDep(t._id)} disabled={addingDep}
+                              className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-[#F8FAFC] text-left border-b border-[#F1F5F9] last:border-0">
+                              <span className="text-[10px] font-mono text-[#94A3B8]">{t.taskKey || t._id.slice(-6)}</span>
+                              <span className="text-[12px] text-[#0F172A] truncate">{t.title}</span>
+                              <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full ${t.status === "done" ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-600"}`}>{t.status}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {deps.length === 0 && !showDepModal && (
+                    <p className="text-[12px] text-[#94A3B8] py-1">No dependencies. Add one to link related tasks.</p>
+                  )}
+
+                  {[
+                    { label: "Blocked By", items: blockedByDeps, dotColor: "bg-red-400" },
+                    { label: "Blocks", items: blocksDeps, dotColor: "bg-orange-400" },
+                    { label: "Relates To", items: relatesDeps, dotColor: "bg-blue-400" },
+                  ].map(({ label, items, dotColor }) => items.length > 0 && (
+                    <div key={label} className="mb-3">
+                      <p className="text-[10px] font-semibold text-[#94A3B8] mb-1.5 flex items-center gap-1.5">
+                        <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />{label}
+                      </p>
+                      {items.map((d) => (
+                        <div key={d.itemId} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] mb-1.5">
+                          <span className="text-[11px] text-[#64748B] flex-1 truncate">{d.itemId}</span>
+                          <button onClick={() => handleRemoveDep(d.itemId)} className="text-[#94A3B8] hover:text-red-500 transition-colors">
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* Child Items */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <label className="text-[11px] font-bold text-[#94A3B8] uppercase tracking-wider flex items-center gap-2">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>
+                  Sub-items ({children.length})
+                </label>
+                <button onClick={() => setAddingChild(!addingChild)} className="text-[11px] font-medium text-[#2E86C1] hover:underline">+ Add</button>
+              </div>
+
+              {/* Progress bar */}
+              {children.length > 0 && (() => {
+                const done = children.filter((c) => c.status === "done").length;
+                const pct = Math.round((done / children.length) * 100);
+                return (
+                  <div className="mb-3">
+                    <div className="flex items-center justify-between text-[11px] text-[#64748B] mb-1">
+                      <span>{done} of {children.length} done</span>
+                      <span>{pct}%</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-[#F1F5F9] rounded-full overflow-hidden">
+                      <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {addingChild && (
+                <div className="flex gap-2 mb-3">
+                  <select value={childType} onChange={(e) => setChildType(e.target.value)} className="h-9 text-sm border border-[#E2E8F0] rounded-lg px-2 bg-white text-[#0F172A] shrink-0">
+                    <option value="sub_task">Subtask</option>
+                    <option value="task">Task</option>
+                    <option value="bug">Bug</option>
+                    <option value="story">Story</option>
+                  </select>
+                  <input
+                    value={childTitle}
+                    onChange={(e) => setChildTitle(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleAddChild()}
+                    placeholder="Sub-item title..."
+                    className="flex-1 h-9 text-sm border border-[#E2E8F0] rounded-lg px-3 bg-white text-[#0F172A] outline-none focus:ring-2 focus:ring-[#2E86C1]"
+                  />
+                  <Button onClick={handleAddChild} size="sm" className="bg-[#2E86C1] hover:bg-[#2471A3] h-9">Add</Button>
+                  <Button onClick={() => { setAddingChild(false); setChildTitle(""); }} size="sm" variant="outline" className="h-9 border-[#E2E8F0]">✕</Button>
+                </div>
+              )}
+
+              {children.map((child) => {
+                const childAssignee = employees.find((e) => (e.userId || e._id) === child.assigneeId);
+                const tc = typeConfig[child.type] || typeConfig.task;
+                return (
+                  <div
+                    key={child._id}
+                    onClick={() => router.push(`/projects/${projectId}/items/${child._id}`)}
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-[#E2E8F0] hover:border-[#CBD5E1] hover:shadow-sm bg-white cursor-pointer mb-1.5 transition-all"
+                  >
+                    <svg className={`w-3.5 h-3.5 shrink-0 ${tc.color}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d={tc.icon} /></svg>
+                    <span className="text-[11px] text-[#94A3B8] font-mono shrink-0">{child.taskKey || ""}</span>
+                    <span className="text-[13px] text-[#0F172A] flex-1 truncate">{child.title}</span>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full shrink-0 ${child.status === "done" ? "bg-emerald-50 text-emerald-700" : child.status === "in_progress" ? "bg-amber-50 text-amber-700" : "bg-gray-100 text-gray-600"}`}>
+                      {child.status.replace("_", " ")}
+                    </span>
+                    {childAssignee && (
+                      <div className="w-6 h-6 rounded-full bg-[#2E86C1] flex items-center justify-center text-white text-[9px] font-bold shrink-0">
+                        {childAssignee.firstName.charAt(0)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
             {/* Comments */}
             <div>
               <label className="text-[11px] font-bold text-[#94A3B8] uppercase tracking-wider mb-4 flex items-center gap-2">
@@ -286,20 +558,74 @@ export default function ItemDetailPage() {
 
               {(task.comments || []).length > 0 && (
                 <div className="space-y-4 mt-5">
-                  {(task.comments || []).slice().reverse().map((c, i) => (
-                    <div key={c._id || i} className="flex gap-3 ml-12">
-                      <div className="w-8 h-8 rounded-full bg-[#F1F5F9] flex items-center justify-center text-[10px] font-bold text-[#64748B] shrink-0">
-                        {(c.userId || "?").slice(-2).toUpperCase()}
-                      </div>
-                      <div className="flex-1 bg-white rounded-xl border border-[#E2E8F0] p-3.5">
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <span className="text-[12px] font-semibold text-[#334155]">{c.userId?.slice(-6) || "User"}</span>
-                          <span className="text-[10px] text-[#94A3B8]">{c.createdAt ? new Date(c.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                  {(task.comments || []).slice().reverse().map((c, i) => {
+                    const isOwn = c.userId === user._id;
+                    const isEditing = editingCommentId === c._id;
+                    const QUICK_EMOJIS = ["👍", "👎", "❤️", "🎉", "🚀", "😄"];
+                    return (
+                      <div key={c._id || i} className="flex gap-3 ml-12">
+                        <div className="w-8 h-8 rounded-full bg-[#F1F5F9] flex items-center justify-center text-[10px] font-bold text-[#64748B] shrink-0">
+                          {(c.userId || "?").slice(-2).toUpperCase()}
                         </div>
-                        <CommentContent text={c.content} />
+                        <div className="flex-1 bg-white rounded-xl border border-[#E2E8F0] p-3.5">
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <span className="text-[12px] font-semibold text-[#334155]">{c.userId?.slice(-6) || "User"}</span>
+                            <span className="text-[10px] text-[#94A3B8]">{c.createdAt ? new Date(c.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                            {c.isEdited && <span className="text-[10px] text-[#94A3B8] italic">(edited)</span>}
+                            {isOwn && !isEditing && (
+                              <div className="ml-auto flex items-center gap-1.5">
+                                <button onClick={() => { setEditingCommentId(c._id || null); setEditingCommentText(c.content); }} className="text-[10px] text-[#94A3B8] hover:text-[#2E86C1]">Edit</button>
+                                <button onClick={() => c._id && handleDeleteComment(c._id)} className="text-[10px] text-[#94A3B8] hover:text-red-500">Delete</button>
+                              </div>
+                            )}
+                          </div>
+                          {isEditing ? (
+                            <div className="space-y-2">
+                              <textarea
+                                value={editingCommentText}
+                                onChange={(e) => setEditingCommentText(e.target.value)}
+                                className="w-full text-sm border border-[#E2E8F0] rounded-lg p-2 outline-none focus:ring-2 focus:ring-[#2E86C1] resize-none"
+                                rows={3}
+                              />
+                              <div className="flex gap-2">
+                                <Button size="sm" onClick={() => c._id && handleEditComment(c._id)} className="h-7 text-[11px] bg-[#2E86C1] hover:bg-[#2471A3]">Save</Button>
+                                <Button size="sm" variant="outline" onClick={() => { setEditingCommentId(null); setEditingCommentText(""); }} className="h-7 text-[11px] border-[#E2E8F0]">Cancel</Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <CommentContent text={c.content} />
+                              {/* Reactions */}
+                              <div className="flex items-center flex-wrap gap-1.5 mt-2">
+                                {(c.reactions || []).map((r) => (
+                                  <button
+                                    key={r.emoji}
+                                    onClick={() => c._id && handleToggleReaction(c._id, r.emoji)}
+                                    className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] border transition-colors ${r.userIds?.includes(user._id) ? "bg-[#EBF5FB] border-[#2E86C1] text-[#2E86C1]" : "bg-[#F8FAFC] border-[#E2E8F0] text-[#64748B] hover:border-[#CBD5E1]"}`}
+                                  >
+                                    <span>{r.emoji}</span>
+                                    <span>{r.userIds?.length || 0}</span>
+                                  </button>
+                                ))}
+                                {/* Quick emoji picker */}
+                                <div className="flex gap-0.5">
+                                  {QUICK_EMOJIS.map((emoji) => (
+                                    <button
+                                      key={emoji}
+                                      onClick={() => c._id && handleToggleReaction(c._id, emoji)}
+                                      className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-[#F1F5F9] text-[12px] transition-colors opacity-0 group-hover:opacity-100"
+                                    >
+                                      {emoji}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -413,6 +739,17 @@ export default function ItemDetailPage() {
                   <Input type="date" value={logDate} onChange={(e) => setLogDate(e.target.value)} className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0]" />
                 </div>
                 <Input value={logDesc} onChange={(e) => setLogDesc(e.target.value)} placeholder="What did you work on?" className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0]" />
+                <select value={logCategory} onChange={(e) => setLogCategory(e.target.value)} className="w-full h-10 text-sm bg-[#F8FAFC] border border-[#E2E8F0] rounded-md px-3 text-[#0F172A]">
+                  <option value="development">Development</option>
+                  <option value="design">Design</option>
+                  <option value="meeting">Meeting</option>
+                  <option value="review">Review</option>
+                  <option value="testing">Testing</option>
+                  <option value="documentation">Documentation</option>
+                  <option value="admin">Admin</option>
+                  <option value="training">Training</option>
+                  <option value="other">Other</option>
+                </select>
                 <Button onClick={handleLogTime} disabled={loggingTime || !logHours} size="sm" className="w-full bg-[#2E86C1] hover:bg-[#2471A3] h-9">
                   {loggingTime ? "Logging..." : "Log Time"}
                 </Button>

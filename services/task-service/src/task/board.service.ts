@@ -127,11 +127,12 @@ export class BoardService {
       throw new BadRequestException('Cannot remove the last column');
     }
 
-    // Move tasks in this column to the first available column
+    // Move tasks in this column to the first available column, also sync status
     const firstColumn = board.columns.find((c) => c.id !== columnId);
+    const targetStatus = firstColumn.statusMapping?.[0] || 'backlog';
     await this.taskModel.updateMany(
       { boardId, columnId, isDeleted: false },
-      { columnId: firstColumn.id },
+      { $set: { columnId: firstColumn.id, status: targetStatus } },
     );
 
     board.columns.splice(colIndex, 1);
@@ -219,6 +220,20 @@ export class BoardService {
       { name: template.name, projectId, type: templateType },
       userId,
     );
+  }
+
+  async reorderTasks(taskIds: string[], columnId?: string, sprintId?: string) {
+    // Bulk update order field for tasks based on their position in the array
+    const updatePromises = taskIds.map((taskId, index) =>
+      this.taskModel.findByIdAndUpdate(
+        taskId,
+        { order: index },
+        { new: true },
+      ),
+    );
+    const updatedTasks = await Promise.all(updatePromises);
+    this.logger.log(`Reordered ${taskIds.length} tasks in backlog${columnId ? ` (column: ${columnId})` : ''}${sprintId ? ` (sprint: ${sprintId})` : ''}`);
+    return updatedTasks;
   }
 
   getTemplates() {

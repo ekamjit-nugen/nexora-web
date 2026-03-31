@@ -3,12 +3,13 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { taskApi, projectApi, Task, Project } from "@/lib/api";
+import { taskApi, projectApi, hrApi, Task, Project, Employee } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { RouteGuard } from "@/components/route-guard";
 
 const priorityColors: Record<string, string> = {
   critical: "bg-red-100 text-red-700",
@@ -41,17 +42,20 @@ const typeConfig: Record<string, { label: string; icon: string; color: string }>
 type GroupBy = "type" | "status" | "priority" | "project" | "none";
 
 export default function TasksPage() {
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading, logout, hasOrgRole } = useAuth();
   const router = useRouter();
+  const canViewAllTasks = hasOrgRole('manager');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [employeeMap, setEmployeeMap] = useState<Map<string, Employee>>(new Map());
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [projectFilter, setProjectFilter] = useState("all");
-  const [viewMode, setViewMode] = useState<"my" | "all">("my");
+  // Members default to "my" view; managers+ can switch to "all"
+  const [viewMode, setViewMode] = useState<"my" | "all">(canViewAllTasks ? "my" : "my");
   const [groupBy, setGroupBy] = useState<GroupBy>("type");
 
   const fetchTasks = useCallback(async () => {
@@ -61,13 +65,20 @@ export default function TasksPage() {
       if (projectFilter !== "all") params.projectId = projectFilter;
       if (statusFilter !== "all") params.status = statusFilter;
 
-      const [tasksRes, projRes] = await Promise.all([
+      const [tasksRes, projRes, empRes] = await Promise.all([
         viewMode === "my" ? taskApi.getMyTasks() : taskApi.getAll(params),
         projectApi.getAll(),
+        hrApi.getEmployees().catch(() => ({ data: [] })),
       ]);
 
       let taskList = Array.isArray(tasksRes.data) ? tasksRes.data : [];
       setProjects(Array.isArray(projRes.data) ? projRes.data : []);
+      const map = new Map<string, Employee>();
+      (Array.isArray(empRes.data) ? empRes.data : []).forEach((emp: Employee) => {
+        if (emp.userId) map.set(emp.userId, emp);
+        map.set(emp._id, emp);
+      });
+      setEmployeeMap(map);
 
       if (viewMode === "my") {
         if (statusFilter !== "all") taskList = taskList.filter((t) => t.status === statusFilter);
@@ -168,6 +179,7 @@ export default function TasksPage() {
   });
 
   return (
+    <RouteGuard minOrgRole="member">
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
       <main className="flex-1 ml-[260px] p-8">
@@ -230,7 +242,9 @@ export default function TasksPage() {
               {/* View mode */}
               <div className="flex gap-1 bg-white rounded-lg border border-[#E2E8F0] p-1">
                 <button onClick={() => setViewMode("my")} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${viewMode === "my" ? "bg-[#2E86C1] text-white" : "text-[#64748B] hover:bg-[#F1F5F9]"}`}>My Tasks</button>
-                <button onClick={() => setViewMode("all")} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${viewMode === "all" ? "bg-[#2E86C1] text-white" : "text-[#64748B] hover:bg-[#F1F5F9]"}`}>All Tasks</button>
+                {canViewAllTasks && (
+                  <button onClick={() => setViewMode("all")} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${viewMode === "all" ? "bg-[#2E86C1] text-white" : "text-[#64748B] hover:bg-[#F1F5F9]"}`}>All Tasks</button>
+                )}
               </div>
 
               <div className="relative flex-1 max-w-xs">
@@ -353,9 +367,14 @@ export default function TasksPage() {
                           )}
 
                           {/* Assignee */}
-                          {task.assigneeId ? (
-                            <div className="w-6 h-6 rounded-full bg-[#2E86C1] flex items-center justify-center text-white text-[9px] font-bold shrink-0">A</div>
-                          ) : (
+                          {task.assigneeId ? (() => {
+                            const emp = employeeMap.get(task.assigneeId);
+                            const initial = emp ? `${emp.firstName} ${emp.lastName}`.charAt(0).toUpperCase() : "?";
+                            const title = emp ? `${emp.firstName} ${emp.lastName}` : task.assigneeId;
+                            return (
+                              <div className="w-6 h-6 rounded-full bg-[#2E86C1] flex items-center justify-center text-white text-[9px] font-bold shrink-0" title={title}>{initial}</div>
+                            );
+                          })() : (
                             <div className="w-6 h-6 rounded-full bg-[#F1F5F9] flex items-center justify-center shrink-0">
                               <svg className="w-3 h-3 text-[#CBD5E1]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
                             </div>
@@ -371,5 +390,6 @@ export default function TasksPage() {
         )}
       </main>
     </div>
+    </RouteGuard>
   );
 }
