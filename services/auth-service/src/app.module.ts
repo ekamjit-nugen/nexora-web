@@ -13,6 +13,8 @@ import { OrganizationController } from './auth/organization.controller';
 import { OrganizationService } from './auth/organization.service';
 import { PlatformAdminController } from './auth/platform-admin.controller';
 import { PlatformAdminService } from './auth/platform-admin.service';
+import { SystemHealthController } from './auth/system-health.controller';
+import { SystemHealthService } from './auth/system-health.service';
 import { AuditLogSchema } from './auth/schemas/audit-log.schema';
 import { JwtStrategy } from './auth/strategies/jwt.strategy';
 import { GoogleStrategy } from './auth/strategies/google.strategy';
@@ -58,11 +60,12 @@ import { HealthModule } from './health/health.module';
     }),
     HealthModule,
   ],
-  controllers: [AuthController, OrganizationController, PlatformAdminController],
+  controllers: [AuthController, OrganizationController, PlatformAdminController, SystemHealthController],
   providers: [
     AuthService,
     OrganizationService,
     PlatformAdminService,
+    SystemHealthService,
     JwtStrategy,
     GoogleStrategy,
     MicrosoftStrategy,
