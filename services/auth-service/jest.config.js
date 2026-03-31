@@ -13,14 +13,6 @@ module.exports = {
   moduleNameMapper: {
     '^src/(.*)$': '<rootDir>/$1',
   },
-  collectCoverageFrom: {
-    '**/*.ts': {
-      lines: 80,
-      functions: 80,
-      branches: 75,
-      statements: 80,
-    },
-  },
 };
 
 /*
