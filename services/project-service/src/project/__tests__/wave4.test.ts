@@ -198,6 +198,7 @@ describe('Wave 4: Reporting & Market Differentiators', () => {
         'task-123',
         'user-2',
         {
+          taskId: 'task-123',
           duration: 120, // 2 hours
           description: 'Worked on feature',
           date: new Date(),
@@ -215,6 +216,7 @@ describe('Wave 4: Reporting & Market Differentiators', () => {
     it('should reject logs with zero or negative duration', async () => {
       await expect(
         timeTrackingService.logTime(projectId, 'task-123', 'user-2', {
+          taskId: 'task-123',
           duration: 0,
           description: 'Invalid',
           date: new Date(),
@@ -224,10 +226,12 @@ describe('Wave 4: Reporting & Market Differentiators', () => {
 
     it('should get all logs for a task', async () => {
       await timeTrackingService.logTime(projectId, 'task-123', 'user-2', {
+        taskId: 'task-123',
         duration: 60,
         date: new Date(),
       });
       await timeTrackingService.logTime(projectId, 'task-123', 'user-3', {
+        taskId: 'task-123',
         duration: 120,
         date: new Date(),
       });
@@ -240,10 +244,12 @@ describe('Wave 4: Reporting & Market Differentiators', () => {
 
     it('should calculate total time logged on task', async () => {
       await timeTrackingService.logTime(projectId, 'task-123', 'user-2', {
+        taskId: 'task-123',
         duration: 60,
         date: new Date(),
       });
       await timeTrackingService.logTime(projectId, 'task-123', 'user-2', {
+        taskId: 'task-123',
         duration: 120,
         date: new Date(),
       });
@@ -255,6 +261,7 @@ describe('Wave 4: Reporting & Market Differentiators', () => {
 
     it('should update time log', async () => {
       const log = await timeTrackingService.logTime(projectId, 'task-123', 'user-2', {
+        taskId: 'task-123',
         duration: 60,
         description: 'Initial',
         date: new Date(),
@@ -275,6 +282,7 @@ describe('Wave 4: Reporting & Market Differentiators', () => {
 
     it('should delete time log', async () => {
       const log = await timeTrackingService.logTime(projectId, 'task-123', 'user-2', {
+        taskId: 'task-123',
         duration: 60,
         date: new Date(),
       });
@@ -290,10 +298,12 @@ describe('Wave 4: Reporting & Market Differentiators', () => {
       monday.setDate(monday.getDate() - monday.getDay() + 1);
 
       await timeTrackingService.logTime(projectId, 'task-1', 'user-2', {
+        taskId: 'task-1',
         duration: 480, // 8 hours
         date: new Date(monday),
       });
       await timeTrackingService.logTime(projectId, 'task-2', 'user-2', {
+        taskId: 'task-2',
         duration: 240, // 4 hours
         date: new Date(monday.getTime() + 1 * 24 * 60 * 60 * 1000),
       });
@@ -356,12 +366,14 @@ describe('Wave 4: Reporting & Market Differentiators', () => {
     it('should calculate user billing data', async () => {
       const now = new Date();
       await timeTrackingService.logTime(projectId, 'task-1', 'user-2', {
+        taskId: 'task-1',
         duration: 480, // 8 hours
         date: now,
         rate: 50,
         billable: true,
       });
       await timeTrackingService.logTime(projectId, 'task-2', 'user-2', {
+        taskId: 'task-2',
         duration: 240, // 4 hours
         date: now,
         rate: 50,

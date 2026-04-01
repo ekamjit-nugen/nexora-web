@@ -15,7 +15,11 @@ import { PlatformAdminController } from './auth/platform-admin.controller';
 import { PlatformAdminService } from './auth/platform-admin.service';
 import { SystemHealthController } from './auth/system-health.controller';
 import { SystemHealthService } from './auth/system-health.service';
+import { ReportingController } from './auth/reporting.controller';
+import { ReportingService } from './auth/reporting.service';
 import { AuditLogSchema } from './auth/schemas/audit-log.schema';
+import { ReportTemplateSchema } from './auth/schemas/report-template.schema';
+import { ScheduledReportSchema } from './auth/schemas/scheduled-report.schema';
 import { JwtStrategy } from './auth/strategies/jwt.strategy';
 import { GoogleStrategy } from './auth/strategies/google.strategy';
 import { MicrosoftStrategy } from './auth/strategies/microsoft.strategy';
@@ -46,6 +50,8 @@ import { HealthModule } from './health/health.module';
       { name: 'Organization', schema: OrganizationSchema },
       { name: 'OrgMembership', schema: OrgMembershipSchema },
       { name: 'AuditLog', schema: AuditLogSchema },
+      { name: 'ReportTemplate', schema: ReportTemplateSchema },
+      { name: 'ScheduledReport', schema: ScheduledReportSchema },
     ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
@@ -60,19 +66,20 @@ import { HealthModule } from './health/health.module';
     }),
     HealthModule,
   ],
-  controllers: [AuthController, OrganizationController, PlatformAdminController, SystemHealthController],
+  controllers: [AuthController, OrganizationController, PlatformAdminController, SystemHealthController, ReportingController],
   providers: [
     AuthService,
     OrganizationService,
     PlatformAdminService,
     SystemHealthService,
+    ReportingService,
     JwtStrategy,
     GoogleStrategy,
     MicrosoftStrategy,
     SamlStrategy,
     JwtAuthGuard,
   ],
-  exports: [AuthService, OrganizationService, JwtModule],
+  exports: [AuthService, OrganizationService, ReportingService, JwtModule],
 })
 export class AppModule {}
 

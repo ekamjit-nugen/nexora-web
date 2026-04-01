@@ -1399,4 +1399,25 @@ export const platformApi = {
   getAnalytics: () => request<any>('/platform/analytics'),
   getAuditLogs: (params?: { page?: number; limit?: number; action?: string; targetType?: string }) =>
     request<any[]>(`/platform/audit-logs?${new URLSearchParams(Object.entries(params || {}).filter(([_, v]) => v != null).map(([k, v]) => [k, String(v)])).toString()}`),
+
+  // Reporting APIs
+  generateReport: (data: { type: string; format: 'pdf' | 'excel' | 'csv'; startDate?: string; endDate?: string; fields?: string[] }) =>
+    request<Blob>('/reports/generate', { method: 'POST', body: JSON.stringify(data) }),
+  getReportTemplates: () => request<any[]>('/reports/templates'),
+  getReportTemplate: (templateId: string) => request<any>(`/reports/templates/${templateId}`),
+  createReportTemplate: (data: { name: string; description: string; type: string; format: 'pdf' | 'excel' | 'csv'; filters?: Record<string, unknown> }) =>
+    request<any>('/reports/templates', { method: 'POST', body: JSON.stringify(data) }),
+  updateReportTemplate: (templateId: string, data: any) =>
+    request<any>(`/reports/templates/${templateId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteReportTemplate: (templateId: string) =>
+    request(`/reports/templates/${templateId}`, { method: 'DELETE' }),
+  scheduleReport: (data: { templateId: string; recipients: string[]; schedule: 'daily' | 'weekly' | 'monthly' }) =>
+    request<any>('/reports/schedule', { method: 'POST', body: JSON.stringify(data) }),
+  getScheduledReports: () => request<any[]>('/reports/scheduled'),
+  updateScheduledReport: (reportId: string, data: any) =>
+    request<any>(`/reports/scheduled/${reportId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteScheduledReport: (reportId: string) =>
+    request(`/reports/scheduled/${reportId}`, { method: 'DELETE' }),
+  executeScheduledReport: (reportId: string) =>
+    request<Blob>(`/reports/scheduled/${reportId}/execute`, { method: 'POST' }),
 };

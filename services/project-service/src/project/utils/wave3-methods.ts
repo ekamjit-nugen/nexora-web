@@ -67,7 +67,7 @@ export class Wave3MethodsService {
       throw new NotFoundException('Project member not found');
     }
 
-    if (dto.role) member.role = dto.role;
+    if (dto.role) member.role = dto.role as 'admin' | 'lead' | 'developer' | 'viewer';
     if (dto.permissions) member.permissions = dto.permissions;
 
     await member.save();

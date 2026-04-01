@@ -145,6 +145,7 @@ export class TimeTrackingController {
       dto.taskId,
       req.user.userId,
       {
+        taskId: dto.taskId,
         duration: dto.duration,
         description: dto.description,
         date: dto.date ? new Date(dto.date) : new Date(),
@@ -195,7 +196,11 @@ export class TimeTrackingController {
     @Param('logId') logId: string,
     @Body() dto: UpdateTimeLogDto,
   ) {
-    const timeLog = await this.timeTrackingService.updateTimeLog(projectId, logId, dto);
+    const updateData = {
+      ...dto,
+      ...(dto.date && { date: new Date(dto.date) }),
+    };
+    const timeLog = await this.timeTrackingService.updateTimeLog(projectId, logId, updateData as any);
 
     return {
       success: true,
