@@ -344,7 +344,7 @@ export default function ReportsPage() {
                         <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} />
                         <Tooltip
                           contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
-                          formatter={(value: number) => [value, "Velocity"]}
+                          formatter={(value: any) => [value, "Velocity"]}
                           labelFormatter={(label) => {
                             const item = velocityData.find((d) => d.sprint === label);
                             return item ? `${item.project} — ${label}` : label;
