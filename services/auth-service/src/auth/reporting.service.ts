@@ -1,8 +1,8 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import * as PDFDocument from 'pdfkit';
-import * as ExcelJS from 'exceljs';
+import PDFDocument from 'pdfkit';
+import ExcelJS from 'exceljs';
 import { Readable } from 'stream';
 
 export interface ReportFilter {
@@ -126,7 +126,7 @@ export class ReportingService {
     return result;
   }
 
-  private generatePDF(data: any[], reportType: string): Buffer {
+  private generatePDF(data: any[], reportType: string): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument();
       const buffers: Buffer[] = [];
@@ -160,7 +160,7 @@ export class ReportingService {
 
     if (data.length === 0) {
       worksheet.addRow(['No data available']);
-      return workbook.xlsx.writeBuffer();
+      return (await workbook.xlsx.writeBuffer()) as any as Buffer;
     }
 
     if (Array.isArray(data) && typeof data[0] === 'object') {
@@ -176,7 +176,7 @@ export class ReportingService {
       worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
     }
 
-    return workbook.xlsx.writeBuffer();
+    return (await workbook.xlsx.writeBuffer()) as any as Buffer;
   }
 
   private generateCSV(data: any[], reportType: string): Buffer {
@@ -199,7 +199,7 @@ export class ReportingService {
     return Buffer.from(csvLines.join('\n'));
   }
 
-  private drawTable(doc: PDFDocument, data: string[][], options: any = {}): void {
+  private drawTable(doc: InstanceType<typeof PDFDocument>, data: string[][], options: any = {}): void {
     const { x = 50, y = 100, width = 500, rowHeight = 20 } = options;
     const cellWidth = width / data[0].length;
 
