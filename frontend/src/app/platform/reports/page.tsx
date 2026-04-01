@@ -118,7 +118,7 @@ export default function ReportsPage() {
   };
 
   return (
-    <RouteGuard requiredRole="admin">
+    <RouteGuard minOrgRole="admin">
       <div className="flex h-screen bg-gray-50">
         <Sidebar />
 
