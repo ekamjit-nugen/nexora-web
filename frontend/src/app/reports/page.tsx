@@ -153,7 +153,7 @@ export default function ReportsPage() {
         const raw = attRes.value.data;
         const stats: AttendanceStat[] = Array.isArray(raw)
           ? raw
-          : raw?.employees ?? raw?.stats ?? [];
+          : (raw as any)?.employees ?? (raw as any)?.stats ?? [];
         setAttendanceStats(stats);
       }
     } finally {
