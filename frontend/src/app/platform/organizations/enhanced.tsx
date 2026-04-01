@@ -299,7 +299,9 @@ export default function EnhancedOrganizationsPage() {
                           <input
                             type="checkbox"
                             checked={bulkSelection.isAllSelected()}
-                            indeterminate={bulkSelection.isIndeterminate()}
+                            ref={(el) => {
+                              if (el) el.indeterminate = bulkSelection.isIndeterminate();
+                            }}
                             onChange={() => bulkSelection.toggleAll()}
                             className="rounded"
                           />
