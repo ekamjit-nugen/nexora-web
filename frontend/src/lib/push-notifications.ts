@@ -117,36 +117,32 @@ export class PushNotificationService {
   async showNotification(
     notification: PushNotification,
     options?: PushNotificationOptions,
-  ): Promise<Notification | null> {
+  ): Promise<void> {
     if (!this.isSupported) {
       console.warn("Notifications not supported");
-      return null;
+      return;
     }
 
     const permission = await this.requestPermission();
     if (permission !== "granted") {
       console.warn("Notification permission denied");
-      return null;
+      return;
     }
 
     if (this.registration) {
       try {
-        return await this.registration.showNotification(notification.title, {
+        await this.registration.showNotification(notification.title, {
           body: notification.body,
           icon: notification.icon,
           badge: notification.badge,
           tag: notification.tag || "default",
-          actions: notification.actions,
           data: notification.data,
           requireInteraction: false,
         });
       } catch (error) {
         console.error("Failed to show notification:", error);
-        return null;
       }
     }
-
-    return null;
   }
 
   /**

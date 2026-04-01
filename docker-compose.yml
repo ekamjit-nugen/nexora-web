@@ -58,7 +58,7 @@ services:
 
   # Service Mesh & API Gateway
   consul:
-    image: consul:latest
+    image: consul:1.15
     container_name: nexora-consul
     ports:
       - "8500:8500"
@@ -94,7 +94,7 @@ services:
       retries: 5
 
   kong-migrations:
-    image: kong:3.3-alpine
+    image: kong:latest
     container_name: nexora-kong-migrations
     command: kong migrations bootstrap
     environment:
@@ -107,7 +107,7 @@ services:
       - nexora-network
 
   kong:
-    image: kong:3.3-alpine
+    image: kong:latest
     container_name: nexora-kong
     environment:
       KONG_DATABASE: postgres
@@ -157,7 +157,7 @@ services:
     environment:
       - REDIS_HOSTS=local:redis:6379
     ports:
-      - "8081:8081"
+      - "8082:8081"
     depends_on:
       - redis
     networks:
@@ -212,7 +212,7 @@ services:
     environment:
       - "LS_JAVA_OPTS=-Xmx256m -Xms256m"
     ports:
-      - "5000:5000"
+      - "5001:5000"
     depends_on:
       - elasticsearch
     networks:

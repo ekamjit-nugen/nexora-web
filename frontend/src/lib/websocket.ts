@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 
 export type WebSocketEventType =
+  | 'auth'
   | 'organization:created'
   | 'organization:updated'
   | 'organization:suspended'

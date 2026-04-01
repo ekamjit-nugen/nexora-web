@@ -11,6 +11,18 @@
     "test:tasks": "npx ts-node tests/e2e/tasks.test.ts",
     "test:tenancy": "npx ts-node tests/e2e/multi-tenancy.test.ts",
     "test:business": "npx ts-node tests/business/business-logic.test.ts",
+    "test:automation": "cd automation && npx playwright test",
+    "test:automation:debug": "cd automation && npx playwright test --debug",
+    "test:automation:ui": "cd automation && npx playwright test --ui",
+    "test:automation:auth": "cd automation && npx playwright test tests/auth-*.spec.ts",
+    "test:automation:auth:login": "cd automation && npx playwright test auth-login.spec.ts",
+    "test:automation:auth:signup": "cd automation && npx playwright test auth-signup.spec.ts",
+    "test:automation:auth:org": "cd automation && npx playwright test auth-organization.spec.ts",
+    "test:automation:auth:roles": "cd automation && npx playwright test auth-roles-teams.spec.ts",
+    "test:automation:org-onboarding": "cd automation && HEADLESS=false SLOW_MO=500 npx playwright test auth-org-onboarding.spec.ts --project=chromium --headed",
+    "test:automation:org-onboarding:debug": "cd automation && HEADLESS=false SLOW_MO=1000 PWDEBUG=1 npx playwright test auth-org-onboarding.spec.ts --project=chromium --headed --debug",
+    "test:automation:org-onboarding:ui": "cd automation && HEADLESS=false npx playwright test auth-org-onboarding.spec.ts --project=chromium --ui",
+    "test:automation:report": "cd automation && npx playwright show-report reports/html",
     "clean": "docker exec nexora-mongodb mongosh -u root -p nexora_dev_password --quiet --eval '[\"nexora_auth\",\"nexora_hr\",\"nexora_attendance\",\"nexora_leave\",\"nexora_projects\",\"nexora_tasks\"].forEach(d => { db = db.getSiblingDB(d); db.getCollectionNames().forEach(c => db[c].deleteMany({})); }); print(\"ALL CLEARED\");'"
   },
   "dependencies": {

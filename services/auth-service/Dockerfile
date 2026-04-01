@@ -3,7 +3,7 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files and install all dependencies (including devDependencies for build)
+# Copy package file
 COPY package.json ./
 
 # Install dependencies
@@ -29,7 +29,7 @@ COPY package.json ./
 # Install production dependencies only
 RUN npm install --production
 
-# Copy built application from builder
+# Copy node_modules from builder if needed, and dist
 COPY --from=builder /app/dist ./dist
 
 # Expose port
