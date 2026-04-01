@@ -21,6 +21,10 @@ interface ReportTemplate {
 export default function ReportsPage() {
   const { user, loading, isPlatformAdmin } = useAuth();
   const router = useRouter();
+
+  const handleLogout = useCallback(() => {
+    router.push("/");
+  }, [router]);
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -120,7 +124,7 @@ export default function ReportsPage() {
   return (
     <RouteGuard minOrgRole="admin">
       <div className="flex h-screen bg-gray-50">
-        <Sidebar />
+        {user && <Sidebar user={user} onLogout={handleLogout} />}
 
         <div className="flex-1 flex flex-col">
           <div className="bg-white border-b border-gray-200 px-8 py-6">
