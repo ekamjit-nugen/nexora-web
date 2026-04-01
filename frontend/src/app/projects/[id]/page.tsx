@@ -396,7 +396,7 @@ function BoardView({
         if (!t.assigneeId || !selectedUsers.has(t.assigneeId)) return false;
       }
       if (filters.labels && filters.labels.length > 0) {
-        if (!t.labels || !filters.labels.some((l) => t.labels.includes(l))) return false;
+        if (!t.labels || !filters.labels.some((l) => t.labels?.includes(l))) return false;
       }
       if (filters.priority && t.priority !== filters.priority) return false;
       if (filters.status && t.status !== filters.status) return false;
