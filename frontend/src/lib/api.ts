@@ -761,6 +761,26 @@ export const chatApi = {
   forwardMessage: (messageId: string, targetConversationId: string) =>
     request(`/chat/messages/${messageId}/forward`, { method: "POST", body: JSON.stringify({ targetConversationId }) }),
 
+  // Scheduled Messages
+  scheduleMessage: (data: { conversationId: string; content: string; scheduledAt: string; type?: string }) =>
+    request<ChatMessage>("/chat/scheduled", { method: "POST", body: JSON.stringify(data) }),
+  getScheduledMessages: () =>
+    request<Array<ChatMessage & { scheduledAt: string }>>("/chat/scheduled"),
+  deleteScheduledMessage: (id: string) =>
+    request(`/chat/scheduled/${id}`, { method: "DELETE" }),
+
+  // Reminders
+  createReminder: (data: { messageId: string; conversationId: string; reminderAt: string; note?: string }) =>
+    request("/chat/reminders", { method: "POST", body: JSON.stringify(data) }),
+  getReminders: () =>
+    request<Array<{ _id: string; messageId: string; conversationId: string; reminderAt: string; note?: string }>>("/chat/reminders"),
+  deleteReminder: (id: string) =>
+    request(`/chat/reminders/${id}`, { method: "DELETE" }),
+
+  // Read Status
+  getReadStatus: (conversationId: string) =>
+    request<Array<{ userId: string; readAt: string }>>(`/chat/conversations/${conversationId}/read-status`),
+
   // Moderation
   getFlagged: () => request("/chat/moderation/flagged"),
   reviewFlagged: (id: string, data: { status: string }) =>

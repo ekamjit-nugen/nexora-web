@@ -12,6 +12,7 @@ import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { CallingService } from './calling.service';
+import { VoiceHuddleService } from '../calls/voice-huddle.service';
 import { InitiateCallDto, AnswerCallDto, RejectCallDto, EndCallDto, IceCandidateDto, MediaNegotiationDto } from './dto/index';
 
 const RINGING_TIMEOUT_MS = 45_000; // 45 seconds before marking as missed
@@ -53,6 +54,7 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
   constructor(
     private jwtService: JwtService,
     private callingService: CallingService,
+    private voiceHuddleService: VoiceHuddleService,
   ) {}
 
   async afterInit(server: any) {
@@ -565,6 +567,67 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     });
   }
 
+  // ── Call Hold/Resume ──
+  // Track hold state per call: callId -> Set<userId>
+  private callHoldState = new Map<string, Set<string>>();
+
+  @SubscribeMessage('call:hold')
+  handleHoldCall(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { callId: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId || !data?.callId) return;
+
+    if (!this.callHoldState.has(data.callId)) {
+      this.callHoldState.set(data.callId, new Set());
+    }
+    this.callHoldState.get(data.callId)!.add(userId);
+
+    // Notify other participants
+    client.to(`call:${data.callId}`).emit('call:held', {
+      callId: data.callId,
+      userId,
+    });
+
+    // Confirm to the holder
+    client.emit('call:held', {
+      callId: data.callId,
+      userId,
+    });
+
+    this.logger.log(`User ${userId} put call ${data.callId} on hold`);
+  }
+
+  @SubscribeMessage('call:resume')
+  handleResumeCall(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { callId: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId || !data?.callId) return;
+
+    const holdSet = this.callHoldState.get(data.callId);
+    if (holdSet) {
+      holdSet.delete(userId);
+      if (holdSet.size === 0) this.callHoldState.delete(data.callId);
+    }
+
+    // Notify other participants
+    client.to(`call:${data.callId}`).emit('call:resumed', {
+      callId: data.callId,
+      userId,
+    });
+
+    // Confirm to the holder
+    client.emit('call:resumed', {
+      callId: data.callId,
+      userId,
+    });
+
+    this.logger.log(`User ${userId} resumed call ${data.callId}`);
+  }
+
   // ── Call quality metrics ──
   @SubscribeMessage('call:quality-report')
   async handleQualityReport(
@@ -578,6 +641,93 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     } catch {
       // Non-critical — swallow errors
     }
+  }
+
+  // ── Voice Huddle events ──
+
+  @SubscribeMessage('huddle:get')
+  handleGetHuddle(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { channelId: string },
+  ) {
+    if (!data?.channelId) return;
+    const huddle = this.voiceHuddleService.getHuddle(data.channelId);
+    client.emit('huddle:state', huddle);
+  }
+
+  @SubscribeMessage('huddle:start')
+  handleStartHuddle(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { channelId: string; userName: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId || !data?.channelId) return;
+
+    try {
+      const huddle = this.voiceHuddleService.startHuddle(data.channelId, userId, data.userName || this.userNames.get(userId) || 'Unknown');
+      // Join the huddle room for broadcasting
+      client.join(`huddle:${data.channelId}`);
+
+      // Broadcast to all channel members (we use the channel room)
+      this.server.emit('huddle:started', huddle);
+      this.logger.log(`Huddle started in channel ${data.channelId} by ${userId}`);
+    } catch (err) {
+      client.emit('error', { message: err.message });
+    }
+  }
+
+  @SubscribeMessage('huddle:join')
+  handleJoinHuddle(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { channelId: string; userName: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId || !data?.channelId) return;
+
+    try {
+      const huddle = this.voiceHuddleService.joinHuddle(data.channelId, userId, data.userName || this.userNames.get(userId) || 'Unknown');
+      client.join(`huddle:${data.channelId}`);
+
+      this.server.emit('huddle:joined', {
+        channelId: data.channelId,
+        userId,
+        userName: data.userName || this.userNames.get(userId) || 'Unknown',
+        huddle,
+      });
+      this.logger.log(`User ${userId} joined huddle in channel ${data.channelId}`);
+    } catch (err) {
+      client.emit('error', { message: err.message });
+    }
+  }
+
+  @SubscribeMessage('huddle:leave')
+  handleLeaveHuddle(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { channelId: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId || !data?.channelId) return;
+
+    const huddle = this.voiceHuddleService.leaveHuddle(data.channelId, userId);
+    client.leave(`huddle:${data.channelId}`);
+
+    if (huddle) {
+      this.server.emit('huddle:left', {
+        channelId: data.channelId,
+        userId,
+        huddle,
+      });
+    } else {
+      // Huddle ended
+      this.server.emit('huddle:left', {
+        channelId: data.channelId,
+        userId,
+        huddle: null,
+      });
+      this.server.emit('huddle:ended', { channelId: data.channelId });
+    }
+
+    this.logger.log(`User ${userId} left huddle in channel ${data.channelId}`);
   }
 
   // ── Utility methods ──

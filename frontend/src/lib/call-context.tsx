@@ -45,6 +45,10 @@ interface CallContextState {
   sendIceCandidate: (candidate: RTCIceCandidate) => void;
   sendAnnotationStroke: (stroke: AnnotationStroke) => void;
   sendAnnotationClear: () => void;
+  holdCall: () => void;
+  resumeCall: () => void;
+  onHeld: (handler: (data: any) => void) => () => void;
+  onResumed: (handler: (data: any) => void) => () => void;
   onEnded: (handler: (data: any) => void) => () => void;
   onOffer: (handler: (data: any) => void) => () => void;
   onAnswerSdp: (handler: (data: any) => void) => () => void;
@@ -454,6 +458,20 @@ export function CallProvider({ children }: { children: ReactNode }) {
     emit("call:annotation-clear", { callId: call.callId });
   }, [call, emit]);
 
+  // ── Hold/Resume ──
+  const holdCall = useCallback(() => {
+    if (!call) return;
+    emit("call:hold", { callId: call.callId });
+  }, [call, emit]);
+
+  const resumeCall = useCallback(() => {
+    if (!call) return;
+    emit("call:resume", { callId: call.callId });
+  }, [call, emit]);
+
+  const onHeld = useCallback((handler: (data: any) => void) => on("call:held", handler), [on]);
+  const onResumed = useCallback((handler: (data: any) => void) => on("call:resumed", handler), [on]);
+
   const onEnded = useCallback((handler: (data: any) => void) => on("call:ended", handler), [on]);
   const onOffer = useCallback((handler: (data: any) => void) => on("call:offer", handler), [on]);
   const onAnswerSdp = useCallback((handler: (data: any) => void) => on("call:answer-sdp", handler), [on]);
@@ -477,6 +495,10 @@ export function CallProvider({ children }: { children: ReactNode }) {
         sendIceCandidate,
         sendAnnotationStroke,
         sendAnnotationClear,
+        holdCall,
+        resumeCall,
+        onHeld,
+        onResumed,
         onEnded,
         onOffer,
         onAnswerSdp,

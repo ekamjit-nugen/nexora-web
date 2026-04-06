@@ -9,12 +9,17 @@ import type { Conversation, ChatMessage, Employee, ChatSettings } from "@/lib/ap
 import { useGlobalSocket } from "@/lib/socket-context";
 import { useWebRTC } from "@/lib/hooks/useWebRTC";
 import { useCallContext } from "@/lib/call-context";
-import { CallControls, VideoCallWindow } from "@/components/calling";
+import { CallControls, VideoCallWindow, PreCallPreview } from "@/components/calling";
 import {
   MessageContent, ThreadPanel, PresenceIndicator, StatusSetter,
   GlobalSearch, FileBrowser, PinnedMessages, BookmarksList, AiSummaryPanel, VoiceRecorder, LinkPreview,
+  GifPicker,
+  VoiceHuddle,
 } from "@/components/chat";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { SkeletonLoader } from "@/components/SkeletonLoader";
 import { toast } from "sonner";
+import { useOfflineCache } from "@/lib/hooks/useOfflineCache";
 
 // ── Upload validation constants ──
 const MAX_UPLOAD_SIZE = 25 * 1024 * 1024; // 25 MB
@@ -137,6 +142,25 @@ export default function MessagesPage() {
   const [loadingConvos, setLoadingConvos] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
 
+  // ── Tab Unread Badge (favicon + document.title) ──
+  useEffect(() => {
+    if (!user) return;
+    const totalUnread = conversations.reduce((count, convo) => {
+      const participant = convo.participants.find((p) => p.userId === user._id);
+      if (!participant?.lastReadAt || !convo.lastMessage?.sentAt) return count;
+      if (new Date(convo.lastMessage.sentAt) > new Date(participant.lastReadAt)) {
+        return count + 1;
+      }
+      return count;
+    }, 0);
+
+    document.title = totalUnread > 0 ? `(${totalUnread}) Nexora` : "Nexora";
+
+    return () => {
+      document.title = "Nexora";
+    };
+  }, [conversations, user]);
+
   // UI state
   const [tab, setTab] = useState<TabFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -170,6 +194,10 @@ export default function MessagesPage() {
   const [annotationBrushSize, setAnnotationBrushSize] = useState(3);
   const [floatingEmojis, setFloatingEmojis] = useState<Array<{ id: string; emoji: string; x: number; startTime: number }>>([]);
   const [callStartTime, setCallStartTime] = useState<string | null>(null);
+  const [showPreCallPreview, setShowPreCallPreview] = useState(false);
+  const [isOnHold, setIsOnHold] = useState(false);
+  const [preHoldAudioState, setPreHoldAudioState] = useState(true);
+  const [preHoldVideoState, setPreHoldVideoState] = useState(false);
   const [showAddParticipantModal, setShowAddParticipantModal] = useState(false);
   const [remoteHasVideo, setRemoteHasVideo] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -218,9 +246,28 @@ export default function MessagesPage() {
   const [showAiSummary, setShowAiSummary] = useState(false);
   const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
 
+  // Message scheduling
+  const [scheduledAt, setScheduledAt] = useState<Date | null>(null);
+  const [showSchedulePicker, setShowSchedulePicker] = useState(false);
+  const [showCustomSchedule, setShowCustomSchedule] = useState(false);
+  const [customDate, setCustomDate] = useState("");
+  const [customTime, setCustomTime] = useState("");
+  const schedulePickerRef = useRef<HTMLDivElement>(null);
+
+  // Read receipt detail popup
+  const [readReceiptMsg, setReadReceiptMsg] = useState<string | null>(null);
+  const [readReceiptData, setReadReceiptData] = useState<Array<{ userId: string; readAt: string }>>([]);
+  const [readReceiptLoading, setReadReceiptLoading] = useState(false);
+  const [readReceiptPos, setReadReceiptPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const readReceiptRef = useRef<HTMLDivElement>(null);
+
   // Emoji picker
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
+
+  // GIF picker
+  const [showGifPicker, setShowGifPicker] = useState(false);
+  const gifPickerRef = useRef<HTMLDivElement>(null);
 
   // File upload spinner
   const [isUploading, setIsUploading] = useState(false);
@@ -283,6 +330,17 @@ export default function MessagesPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showEmojiPicker]);
 
+  // Close GIF picker on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (gifPickerRef.current && !gifPickerRef.current.contains(e.target as Node)) {
+        setShowGifPicker(false);
+      }
+    };
+    if (showGifPicker) document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showGifPicker]);
+
   // Sync call type for incoming calls
   useEffect(() => {
     if (signaling.call?.status === "ringing") {
@@ -294,6 +352,9 @@ export default function MessagesPage() {
   }, [signaling.call?.status, signaling.call?.type, signaling.call?.conversationId]);
 
   // Ringtones are handled globally by CallProvider
+
+  // ── Offline Cache ──
+  const offlineCache = useOfflineCache();
 
   // ── Socket ──
   const { connected, emit, on, onlineUsers: onlineUserIds, presenceMap } = useGlobalSocket();
@@ -376,35 +437,75 @@ export default function MessagesPage() {
     });
   }, []);
 
-  // ── Fetch conversations ──
+  // ── Fetch conversations (with offline cache) ──
   const fetchConversations = useCallback(async () => {
-    try {
-      const res = await chatApi.getConversations();
-      setConversations(res.data || []);
-    } catch {
-      // silent — API may not exist yet
-    } finally {
-      setLoadingConvos(false);
+    // Show cached conversations immediately while fetching from server
+    if (offlineCache.isSupported) {
+      try {
+        const cached = await offlineCache.getCachedConversations();
+        if (cached.length > 0) {
+          setConversations(cached as Conversation[]);
+          setLoadingConvos(false);
+        }
+      } catch {
+        // IndexedDB read failed — continue to server fetch
+      }
     }
-  }, []);
+
+    // Fetch from server if online
+    if (navigator.onLine) {
+      try {
+        const res = await chatApi.getConversations();
+        const data = res.data || [];
+        setConversations(data);
+        if (offlineCache.isSupported && data.length > 0) {
+          offlineCache.cacheConversations(data).catch(() => {});
+          offlineCache.setLastSyncTimestamp(new Date().toISOString()).catch(() => {});
+        }
+      } catch {
+        // silent — API may not exist yet
+      }
+    }
+    setLoadingConvos(false);
+  }, [offlineCache]);
 
   useEffect(() => {
     if (user) fetchConversations();
   }, [user, fetchConversations]);
 
-  // ── Fetch messages for active conversation ──
+  // ── Fetch messages for active conversation (with offline cache) ──
   const fetchMessages = useCallback(async (convoId: string) => {
-    try {
-      setLoadingMessages(true);
-      const res = await chatApi.getMessages(convoId, { limit: "100" });
-      setMessages(res.data || []);
-      chatApi.markAsRead(convoId).catch(() => {});
-    } catch {
-      setMessages([]);
-    } finally {
-      setLoadingMessages(false);
+    setLoadingMessages(true);
+
+    // Show cached messages immediately
+    if (offlineCache.isSupported) {
+      try {
+        const cached = await offlineCache.getCachedMessages(convoId, 100);
+        if (cached.length > 0) {
+          setMessages(cached as ChatMessage[]);
+          setLoadingMessages(false);
+        }
+      } catch {
+        // IndexedDB read failed
+      }
     }
-  }, []);
+
+    // Fetch from server if online
+    if (navigator.onLine) {
+      try {
+        const res = await chatApi.getMessages(convoId, { limit: "100" });
+        const data = res.data || [];
+        setMessages(data);
+        chatApi.markAsRead(convoId).catch(() => {});
+        if (offlineCache.isSupported && data.length > 0) {
+          offlineCache.cacheMessages(convoId, data).catch(() => {});
+        }
+      } catch {
+        if (!offlineCache.isSupported) setMessages([]);
+      }
+    }
+    setLoadingMessages(false);
+  }, [offlineCache]);
 
   useEffect(() => {
     if (activeId) {
@@ -413,6 +514,17 @@ export default function MessagesPage() {
       setMessages([]);
     }
   }, [activeId, fetchMessages]);
+
+  // ── Delta sync on reconnect ──
+  const prevConnectedRef = useRef(false);
+  useEffect(() => {
+    if (connected && !prevConnectedRef.current && user) {
+      // We just reconnected — refresh conversations and active messages
+      fetchConversations();
+      if (activeId) fetchMessages(activeId);
+    }
+    prevConnectedRef.current = connected;
+  }, [connected, user, activeId, fetchConversations, fetchMessages]);
 
   // ── Socket: Join conversation room when active conversation changes ──
   useEffect(() => {
@@ -441,6 +553,10 @@ export default function MessagesPage() {
             : c
         )
       );
+      // Cache incoming message to IndexedDB
+      if (offlineCache.isSupported) {
+        offlineCache.cacheMessages(msg.conversationId, [msg]).catch(() => {});
+      }
     });
 
     const cleanup2 = on("message:edited", (msg: ChatMessage) => {
@@ -495,16 +611,80 @@ export default function MessagesPage() {
     }
   }, [input]);
 
+  // ── Schedule option helpers ──
+  const getScheduleOptions = () => {
+    const now = new Date();
+    const laterToday = new Date(now);
+    laterToday.setHours(laterToday.getHours() + 1, 0, 0, 0);
+    const tomorrowMorning = new Date(now);
+    tomorrowMorning.setDate(tomorrowMorning.getDate() + 1);
+    tomorrowMorning.setHours(9, 0, 0, 0);
+    const tomorrowAfternoon = new Date(now);
+    tomorrowAfternoon.setDate(tomorrowAfternoon.getDate() + 1);
+    tomorrowAfternoon.setHours(14, 0, 0, 0);
+    const nextMonday = new Date(now);
+    const daysUntilMonday = ((8 - nextMonday.getDay()) % 7) || 7;
+    nextMonday.setDate(nextMonday.getDate() + daysUntilMonday);
+    nextMonday.setHours(9, 0, 0, 0);
+    return [
+      { label: "Later today", sublabel: laterToday.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), date: laterToday },
+      { label: "Tomorrow morning", sublabel: "9:00 AM", date: tomorrowMorning },
+      { label: "Tomorrow afternoon", sublabel: "2:00 PM", date: tomorrowAfternoon },
+      { label: "Next Monday", sublabel: "Mon 9:00 AM", date: nextMonday },
+    ];
+  };
+  const handleSelectSchedule = (date: Date) => {
+    setScheduledAt(date);
+    setShowSchedulePicker(false);
+    setShowCustomSchedule(false);
+  };
+  const handleCustomScheduleConfirm = () => {
+    if (!customDate || !customTime) { toast.error("Select both date and time"); return; }
+    const dt = new Date(`${customDate}T${customTime}`);
+    if (dt <= new Date()) { toast.error("Scheduled time must be in the future"); return; }
+    handleSelectSchedule(dt);
+  };
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (schedulePickerRef.current && !schedulePickerRef.current.contains(e.target as Node)) {
+        setShowSchedulePicker(false);
+        setShowCustomSchedule(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (readReceiptRef.current && !readReceiptRef.current.contains(e.target as Node)) {
+        setReadReceiptMsg(null);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
   // ── Send message (REST only — socket receives the event back from backend) ──
   const handleSend = async () => {
     if (!input.trim() || !activeId) return;
     const content = input.trim();
     setInput("");
+    if (scheduledAt) {
+      try {
+        await chatApi.scheduleMessage({ conversationId: activeId, content, scheduledAt: scheduledAt.toISOString() });
+        const timeStr = scheduledAt.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        toast.success(`Message scheduled for ${timeStr}`);
+        setScheduledAt(null);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to schedule message";
+        toast.error(message);
+      }
+      return;
+    }
     try {
       const res = await chatApi.sendMessage(activeId, content);
       if (res.data) {
         setMessages((prev) => {
-          // Avoid duplicates if socket already delivered the message
           if (prev.some((m) => m._id === res.data!._id)) return prev;
           return [...prev, res.data!];
         });
@@ -515,6 +695,35 @@ export default function MessagesPage() {
       toast.error(message);
     }
   };
+  const handleReadReceiptClick = async (msgId: string, e: React.MouseEvent) => {
+    if (!activeId) return;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setReadReceiptPos({ top: rect.top - 8, left: rect.right + 8 });
+    setReadReceiptMsg(msgId);
+    setReadReceiptLoading(true);
+    try {
+      const res = await chatApi.getReadStatus(activeId);
+      setReadReceiptData(res.data || []);
+    } catch {
+      setReadReceiptData([]);
+    } finally {
+      setReadReceiptLoading(false);
+    }
+  };
+
+  // ── GIF send ──
+  const handleGifSelect = useCallback((gifUrl: string) => {
+    if (!activeId) return;
+    emit("message:send", {
+      conversationId: activeId,
+      content: "GIF",
+      type: "image",
+      fileUrl: gifUrl,
+      fileName: "gif",
+    });
+    setShowGifPicker(false);
+    toast.success("GIF sent");
+  }, [activeId, emit]);
 
   // ── File upload ──
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -893,23 +1102,35 @@ export default function MessagesPage() {
     return other?.userId || null;
   };
 
-  const handleInitiateCall = async () => {
+  const handleInitiateCall = () => {
     const recipientId = getRecipientId();
     if (!recipientId) {
       toast.error("Can only call in direct conversations");
       return;
     }
+    // Show pre-call preview instead of immediately calling
+    setShowPreCallPreview(true);
+  };
+
+  const handlePreCallConfirm = async (settings: {
+    audioEnabled: boolean;
+    videoEnabled: boolean;
+    selectedAudioDeviceId?: string;
+    selectedVideoDeviceId?: string;
+  }) => {
+    setShowPreCallPreview(false);
+    const recipientId = getRecipientId();
+    if (!recipientId) return;
     const recipientName = getEmployeeName(recipientId);
     try {
       setIsCaller(true);
-      // Always start as audio call - user can enable video during call
-      setCallType("audio");
-      setIsAudioEnabled(true);
-      setIsVideoEnabled(false);
+      setCallType(settings.videoEnabled ? "video" : "audio");
+      setIsAudioEnabled(settings.audioEnabled);
+      setIsVideoEnabled(settings.videoEnabled);
       setCallStartTime(new Date().toISOString());
       webrtcInitializedRef.current = false;
       offerSentRef.current = false;
-      const callId = await signaling.initiateCall(recipientId, "audio", activeConvo?._id);
+      const callId = await signaling.initiateCall(recipientId, settings.videoEnabled ? "video" : "audio", activeConvo?._id);
       if (!callId) {
         throw new Error("Unable to start call");
       }
@@ -937,7 +1158,29 @@ export default function MessagesPage() {
     }
   }, [signaling.call?.status, signaling.call?.type, signaling.call?.conversationId, showCallWindow, isCaller]);
 
+  const handleToggleHold = () => {
+    if (!signaling.call) return;
+    if (isOnHold) {
+      // Resume: restore previous media state
+      webrtc.resumeCall(preHoldAudioState, preHoldVideoState);
+      setIsAudioEnabled(preHoldAudioState);
+      setIsVideoEnabled(preHoldVideoState);
+      setIsOnHold(false);
+      signaling.resumeCall();
+    } else {
+      // Hold: save current state, mute everything
+      setPreHoldAudioState(isAudioEnabled);
+      setPreHoldVideoState(isVideoEnabled);
+      webrtc.holdCall();
+      setIsAudioEnabled(false);
+      setIsVideoEnabled(false);
+      setIsOnHold(true);
+      signaling.holdCall();
+    }
+  };
+
   const handleEndCall = () => {
+    setIsOnHold(false);
     try {
       webrtc.sendControl({ type: "media-state", hasVideo: false });
       signaling.endCall();
@@ -1508,12 +1751,12 @@ export default function MessagesPage() {
     if (readCount >= otherParticipants.length && otherParticipants.length > 0) {
       // All read - double blue ticks
       return (
-        <span className="text-[10px] text-[#2E86C1] ml-1 tracking-[-3px]">{"\u2713\u2713"}</span>
+        <span className="text-[10px] text-[#2E86C1] ml-1 tracking-[-3px] cursor-pointer hover:opacity-70" onClick={(e) => handleReadReceiptClick(msg._id, e)} title="See who read this">{"\u2713\u2713"}</span>
       );
     } else if (readCount > 0) {
       // Partially read - double gray ticks
       return (
-        <span className="text-[10px] text-[#94A3B8] ml-1 tracking-[-3px]">{"\u2713\u2713"}</span>
+        <span className="text-[10px] text-[#94A3B8] ml-1 tracking-[-3px] cursor-pointer hover:opacity-70" onClick={(e) => handleReadReceiptClick(msg._id, e)} title="See who read this">{"\u2713\u2713"}</span>
       );
     } else {
       // Sent - single gray tick
@@ -1535,6 +1778,13 @@ export default function MessagesPage() {
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
+
+      {/* Offline banner */}
+      {!offlineCache.isOnline && (
+        <div className="ml-[260px] bg-amber-500 text-white text-center text-sm py-1.5 px-4 font-medium">
+          You&apos;re offline — showing cached messages
+        </div>
+      )}
 
       <main className="ml-[260px] h-screen flex">
         {/* ── Left Panel: Conversation List ── */}
@@ -1617,10 +1867,11 @@ export default function MessagesPage() {
           </div>
 
           {/* Conversation List */}
+          <ErrorBoundary>
           <div className="flex-1 overflow-y-auto">
             {loadingConvos ? (
-              <div className="flex justify-center py-8">
-                <div className="w-6 h-6 border-2 border-[#2E86C1] border-t-transparent rounded-full animate-spin" />
+              <div className="py-2">
+                <SkeletonLoader variant="conversation" count={8} />
               </div>
             ) : filteredConversations.length === 0 ? (
               <div className="px-5 py-10 text-center">
@@ -1725,6 +1976,7 @@ export default function MessagesPage() {
               })
             )}
           </div>
+          </ErrorBoundary>
         </div>
 
         {/* ── Middle Panel: Active Conversation ── */}
@@ -1858,14 +2110,15 @@ export default function MessagesPage() {
               </div>
 
               {/* Messages Area */}
+              <ErrorBoundary>
               <div
                 className="flex-1 overflow-y-auto px-5 py-4"
                 onClick={() => { setShowConvoMenu(false); }}
                 style={{ backgroundColor: chatSettings?.appearance?.chatBgColor || "#F8FAFC" }}
               >
                 {loadingMessages ? (
-                  <div className="flex items-center justify-center h-full">
-                    <div className="w-6 h-6 border-2 border-[#2E86C1] border-t-transparent rounded-full animate-spin" />
+                  <div className="py-4">
+                    <SkeletonLoader variant="message" count={5} />
                   </div>
                 ) : messages.length === 0 ? (
                   <div className="flex items-center justify-center h-full">
@@ -2077,6 +2330,7 @@ export default function MessagesPage() {
                   </div>
                 )}
               </div>
+              </ErrorBoundary>
 
               {/* Upload progress bar */}
               {uploadProgress && (
@@ -2123,6 +2377,53 @@ export default function MessagesPage() {
                 </div>
               )}
 
+              {/* Read Receipt Detail Popup */}
+              {readReceiptMsg && (
+                <div ref={readReceiptRef} className="fixed z-[60] bg-white rounded-xl shadow-2xl border border-slate-200 py-2 px-3 w-[220px]" style={{ top: Math.min(readReceiptPos.top, typeof window !== "undefined" ? window.innerHeight - 200 : 400), left: Math.min(readReceiptPos.left, typeof window !== "undefined" ? window.innerWidth - 240 : 600) }}>
+                  {readReceiptLoading ? (
+                    <div className="flex items-center justify-center py-3"><svg className="w-5 h-5 text-[#2E86C1] animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg></div>
+                  ) : activeConvo?.type === "direct" ? (
+                    <div>
+                      {readReceiptData.filter(r => r.userId !== user?._id).length > 0 ? (
+                        <p className="text-[11px] text-[#334155]">Read {timeAgo(readReceiptData.filter(r => r.userId !== user?._id)[0]?.readAt)}</p>
+                      ) : (
+                        <p className="text-[11px] text-[#94A3B8]">Delivered</p>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-1.5">
+                        Delivered to {activeConvo?.participants.filter(p => p.userId !== user?._id).length || 0}, Read by {readReceiptData.filter(r => r.userId !== user?._id).length}
+                      </p>
+                      <div className="max-h-[160px] overflow-y-auto space-y-1.5">
+                        {readReceiptData.filter(r => r.userId !== user?._id).map((r) => {
+                          const emp = employeeMap[r.userId];
+                          const name = emp ? `${emp.firstName} ${emp.lastName}` : r.userId.slice(-6);
+                          return (
+                            <div key={r.userId} className="flex items-center justify-between">
+                              <span className="text-[11px] text-[#334155] font-medium truncate">{name}</span>
+                              <span className="text-[10px] text-[#94A3B8] shrink-0 ml-2">{timeAgo(r.readAt)}</span>
+                            </div>
+                          );
+                        })}
+                        {readReceiptData.filter(r => r.userId !== user?._id).length === 0 && (
+                          <p className="text-[11px] text-[#94A3B8] italic">No one has read this yet</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Voice Huddle Widget (channels only) */}
+              {activeConvo?.type === "channel" && user && (
+                <VoiceHuddle
+                  channelId={activeConvo._id}
+                  currentUserId={user._id}
+                  currentUserName={`${user.firstName || ""} ${user.lastName || ""}`.trim() || "User"}
+                />
+              )}
+
               {/* Input Area */}
               <div className="px-5 pb-4 pt-2 bg-gradient-to-t from-[#F1F5F9] to-[#F8FAFC] shrink-0">
                 <input ref={fileInputRef} type="file" className="hidden" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.txt,.csv" onChange={handleFileSelect} />
@@ -2139,16 +2440,55 @@ export default function MessagesPage() {
                       rows={1}
                       className="flex-1 resize-none bg-transparent text-[13px] text-[#334155] placeholder:text-[#94A3B8] focus:outline-none py-1.5 max-h-[120px] disabled:opacity-50"
                     />
-                    <button
-                      onClick={handleSend}
-                      disabled={!input.trim() || isUploading}
-                      className="w-8 h-8 flex items-center justify-center rounded-full bg-[#2E86C1] hover:bg-[#2471A3] text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-                      </svg>
+                    {/* Schedule message button */}
+                    <div className="relative" ref={schedulePickerRef}>
+                      <button onClick={() => setShowSchedulePicker(!showSchedulePicker)} className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors shrink-0 ${scheduledAt ? "bg-[#F59E0B] hover:bg-[#D97706] text-white" : "text-[#94A3B8] hover:text-[#64748B] hover:bg-[#F1F5F9]"}`} title={scheduledAt ? `Scheduled: ${scheduledAt.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : "Schedule message"}>
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      </button>
+                      {showSchedulePicker && (
+                        <div className="absolute bottom-full mb-2 right-0 w-[240px] bg-white border border-[#E2E8F0] rounded-xl shadow-xl z-50 py-1">
+                          <p className="px-3 py-1.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider">Schedule send</p>
+                          {getScheduleOptions().map((opt) => (
+                            <button key={opt.label} onClick={() => handleSelectSchedule(opt.date)} className="w-full flex items-center justify-between px-3 py-2 text-left text-[12px] text-[#334155] hover:bg-[#F1F5F9] transition-colors">
+                              <span className="font-medium">{opt.label}</span>
+                              <span className="text-[10px] text-[#94A3B8]">{opt.sublabel}</span>
+                            </button>
+                          ))}
+                          <div className="h-px bg-[#E2E8F0] my-0.5" />
+                          {!showCustomSchedule ? (
+                            <button onClick={() => setShowCustomSchedule(true)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-[12px] text-[#2E86C1] hover:bg-[#EBF5FF] transition-colors">
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" /></svg>
+                              <span className="font-medium">Custom date &amp; time</span>
+                            </button>
+                          ) : (
+                            <div className="px-3 py-2 space-y-2">
+                              <input type="date" value={customDate} onChange={(e) => setCustomDate(e.target.value)} min={new Date().toISOString().split("T")[0]} className="w-full px-2 py-1.5 text-[12px] border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#2E86C1]" />
+                              <input type="time" value={customTime} onChange={(e) => setCustomTime(e.target.value)} className="w-full px-2 py-1.5 text-[12px] border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#2E86C1]" />
+                              <button onClick={handleCustomScheduleConfirm} className="w-full px-3 py-1.5 text-[11px] font-medium text-white bg-[#2E86C1] hover:bg-[#2471A3] rounded-lg transition-colors">Set time</button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {/* Send / Schedule send button */}
+                    <button onClick={handleSend} disabled={!input.trim() || isUploading} className={`w-8 h-8 flex items-center justify-center rounded-full text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0 ${scheduledAt ? "bg-[#F59E0B] hover:bg-[#D97706]" : "bg-[#2E86C1] hover:bg-[#2471A3]"}`} title={scheduledAt ? "Send scheduled message" : "Send message"}>
+                      {scheduledAt ? (
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
+                      )}
                     </button>
                   </div>
+                  {/* Scheduled time indicator */}
+                  {scheduledAt && (
+                    <div className="flex items-center gap-1.5 px-3 py-1 border-t border-[#FEF3C7] bg-[#FFFBEB] rounded-b-2xl">
+                      <svg className="w-3 h-3 text-[#F59E0B]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      <span className="text-[11px] text-[#92400E] font-medium">Scheduling for: {scheduledAt.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                      <button onClick={() => setScheduledAt(null)} className="ml-auto p-0.5 rounded hover:bg-[#FDE68A] text-[#92400E] transition-colors" title="Cancel scheduling">
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
+                    </div>
+                  )}
                   {/* Toolbar — Attachments, Emoji, Formatting */}
                   <div className="flex items-center gap-0.5 px-2 pb-1.5 pt-0.5 border-t border-[#F1F5F9]">
                     <button
@@ -2207,6 +2547,28 @@ export default function MessagesPage() {
                               </div>
                             ))}
                           </div>
+                        </div>
+                      )}
+                    </div>
+                    {/* GIF picker button */}
+                    <div className="relative" ref={gifPickerRef}>
+                      <button
+                        onClick={() => {
+                          setShowGifPicker((prev) => !prev);
+                          setShowEmojiPicker(false);
+                        }}
+                        className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold transition-colors ${
+                          showGifPicker
+                            ? "text-[#2E86C1] bg-[#EBF5FF]"
+                            : "text-[#94A3B8] hover:text-[#64748B] hover:bg-[#F1F5F9]"
+                        }`}
+                        title="GIF picker"
+                      >
+                        GIF
+                      </button>
+                      {showGifPicker && (
+                        <div className="absolute bottom-full mb-2 right-0">
+                          <GifPicker onSelect={handleGifSelect} />
                         </div>
                       )}
                     </div>
@@ -2859,6 +3221,16 @@ export default function MessagesPage() {
 
       {/* Incoming call modal is now handled globally by GlobalIncomingCall in layout */}
 
+      {/* ── Pre-Call Preview Modal ── */}
+      {showPreCallPreview && activeConvo && (
+        <PreCallPreview
+          recipientName={getEmployeeName(activeConvo.participants.find((p) => p.userId !== user?._id)?.userId || "")}
+          callType="audio"
+          onStartCall={handlePreCallConfirm}
+          onCancel={() => setShowPreCallPreview(false)}
+        />
+      )}
+
       {/* ── Active Call Window (Overlay) ── */}
       {showCallWindow && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center">
@@ -2910,6 +3282,27 @@ export default function MessagesPage() {
               {/* Video/Audio content */}
               <div className="flex-1 bg-gradient-to-br from-[#0B1220] via-[#0F172A] to-[#0B1220] relative">
                 <audio ref={remoteAudioRef} autoPlay playsInline />
+                {/* On Hold Overlay */}
+                {isOnHold && signaling.call?.status === "connected" && (
+                  <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0F172A]/80 backdrop-blur-sm">
+                    <div className="text-center">
+                      <div className="w-20 h-20 rounded-full bg-amber-500/20 flex items-center justify-center mx-auto mb-4">
+                        <svg className="w-10 h-10 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor" />
+                          <rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor" />
+                        </svg>
+                      </div>
+                      <p className="text-white text-lg font-semibold">Call on Hold</p>
+                      <p className="text-[#94A3B8] text-sm mt-1">Click Resume to continue</p>
+                      <button
+                        onClick={handleToggleHold}
+                        className="mt-4 px-6 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-medium text-white transition-colors"
+                      >
+                        Resume
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {callDisconnected ? (
                   <div className="flex items-center justify-center h-full">
                     <div className="text-center">
@@ -3129,6 +3522,8 @@ export default function MessagesPage() {
                 onToggleFullscreen={handleToggleFullscreen}
                 onAddParticipant={() => setShowAddParticipantModal(true)}
                 onEndCall={handleEndCall}
+                isOnHold={isOnHold}
+                onToggleHold={handleToggleHold}
               />
 
               {/* Emoji reactions — opens from a React button */}

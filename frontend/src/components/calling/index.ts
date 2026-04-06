@@ -4,3 +4,4 @@ export { CallControls } from "./CallControls";
 export { VideoCallWindow, VideoTile, FloatingEmojiOverlay, AnnotationCanvas, AnnotationToolbar } from "./VideoCallWindow";
 export { CallButtons } from "./CallButtons";
 export { GlobalIncomingCall } from "./GlobalIncomingCall";
+export { PreCallPreview } from "./PreCallPreview";

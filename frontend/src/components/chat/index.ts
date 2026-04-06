@@ -14,3 +14,5 @@ export { UserProfileCard } from "./UserProfileCard";
 export { ChannelMembersList } from "./ChannelMembersList";
 export { UnreadBanner } from "./UnreadBanner";
 export { MessageActionsMenu } from "./MessageActionsMenu";
+export { GifPicker } from "./GifPicker";
+export { VoiceHuddle } from "./VoiceHuddle";

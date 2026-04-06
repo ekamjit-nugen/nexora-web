@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { chatApi } from "@/lib/api";
+import { toast } from "sonner";
 
 interface MessageActionsMenuProps {
   messageId: string;
@@ -24,6 +26,7 @@ interface MessageActionsMenuProps {
 const QUICK_REACTIONS = ["👍", "❤️", "😄", "😮", "😢", "🔥"];
 
 export function MessageActionsMenu({
+  messageId, conversationId,
   isOwnMessage, isAdmin, isPinned,
   onReplyInThread, onReact, onPin, onUnpin, onForward, onCopyText, onBookmark,
   onEdit, onDelete, anchorPosition, onClose,
@@ -66,6 +69,7 @@ export function MessageActionsMenu({
       <MenuItem icon="➡️" label="Forward" onClick={() => { onForward(); onClose(); }} />
       <MenuItem icon="📋" label="Copy text" onClick={() => { onCopyText(); onClose(); }} />
       <MenuItem icon="🔖" label="Save" onClick={() => { onBookmark(); onClose(); }} />
+      <ReminderMenuItem messageId={messageId} conversationId={conversationId} onClose={onClose} />
       <MenuItem
         icon={isPinned ? "📌" : "📌"}
         label={isPinned ? "Unpin" : "Pin"}
@@ -97,5 +101,85 @@ function MenuItem({ icon, label, onClick, danger }: { icon: string; label: strin
       <span className="text-sm">{icon}</span>
       <span className="font-medium">{label}</span>
     </button>
+  );
+}
+
+function ReminderMenuItem({ messageId, conversationId, onClose }: { messageId: string; conversationId: string; onClose: () => void }) {
+  const [showSub, setShowSub] = useState(false);
+  const [showCustom, setShowCustom] = useState(false);
+  const [customDate, setCustomDate] = useState("");
+  const [customTime, setCustomTime] = useState("");
+
+  const getReminderOptions = () => {
+    const now = new Date();
+    const in30 = new Date(now.getTime() + 30 * 60 * 1000);
+    const in1h = new Date(now.getTime() + 60 * 60 * 1000);
+    const in3h = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(9, 0, 0, 0);
+    const nextMonday = new Date(now);
+    const daysUntilMon = ((8 - nextMonday.getDay()) % 7) || 7;
+    nextMonday.setDate(nextMonday.getDate() + daysUntilMon);
+    nextMonday.setHours(9, 0, 0, 0);
+    return [
+      { label: "In 30 minutes", date: in30 },
+      { label: "In 1 hour", date: in1h },
+      { label: "In 3 hours", date: in3h },
+      { label: "Tomorrow", date: tomorrow },
+      { label: "Next week", date: nextMonday },
+    ];
+  };
+
+  const handleSetReminder = async (date: Date) => {
+    try {
+      await chatApi.createReminder({ messageId, conversationId, reminderAt: date.toISOString() });
+      const timeStr = date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      toast.success(`Reminder set for ${timeStr}`);
+      onClose();
+    } catch {
+      toast.error("Failed to set reminder");
+    }
+  };
+
+  const handleCustomConfirm = () => {
+    if (!customDate || !customTime) { toast.error("Select both date and time"); return; }
+    const dt = new Date(`${customDate}T${customTime}`);
+    if (dt <= new Date()) { toast.error("Reminder must be in the future"); return; }
+    handleSetReminder(dt);
+  };
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setShowSub(!showSub)}
+        className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 transition-colors"
+      >
+        <span className="text-sm">{"⏰"}</span>
+        <span className="font-medium">Remind me</span>
+        <svg className="w-3 h-3 ml-auto text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
+      </button>
+      {showSub && (
+        <div className="absolute left-full top-0 ml-1 w-[200px] bg-white rounded-xl shadow-2xl border border-slate-200 py-1 z-50">
+          {getReminderOptions().map((opt) => (
+            <button key={opt.label} onClick={() => handleSetReminder(opt.date)} className="w-full flex items-center px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 transition-colors">
+              <span className="font-medium">{opt.label}</span>
+            </button>
+          ))}
+          <div className="h-px bg-slate-100 my-0.5" />
+          {!showCustom ? (
+            <button onClick={() => setShowCustom(true)} className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-blue-600 hover:bg-blue-50 transition-colors">
+              <span className="font-medium">Custom...</span>
+            </button>
+          ) : (
+            <div className="px-3 py-2 space-y-1.5">
+              <input type="date" value={customDate} onChange={(e) => setCustomDate(e.target.value)} min={new Date().toISOString().split("T")[0]} className="w-full px-2 py-1 text-[11px] border border-slate-200 rounded-lg focus:outline-none focus:border-blue-400" />
+              <input type="time" value={customTime} onChange={(e) => setCustomTime(e.target.value)} className="w-full px-2 py-1 text-[11px] border border-slate-200 rounded-lg focus:outline-none focus:border-blue-400" />
+              <button onClick={handleCustomConfirm} className="w-full px-2 py-1 text-[10px] font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors">Set reminder</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

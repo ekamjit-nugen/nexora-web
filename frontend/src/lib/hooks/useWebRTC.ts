@@ -42,6 +42,10 @@ interface UseWebRTCReturn {
   stopScreenShare: (screenStream: MediaStream) => Promise<void>;
   /** Send a control message to the remote peer via DataChannel (peer-to-peer, no server) */
   sendControl: (msg: Record<string, unknown>) => void;
+  /** Put call on hold: mute audio and disable video tracks */
+  holdCall: () => void;
+  /** Resume call from hold: restore audio and video tracks */
+  resumeCall: (restoreAudio: boolean, restoreVideo: boolean) => Promise<void>;
 }
 
 const MAX_ICE_RESTART_ATTEMPTS = 3;
@@ -134,7 +138,11 @@ export function useWebRTC(): UseWebRTCReturn {
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
         video: false,
       });
 
@@ -531,6 +539,54 @@ export function useWebRTC(): UseWebRTCReturn {
     }
   }, [setVideoTrack, sendControl]);
 
+  const holdCall = useCallback(() => {
+    // Mute all audio tracks
+    localStreamRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = false;
+    });
+    // Disable video track
+    const camTrack = cameraVideoTrackRef.current;
+    if (camTrack) {
+      camTrack.enabled = false;
+    }
+    sendControl({ type: "media-state", hasVideo: false, onHold: true });
+  }, [sendControl]);
+
+  const resumeCall = useCallback(async (restoreAudio: boolean, restoreVideo: boolean) => {
+    // Restore audio
+    localStreamRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = restoreAudio;
+    });
+    // Restore video
+    if (restoreVideo) {
+      const camTrack = cameraVideoTrackRef.current;
+      if (camTrack && camTrack.readyState === "live") {
+        camTrack.enabled = true;
+      } else {
+        // Re-acquire camera if track was ended
+        try {
+          const camStream = await navigator.mediaDevices.getUserMedia({
+            video: { width: 1280, height: 720 },
+          });
+          const newTrack = camStream.getVideoTracks()[0];
+          if (newTrack) {
+            cameraVideoTrackRef.current = newTrack;
+            allLocalStreamsRef.current.push(camStream);
+            if (localStreamRef.current) {
+              localStreamRef.current.getVideoTracks().forEach((t) => localStreamRef.current!.removeTrack(t));
+              localStreamRef.current.addTrack(newTrack);
+              setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+            }
+            await setVideoTrack(newTrack);
+          }
+        } catch {
+          // Camera unavailable on resume — continue audio-only
+        }
+      }
+    }
+    sendControl({ type: "media-state", hasVideo: restoreVideo, onHold: false });
+  }, [sendControl, setVideoTrack]);
+
   return {
     localStream,
     remoteStream,
@@ -552,5 +608,7 @@ export function useWebRTC(): UseWebRTCReturn {
     startScreenShare,
     stopScreenShare,
     sendControl,
+    holdCall,
+    resumeCall,
   };
 }
