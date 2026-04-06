@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { hrApi, policyApi, callApi, Employee, Department, Designation, Policy } from "@/lib/api";
+import { hrApi, policyApi, callApi, orgApi, Employee, Department, Designation, Policy } from "@/lib/api";
 import type { CallLog } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { Card, CardContent } from "@/components/ui/card";
@@ -646,6 +646,9 @@ export default function DirectoryPage() {
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [deletingEmployee, setDeletingEmployee] = useState<Employee | null>(null);
 
+  // Resend invite state
+  const [resendingEmail, setResendingEmail] = useState<string | null>(null);
+
   useEffect(() => {
     if (!authLoading && !user) router.push("/login");
   }, [user, authLoading, router]);
@@ -743,10 +746,26 @@ export default function DirectoryPage() {
 
   const statusColors: Record<string, string> = {
     active: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    on_notice: "bg-amber-50 text-amber-700 border-amber-200",
+    invited: "bg-amber-50 text-amber-700 border-amber-200",
+    pending: "bg-amber-50 text-amber-700 border-amber-200",
+    on_notice: "bg-orange-50 text-orange-700 border-orange-200",
     exited: "bg-red-50 text-red-700 border-red-200",
     on_leave: "bg-blue-50 text-blue-700 border-blue-200",
     probation: "bg-violet-50 text-violet-700 border-violet-200",
+  };
+
+  const handleResendInvite = async (emp: Employee) => {
+    const orgId = localStorage.getItem("currentOrgId");
+    if (!orgId) { toast.error("Organization not found"); return; }
+    setResendingEmail(emp.email);
+    try {
+      await orgApi.resendInvite(orgId, emp.email);
+      toast.success(`Invitation resent to ${emp.email}`);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to resend invitation");
+    } finally {
+      setResendingEmail(null);
+    }
   };
 
   return (
@@ -850,6 +869,8 @@ export default function DirectoryPage() {
               >
                 <option value="">All Status</option>
                 <option value="active">Active</option>
+                <option value="invited">Invited</option>
+                <option value="pending">Pending</option>
                 <option value="on_notice">On Notice</option>
                 <option value="probation">Probation</option>
                 <option value="on_leave">On Leave</option>
@@ -958,9 +979,20 @@ export default function DirectoryPage() {
                     </div>
 
                     <div className="flex items-center justify-between mt-4 pt-3 border-t border-[#F1F5F9]">
-                      <span className={`text-xs font-medium px-2.5 py-1 rounded-full border capitalize ${statusColors[emp.status] || "bg-gray-50 text-gray-600 border-gray-200"}`}>
-                        {emp.status.replace("_", " ")}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-medium px-2.5 py-1 rounded-full border capitalize ${statusColors[emp.status] || "bg-gray-50 text-gray-600 border-gray-200"}`}>
+                          {emp.status.replace("_", " ")}
+                        </span>
+                        {(emp.status === "invited" || emp.status === "pending") && canManageEmployees && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleResendInvite(emp); }}
+                            disabled={resendingEmail === emp.email}
+                            className="text-[11px] font-medium text-[#2E86C1] hover:text-[#1A5276] hover:bg-[#EBF5FB] px-2 py-0.5 rounded-full transition-colors disabled:opacity-50"
+                          >
+                            {resendingEmail === emp.email ? "Sending..." : "Resend"}
+                          </button>
+                        )}
+                      </div>
                       {emp.skills.length > 0 && (
                         <div className="flex gap-1">
                           {emp.skills.slice(0, 2).map((s) => (
@@ -1109,20 +1141,34 @@ export default function DirectoryPage() {
                           </td>
                         )}
                         <td className="px-5 py-3.5 text-right">
-                          {canManageEmployees && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openEditModal(emp);
-                              }}
-                              className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1.5 text-[12px] font-medium text-[#2E86C1] hover:text-[#1A5276] px-2.5 py-1.5 rounded-lg hover:bg-[#EBF5FB]"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                              </svg>
-                              Edit
-                            </button>
-                          )}
+                          <div className="flex items-center justify-end gap-1">
+                            {(emp.status === "invited" || emp.status === "pending") && canManageEmployees && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleResendInvite(emp); }}
+                                disabled={resendingEmail === emp.email}
+                                className="inline-flex items-center gap-1 text-[12px] font-medium text-amber-600 hover:text-amber-800 px-2.5 py-1.5 rounded-lg hover:bg-amber-50 transition-colors disabled:opacity-50"
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                                </svg>
+                                {resendingEmail === emp.email ? "Sending..." : "Resend"}
+                              </button>
+                            )}
+                            {canManageEmployees && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openEditModal(emp);
+                                }}
+                                className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1.5 text-[12px] font-medium text-[#2E86C1] hover:text-[#1A5276] px-2.5 py-1.5 rounded-lg hover:bg-[#EBF5FB]"
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                                Edit
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );

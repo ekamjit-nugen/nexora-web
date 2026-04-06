@@ -22,7 +22,8 @@ interface MeetingParticipantInfo {
 
 @WebSocketGateway({
   cors: {
-    origin: (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3100').split(','),
+    origin: (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3100,http://localhost:3005')
+      .split(',').map(o => o.trim()),
     credentials: true,
   },
   namespace: '/meetings',
@@ -317,13 +318,117 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     @MessageBody() data: { meetingId: string; text: string },
   ) {
     const info = this.socketParticipants.get(client.id);
-    this.server.to(`meeting:${data.meetingId}`).emit('meeting:chat', {
+    if (!info) return;
+
+    // Verify sender is actually in this meeting room
+    const roomName = `meeting:${data.meetingId}`;
+    if (!client.rooms.has(roomName)) {
+      client.emit('error', { message: 'You are not in this meeting' });
+      return;
+    }
+
+    // Validate content length
+    if (!data.text || data.text.length > 5000) {
+      client.emit('error', { message: 'Invalid message content' });
+      return;
+    }
+
+    this.server.to(roomName).emit('meeting:chat', {
       socketId: client.id,
-      userId: info?.userId,
-      displayName: info?.displayName,
+      userId: info.userId,
+      displayName: info.displayName,
       text: data.text,
       timestamp: new Date().toISOString(),
     });
+  }
+
+  // ── Lobby events ──
+
+  @SubscribeMessage('meeting:lobby-admit')
+  async handleLobbyAdmit(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string; userId: string }) {
+    const info = this.socketParticipants.get(client.id);
+    if (!info || !client.rooms.has(`meeting:${data.meetingId}`)) return;
+    this.notifyUser(data.userId, 'meeting:lobby-admitted', { meetingId: data.meetingId });
+    this.server.to(`meeting:${data.meetingId}`).emit('meeting:lobby-updated', { action: 'admitted', userId: data.userId });
+  }
+
+  @SubscribeMessage('meeting:lobby-admit-all')
+  async handleLobbyAdmitAll(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string; userIds: string[] }) {
+    for (const userId of data.userIds || []) {
+      this.notifyUser(userId, 'meeting:lobby-admitted', { meetingId: data.meetingId });
+    }
+    this.server.to(`meeting:${data.meetingId}`).emit('meeting:lobby-updated', { action: 'admitted-all' });
+  }
+
+  @SubscribeMessage('meeting:lobby-deny')
+  async handleLobbyDeny(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string; userId: string }) {
+    this.notifyUser(data.userId, 'meeting:lobby-denied', { meetingId: data.meetingId });
+    this.server.to(`meeting:${data.meetingId}`).emit('meeting:lobby-updated', { action: 'denied', userId: data.userId });
+  }
+
+  // ── Reaction & hand raise events ──
+
+  @SubscribeMessage('meeting:hand-raise')
+  async handleHandRaise(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string }) {
+    const info = this.socketParticipants.get(client.id);
+    if (!info || !client.rooms.has(`meeting:${data.meetingId}`)) return;
+    this.server.to(`meeting:${data.meetingId}`).emit('meeting:participant-updated', {
+      userId: info.userId, handRaised: true, handRaisedAt: new Date().toISOString(),
+    });
+  }
+
+  @SubscribeMessage('meeting:hand-lower')
+  async handleHandLower(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string }) {
+    const info = this.socketParticipants.get(client.id);
+    if (!info || !client.rooms.has(`meeting:${data.meetingId}`)) return;
+    this.server.to(`meeting:${data.meetingId}`).emit('meeting:participant-updated', {
+      userId: info.userId, handRaised: false,
+    });
+  }
+
+  @SubscribeMessage('meeting:hand-lower-all')
+  async handleHandLowerAll(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string }) {
+    if (!client.rooms.has(`meeting:${data.meetingId}`)) return;
+    this.server.to(`meeting:${data.meetingId}`).emit('meeting:hands-lowered', {});
+  }
+
+  @SubscribeMessage('meeting:reaction')
+  async handleReaction(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string; emoji: string }) {
+    const info = this.socketParticipants.get(client.id);
+    if (!info) return;
+    // Ephemeral — auto-dismiss on client after 5s
+    this.server.to(`meeting:${data.meetingId}`).emit('meeting:reaction:broadcast', {
+      userId: info.userId, displayName: info.displayName, emoji: data.emoji,
+    });
+  }
+
+  // ── Breakout room events ──
+
+  @SubscribeMessage('meeting:breakout-open')
+  async handleBreakoutOpen(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string }) {
+    this.server.to(`meeting:${data.meetingId}`).emit('meeting:breakout-opened', {});
+  }
+
+  @SubscribeMessage('meeting:breakout-close')
+  async handleBreakoutClose(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string }) {
+    this.server.to(`meeting:${data.meetingId}`).emit('meeting:breakout-closed', {});
+  }
+
+  @SubscribeMessage('meeting:breakout-move')
+  async handleBreakoutMove(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string; userId: string; roomId: string }) {
+    this.notifyUser(data.userId, 'meeting:breakout-assigned', { meetingId: data.meetingId, roomId: data.roomId });
+  }
+
+  @SubscribeMessage('meeting:breakout-broadcast')
+  async handleBreakoutBroadcast(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string; message: string }) {
+    this.server.to(`meeting:${data.meetingId}`).emit('meeting:breakout-broadcast', { message: data.message });
+  }
+
+  // ── Host mute participant ──
+
+  @SubscribeMessage('meeting:mute-participant')
+  async handleMuteParticipant(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string; userId: string }) {
+    this.notifyUser(data.userId, 'meeting:muted-by-host', { meetingId: data.meetingId });
   }
 
   // ── Utility ──

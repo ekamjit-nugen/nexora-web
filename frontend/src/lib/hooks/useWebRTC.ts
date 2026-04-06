@@ -9,6 +9,8 @@ interface RTCPeerConfig {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ControlMessageHandler = (msg: any) => void;
 
+export type ReconnectionState = "stable" | "reconnecting" | "failed";
+
 interface UseWebRTCReturn {
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
@@ -16,12 +18,14 @@ interface UseWebRTCReturn {
   isConnected: boolean;
   connectionState: RTCPeerConnectionState | null;
   iceConnectionState: RTCIceConnectionState | null;
+  reconnectionState: ReconnectionState;
   error: string | null;
   initializeCall: (
     config: RTCPeerConfig,
     options?: {
       media?: { audio: boolean; video: boolean };
       onIceCandidate?: (candidate: RTCIceCandidate) => void;
+      onIceRestart?: (offer: RTCSessionDescriptionInit) => void;
       isInitiator?: boolean;
       onControlMessage?: ControlMessageHandler;
     },
@@ -40,6 +44,8 @@ interface UseWebRTCReturn {
   sendControl: (msg: Record<string, unknown>) => void;
 }
 
+const MAX_ICE_RESTART_ATTEMPTS = 3;
+
 export function useWebRTC(): UseWebRTCReturn {
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
@@ -49,12 +55,16 @@ export function useWebRTC(): UseWebRTCReturn {
   const cameraVideoTrackRef = useRef<MediaStreamTrack | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const controlHandlerRef = useRef<ControlMessageHandler | null>(null);
+  const onIceRestartRef = useRef<((offer: RTCSessionDescriptionInit) => void) | null>(null);
+  const iceRestartAttemptsRef = useRef(0);
+  const iceRestartTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [connectionState, setConnectionState] = useState<RTCPeerConnectionState | null>(null);
   const [iceConnectionState, setIceConnectionState] = useState<RTCIceConnectionState | null>(null);
+  const [reconnectionState, setReconnectionState] = useState<ReconnectionState>("stable");
   const [error, setError] = useState<string | null>(null);
 
   // Set up data channel message handler
@@ -68,21 +78,59 @@ export function useWebRTC(): UseWebRTCReturn {
     };
   };
 
+  // Auto ICE restart with exponential backoff
+  const attemptIceRestart = useCallback(async () => {
+    const pc = peerConnectionRef.current;
+    if (!pc || pc.connectionState === "closed") return;
+
+    if (iceRestartAttemptsRef.current >= MAX_ICE_RESTART_ATTEMPTS) {
+      setReconnectionState("failed");
+      setError("Connection lost. Unable to reconnect.");
+      return;
+    }
+
+    iceRestartAttemptsRef.current++;
+    setReconnectionState("reconnecting");
+
+    try {
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true,
+        iceRestart: true,
+      });
+      await pc.setLocalDescription(offer);
+
+      // Send the restart offer via signaling
+      onIceRestartRef.current?.(offer);
+    } catch (err) {
+      console.error("ICE restart failed:", err);
+      // Retry with exponential backoff
+      const delay = Math.min(2000 * Math.pow(2, iceRestartAttemptsRef.current - 1), 10000);
+      iceRestartTimerRef.current = setTimeout(attemptIceRestart, delay);
+    }
+  }, []);
+
   const initializeCall = useCallback(async (
     config: RTCPeerConfig,
     options?: {
       media?: { audio: boolean; video: boolean };
       onIceCandidate?: (candidate: RTCIceCandidate) => void;
+      onIceRestart?: (offer: RTCSessionDescriptionInit) => void;
       isInitiator?: boolean;
       onControlMessage?: ControlMessageHandler;
     },
   ) => {
     try {
       setError(null);
+      setReconnectionState("stable");
+      iceRestartAttemptsRef.current = 0;
       const isInitiator = options?.isInitiator ?? true;
 
       if (options?.onControlMessage) {
         controlHandlerRef.current = options.onControlMessage;
+      }
+      if (options?.onIceRestart) {
+        onIceRestartRef.current = options.onIceRestart;
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -111,7 +159,6 @@ export function useWebRTC(): UseWebRTCReturn {
       cameraVideoTrackRef.current = null;
 
       // DataChannel for control messages (media state, etc.)
-      // Initiator creates it, receiver accepts via ondatachannel
       if (isInitiator) {
         const dc = pc.createDataChannel("control", { ordered: true });
         setupDataChannel(dc);
@@ -165,8 +212,25 @@ export function useWebRTC(): UseWebRTCReturn {
         setConnectionState(pc.connectionState);
         if (pc.connectionState === "connected") {
           setIsConnected(true);
-        } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+          // Connection recovered — reset reconnection state
+          iceRestartAttemptsRef.current = 0;
+          setReconnectionState("stable");
+          if (iceRestartTimerRef.current) {
+            clearTimeout(iceRestartTimerRef.current);
+            iceRestartTimerRef.current = null;
+          }
+        } else if (pc.connectionState === "failed") {
           setIsConnected(false);
+          // Auto-attempt ICE restart
+          attemptIceRestart();
+        } else if (pc.connectionState === "disconnected") {
+          setIsConnected(false);
+          // Wait 2 seconds then attempt ICE restart if still disconnected
+          iceRestartTimerRef.current = setTimeout(() => {
+            if (peerConnectionRef.current?.connectionState === "disconnected") {
+              attemptIceRestart();
+            }
+          }, 2000);
         }
       };
 
@@ -174,6 +238,12 @@ export function useWebRTC(): UseWebRTCReturn {
         setIceConnectionState(pc.iceConnectionState);
         if (pc.iceConnectionState === "failed") {
           setError("ICE connection failed");
+          // Trigger ICE restart if connection state handler hasn't already
+          if (reconnectionState !== "reconnecting") {
+            attemptIceRestart();
+          }
+        } else if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+          setError(null);
         }
       };
 
@@ -190,7 +260,7 @@ export function useWebRTC(): UseWebRTCReturn {
       setError(message);
       console.error("WebRTC initialization error:", err);
     }
-  }, []);
+  }, [attemptIceRestart]);
 
   const createOffer = useCallback(async (options?: { iceRestart?: boolean }): Promise<RTCSessionDescriptionInit | null> => {
     if (!peerConnectionRef.current) return null;
@@ -289,6 +359,13 @@ export function useWebRTC(): UseWebRTCReturn {
   }, []);
 
   const endCall = useCallback(() => {
+    // Clear any pending ICE restart timers
+    if (iceRestartTimerRef.current) {
+      clearTimeout(iceRestartTimerRef.current);
+      iceRestartTimerRef.current = null;
+    }
+    iceRestartAttemptsRef.current = 0;
+
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     allLocalStreamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
     allLocalStreamsRef.current = [];
@@ -301,11 +378,13 @@ export function useWebRTC(): UseWebRTCReturn {
     cameraVideoTrackRef.current = null;
     dataChannelRef.current = null;
     controlHandlerRef.current = null;
+    onIceRestartRef.current = null;
     setLocalStream(null);
     setRemoteStream(null);
     setIsConnected(false);
     setConnectionState(null);
     setIceConnectionState(null);
+    setReconnectionState("stable");
     setError(null);
   }, []);
 
@@ -395,8 +474,12 @@ export function useWebRTC(): UseWebRTCReturn {
   const startScreenShare = useCallback(async (): Promise<MediaStream | null> => {
     try {
       const screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: false,
+        video: {
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 15, max: 30 },
+        },
+        audio: true, // Enable tab/system audio sharing
       });
 
       const screenVideoTrack = screenStream.getVideoTracks()[0];
@@ -404,7 +487,14 @@ export function useWebRTC(): UseWebRTCReturn {
 
       allLocalStreamsRef.current.push(screenStream);
       await setVideoTrack(screenVideoTrack);
-      sendControl({ type: "media-state", hasVideo: true });
+      sendControl({ type: "media-state", hasVideo: true, isScreenShare: true });
+
+      // If screen stream includes audio, add it as a separate track
+      const screenAudioTrack = screenStream.getAudioTracks()[0];
+      if (screenAudioTrack && peerConnectionRef.current) {
+        peerConnectionRef.current.addTrack(screenAudioTrack, screenStream);
+        sendControl({ type: "media-state", hasScreenAudio: true });
+      }
 
       return screenStream;
     } catch (err) {
@@ -417,15 +507,27 @@ export function useWebRTC(): UseWebRTCReturn {
   }, [setVideoTrack, sendControl]);
 
   const stopScreenShare = useCallback(async (screenStream: MediaStream) => {
+    // Remove screen audio track from peer connection if it was added
+    const screenAudioTrack = screenStream.getAudioTracks()[0];
+    if (screenAudioTrack && peerConnectionRef.current) {
+      const sender = peerConnectionRef.current.getSenders().find(
+        (s) => s.track === screenAudioTrack
+      );
+      if (sender) {
+        try { peerConnectionRef.current.removeTrack(sender); } catch {}
+      }
+      sendControl({ type: "media-state", hasScreenAudio: false });
+    }
+
     screenStream.getTracks().forEach((t) => t.stop());
 
     const cameraTrack = cameraVideoTrackRef.current;
     if (cameraTrack && cameraTrack.readyState === "live") {
       await setVideoTrack(cameraTrack);
-      sendControl({ type: "media-state", hasVideo: true });
+      sendControl({ type: "media-state", hasVideo: true, isScreenShare: false });
     } else {
       await setVideoTrack(null);
-      sendControl({ type: "media-state", hasVideo: false });
+      sendControl({ type: "media-state", hasVideo: false, isScreenShare: false });
     }
   }, [setVideoTrack, sendControl]);
 
@@ -436,6 +538,7 @@ export function useWebRTC(): UseWebRTCReturn {
     isConnected,
     connectionState,
     iceConnectionState,
+    reconnectionState,
     error,
     initializeCall,
     createOffer,

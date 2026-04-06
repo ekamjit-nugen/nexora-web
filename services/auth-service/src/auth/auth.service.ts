@@ -6,10 +6,21 @@ import { ConfigService } from '@nestjs/config';
 import * as speakeasy from 'speakeasy';
 import * as QRCode from 'qrcode';
 import { v4 as uuidv4 } from 'uuid';
+import * as crypto from 'crypto';
+import * as nodemailer from 'nodemailer';
 import { IUser } from './schemas/user.schema';
 import { IRole } from './schemas/role.schema';
 import { IOrgMembership } from './schemas/org-membership.schema';
+import { ISession } from './schemas/session.schema';
+import { IAuditLog } from './schemas/audit-log.schema';
+import { AuditService, AuditAction } from './audit.service';
 import { CreateRoleDto, UpdateRoleDto } from './dto/role.dto';
+// Extracted sub-services
+import { OtpService } from './services/otp.service';
+import { TokenService } from './services/token.service';
+import { SessionService } from './services/session.service';
+import { InviteService } from './services/invite.service';
+import { CompletenessService } from './services/completeness.service';
 
 export interface AuthTokens {
   accessToken: string;
@@ -17,23 +28,178 @@ export interface AuthTokens {
   expiresIn: number;
 }
 
+export interface PostLoginRoute {
+  route: string;
+  reason: string;
+  organizationId?: string;
+  organizations?: string[];
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly MAX_LOGIN_ATTEMPTS = 5;
   private readonly LOCK_TIME = 30 * 60 * 1000; // 30 minutes
+  private readonly OTP_MAX_ATTEMPTS = 5;
+  private readonly OTP_LOCKOUT_MINUTES = 15;
+  private readonly OTP_RATE_LIMIT_PER_HOUR = 5;
+  private readonly OTP_RESEND_COOLDOWN_SECONDS = 30;
+  private readonly mailTransporter: nodemailer.Transporter;
 
   constructor(
     @InjectModel('User') private userModel: Model<IUser>,
     @InjectModel('Role') private roleModel: Model<IRole>,
     @InjectModel('OrgMembership') private orgMembershipModel: Model<IOrgMembership>,
+    @InjectModel('Session') private sessionModel: Model<ISession>,
     private jwtService: JwtService,
     private configService: ConfigService,
-  ) {}
+    private auditService: AuditService,
+    // Extracted sub-services (delegation targets)
+    private otpService: OtpService,
+    private tokenService: TokenService,
+    private sessionService: SessionService,
+    private inviteService: InviteService,
+    private completenessService: CompletenessService,
+  ) {
+    this.mailTransporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST || 'mailhog',
+      port: parseInt(process.env.SMTP_PORT || '1025', 10),
+      ignoreTLS: true,
+    });
+  }
 
-  /**
-   * Register a new user with email and password
-   */
+  private async sendOtpEmail(email: string, otp: string): Promise<void> {
+    const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#F3F4F6;font-family:'Inter',Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F3F4F6;padding:40px 0;">
+    <tr><td align="center">
+      <table width="480" cellpadding="0" cellspacing="0" style="background:#FFFFFF;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+        <tr>
+          <td style="background:#2E86C1;padding:28px 40px;text-align:center;">
+            <span style="display:inline-block;width:44px;height:44px;line-height:44px;background:rgba(255,255,255,0.2);border-radius:10px;font-size:22px;font-weight:700;color:#FFFFFF;">N</span>
+            <div style="color:#FFFFFF;font-size:20px;font-weight:600;margin-top:8px;">Nexora</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:36px 40px 24px;">
+            <h1 style="margin:0 0 12px;font-size:22px;font-weight:600;color:#111827;">Your verification code</h1>
+            <p style="margin:0 0 28px;font-size:15px;line-height:1.6;color:#4B5563;">
+              Use this code to sign in to your Nexora account. It expires in 10 minutes.
+            </p>
+            <div style="text-align:center;margin:0 0 28px;">
+              <div style="display:inline-block;background:#F8FAFC;border:2px dashed #2E86C1;border-radius:12px;padding:16px 40px;">
+                <span style="font-size:36px;font-weight:700;letter-spacing:8px;color:#0F172A;font-family:monospace;">${otp}</span>
+              </div>
+            </div>
+            <p style="margin:0;font-size:13px;line-height:1.5;color:#9CA3AF;">
+              If you didn&rsquo;t request this code, you can safely ignore this email.
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:20px 40px 28px;border-top:1px solid #F3F4F6;text-align:center;">
+            <p style="margin:0;font-size:12px;color:#9CA3AF;">&copy; ${new Date().getFullYear()} Nexora. All rights reserved.</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+    try {
+      await this.mailTransporter.sendMail({
+        from: '"Nexora" <no-reply@nexora.io>',
+        to: email,
+        subject: `${otp} — Your Nexora verification code`,
+        html,
+      });
+      this.logger.log(`OTP email sent to ${email} via MailHog`);
+    } catch (err) {
+      this.logger.warn(`Failed to send OTP email to ${email}: ${err.message || err}`);
+    }
+  }
+
+  // ── Post-OTP Routing Engine ──
+
+  async determinePostLoginRoute(user: IUser): Promise<PostLoginRoute> {
+    const memberships = await this.orgMembershipModel.find({
+      userId: user._id.toString(),
+      status: { $in: ['active', 'pending', 'invited'] },
+    });
+
+    // Case 1: Brand new user — no org, no memberships
+    if (user.setupStage === 'otp_verified' && memberships.length === 0) {
+      return { route: '/auth/setup-organization', reason: 'new_user' };
+    }
+
+    // Case 2: Invited user — has pending/invited membership, first login
+    if (user.setupStage === 'invited' && memberships.some(m => m.status === 'pending' || m.status === 'invited')) {
+      const pendingMembership = memberships.find(m => m.status === 'pending' || m.status === 'invited');
+      return {
+        route: '/auth/accept-invite',
+        reason: 'pending_invite',
+        organizationId: pendingMembership.organizationId,
+      };
+    }
+
+    // Case 3: Org created but profile incomplete
+    if (user.setupStage === 'org_created') {
+      return { route: '/auth/setup-profile', reason: 'incomplete_profile' };
+    }
+
+    // Case 4: Profile done but team invite step skipped/incomplete
+    if (user.setupStage === 'profile_complete') {
+      return { route: '/auth/invite-team', reason: 'incomplete_setup' };
+    }
+
+    // Case 5: Fully onboarded, single org
+    if (user.setupStage === 'complete' && memberships.length === 1) {
+      const org = memberships[0];
+      if (org.status === 'deactivated') {
+        return { route: '/auth/access-denied', reason: 'membership_deactivated' };
+      }
+      return {
+        route: '/dashboard',
+        reason: 'active_user',
+        organizationId: org.organizationId,
+      };
+    }
+
+    // Case 6: Multi-org user
+    if (user.setupStage === 'complete' && memberships.length > 1) {
+      const activeOrgs = memberships.filter(m => m.status === 'active');
+      if (activeOrgs.length === 0) {
+        return { route: '/auth/access-denied', reason: 'all_memberships_deactivated' };
+      }
+      if (activeOrgs.length === 1) {
+        return {
+          route: '/dashboard',
+          reason: 'single_active_org',
+          organizationId: activeOrgs[0].organizationId,
+        };
+      }
+      return {
+        route: '/auth/select-organization',
+        reason: 'multi_org',
+        organizations: activeOrgs.map(m => m.organizationId),
+      };
+    }
+
+    // Case 7: User exists but all orgs removed/deleted
+    if (user.setupStage === 'complete' && memberships.length === 0) {
+      return { route: '/auth/setup-organization', reason: 'no_active_org' };
+    }
+
+    // Fallback
+    return { route: '/auth/login', reason: 'unknown_state' };
+  }
+
+  // ── Registration ──
+
   async register(
     email: string,
     password: string,
@@ -42,7 +208,6 @@ export class AuthService {
   ): Promise<IUser> {
     this.logger.debug(`Registering new user: ${email}`);
 
-    // Check if user already exists
     const existingUser = await this.userModel.findOne({ email });
     if (existingUser) {
       throw new HttpException(
@@ -51,7 +216,6 @@ export class AuthService {
       );
     }
 
-    // Validate password strength
     if (!this.isStrongPassword(password)) {
       throw new HttpException(
         'Password must be at least 8 characters with uppercase, lowercase, numbers, and special characters',
@@ -59,7 +223,6 @@ export class AuthService {
       );
     }
 
-    // Create new user
     const user = new this.userModel({
       email,
       password,
@@ -67,82 +230,59 @@ export class AuthService {
       lastName,
       roles: ['user'],
       permissions: [],
+      setupStage: 'complete',
     });
 
     await user.save();
     this.logger.log(`User registered successfully: ${email}`);
 
-    // Remove sensitive fields
     const userResponse = user.toObject();
     delete userResponse.password;
     return userResponse as IUser;
   }
 
-  /**
-   * Login with email and password
-   */
+  // ── Login ──
+
   async login(email: string, password: string, organizationId?: string): Promise<AuthTokens> {
     this.logger.debug(`Login attempt: ${email}`);
 
-    // Find user by email and select password field
     const user = await this.userModel.findOne({ email }).select('+password');
     if (!user) {
-      throw new HttpException(
-        'Invalid email or password',
-        HttpStatus.UNAUTHORIZED,
-      );
+      throw new HttpException('Invalid email or password', HttpStatus.UNAUTHORIZED);
     }
 
-    // Check if account is locked
     if (user.isAccountLocked()) {
-      throw new HttpException(
-        'Account locked due to multiple failed login attempts',
-        HttpStatus.FORBIDDEN,
-      );
+      throw new HttpException('Account locked due to multiple failed login attempts', HttpStatus.FORBIDDEN);
     }
 
-    // Check if account is active
     if (!user.isActive) {
-      throw new HttpException(
-        'Account is inactive',
-        HttpStatus.FORBIDDEN,
-      );
+      throw new HttpException('Account is inactive', HttpStatus.FORBIDDEN);
     }
 
-    // Verify password
     const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
-      // Increment login attempts
       user.loginAttempts += 1;
       if (user.loginAttempts >= this.MAX_LOGIN_ATTEMPTS) {
         user.lockUntil = new Date(Date.now() + this.LOCK_TIME);
       }
       await user.save();
-      throw new HttpException(
-        'Invalid email or password',
-        HttpStatus.UNAUTHORIZED,
-      );
+      throw new HttpException('Invalid email or password', HttpStatus.UNAUTHORIZED);
     }
 
-    // Reset login attempts on successful login
     user.loginAttempts = 0;
     user.lockUntil = null;
     user.lastLogin = new Date();
-    user.lastLoginIp = null; // Will be set by controller from request IP
     await user.save();
 
     this.logger.log(`User logged in successfully: ${email}`);
-
     return this.generateTokens(user, organizationId);
   }
 
-  /**
-   * Generate JWT tokens for user
-   */
+  // ── Token Generation ──
+
   async generateTokens(user: IUser, orgId?: string): Promise<AuthTokens> {
     const resolvedOrgId = orgId || user.defaultOrganizationId || null;
 
-    // Look up org role from membership
     let orgRole = 'member';
     if (resolvedOrgId) {
       const membership = await this.orgMembershipModel.findOne({
@@ -155,6 +295,7 @@ export class AuthService {
       }
     }
 
+    const tokenFamily = uuidv4();
     const payload: any = {
       sub: user._id,
       email: user.email,
@@ -163,28 +304,51 @@ export class AuthService {
       roles: user.roles,
       organizationId: resolvedOrgId,
       orgRole,
+      setupStage: user.setupStage,
       isPlatformAdmin: user.isPlatformAdmin || false,
+      family: tokenFamily,
     };
 
-    const jwtExpiry = this.configService.get<string>('JWT_EXPIRY') || '7d';
-    const accessToken = this.jwtService.sign(payload, {
-      expiresIn: jwtExpiry,
-    });
+    const jwtExpiry = this.configService.get<string>('JWT_EXPIRY') || '15m';
+    const accessToken = this.jwtService.sign(payload, { expiresIn: jwtExpiry });
+    const refreshToken = this.jwtService.sign(
+      { sub: user._id, family: tokenFamily },
+      { expiresIn: '7d' },
+    );
 
-    const refreshToken = this.jwtService.sign(payload, {
-      expiresIn: '7d',
-    });
+    // Create session record
+    try {
+      await this.sessionModel.create({
+        userId: user._id.toString(),
+        refreshTokenFamily: tokenFamily,
+        deviceInfo: 'Unknown',
+        ipAddress: null,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to create session: ${err.message || err}`);
+    }
 
     return {
       accessToken,
       refreshToken,
-      expiresIn: 604800, // 7 days in seconds (dev)
+      expiresIn: this.parseExpiryToSeconds(jwtExpiry),
     };
   }
 
-  /**
-   * Generate tokens with organization context
-   */
+  private parseExpiryToSeconds(expiry: string): number {
+    const match = expiry.match(/^(\d+)(s|m|h|d)$/);
+    if (!match) return 900; // default 15m
+    const value = parseInt(match[1], 10);
+    switch (match[2]) {
+      case 's': return value;
+      case 'm': return value * 60;
+      case 'h': return value * 3600;
+      case 'd': return value * 86400;
+      default: return 900;
+    }
+  }
+
   async generateTokensWithOrg(userId: string, orgId: string): Promise<AuthTokens> {
     const user = await this.userModel.findById(userId);
     if (!user) {
@@ -193,9 +357,8 @@ export class AuthService {
     return this.generateTokens(user, orgId);
   }
 
-  /**
-   * Refresh JWT token using refresh token
-   */
+  // ── Token Refresh ──
+
   async refreshToken(refreshToken: string): Promise<AuthTokens> {
     this.logger.debug('Token refresh attempt');
 
@@ -204,67 +367,88 @@ export class AuthService {
       const user = await this.userModel.findById(payload.sub);
 
       if (!user || !user.isActive) {
-        throw new HttpException(
-          'Invalid refresh token',
-          HttpStatus.UNAUTHORIZED,
-        );
+        throw new HttpException('Invalid refresh token', HttpStatus.UNAUTHORIZED);
+      }
+
+      // Check session validity
+      if (payload.family) {
+        const session = await this.sessionModel.findOne({
+          refreshTokenFamily: payload.family,
+          isRevoked: false,
+        });
+
+        if (!session) {
+          // Possible token reuse attack — revoke all sessions for this family
+          this.logger.warn(`Refresh token reuse detected for user ${user._id}`);
+          throw new HttpException('Session has been revoked', HttpStatus.UNAUTHORIZED);
+        }
+
+        // Rotate: revoke old session, create new one
+        session.isRevoked = true;
+        await session.save();
       }
 
       return this.generateTokens(user, payload.organizationId || user.defaultOrganizationId);
     } catch (error) {
-      throw new HttpException(
-        'Invalid refresh token',
-        HttpStatus.UNAUTHORIZED,
-      );
+      if (error instanceof HttpException) throw error;
+      throw new HttpException('Invalid refresh token', HttpStatus.UNAUTHORIZED);
     }
   }
 
-  /**
-   * Setup TOTP for MFA
-   */
+  // ── Session Management (delegated to SessionService) ──
+
+  async getSessions(userId: string): Promise<ISession[]> {
+    return this.sessionService.getSessions(userId);
+  }
+
+  async revokeSession(userId: string, sessionId: string): Promise<void> {
+    return this.sessionService.revokeSession(userId, sessionId);
+  }
+
+  async revokeAllSessions(userId: string, exceptFamily?: string): Promise<void> {
+    return this.sessionService.revokeAllSessions(userId, exceptFamily);
+  }
+
+  // ── CSRF Token Generation ──
+
+  generateCsrfToken(): string {
+    return this.tokenService.generateCsrfToken();
+  }
+
+  validateCsrfToken(cookieToken: string, headerToken: string): boolean {
+    return this.tokenService.validateCsrfToken(cookieToken, headerToken);
+  }
+
+  // ── MFA ──
+
   async setupMFA(userId: string): Promise<{ secret: string; qrCode: string }> {
     this.logger.debug(`Setting up MFA for user: ${userId}`);
 
     const user = await this.userModel.findById(userId);
     if (!user) {
-      throw new HttpException(
-        'User not found',
-        HttpStatus.NOT_FOUND,
-      );
+      throw new HttpException('User not found', HttpStatus.NOT_FOUND);
     }
 
-    // Generate secret
     const secret = speakeasy.generateSecret({
       name: `Nexora (${user.email})`,
       issuer: 'Nexora',
       length: 32,
     });
 
-    // Generate QR code
     const qrCode = await QRCode.toDataURL(secret.otpauth_url);
 
-    // Store secret temporarily (will be confirmed with verification)
     user.mfaSecret = secret.base32;
     await user.save();
 
-    return {
-      secret: secret.base32,
-      qrCode,
-    };
+    return { secret: secret.base32, qrCode };
   }
 
-  /**
-   * Verify TOTP code
-   */
   async verifyMFA(userId: string, code: string): Promise<boolean> {
     this.logger.debug(`Verifying MFA for user: ${userId}`);
 
     const user = await this.userModel.findById(userId).select('+mfaSecret');
     if (!user || !user.mfaSecret) {
-      throw new HttpException(
-        'MFA not configured',
-        HttpStatus.BAD_REQUEST,
-      );
+      throw new HttpException('MFA not configured', HttpStatus.BAD_REQUEST);
     }
 
     const isValid = speakeasy.totp.verify({
@@ -275,31 +459,23 @@ export class AuthService {
     });
 
     if (!isValid) {
-      throw new HttpException(
-        'Invalid MFA code',
-        HttpStatus.UNAUTHORIZED,
-      );
+      throw new HttpException('Invalid MFA code', HttpStatus.UNAUTHORIZED);
     }
 
-    // Enable MFA
     user.mfaEnabled = true;
     user.mfaMethod = 'TOTP';
-    
-    // Generate backup codes
     const backupCodes = Array.from({ length: 10 }, () =>
-      Math.random().toString(36).substring(2, 10).toUpperCase(),
+      crypto.randomBytes(4).toString('hex').toUpperCase(),
     );
     user.mfaBackupCodes = backupCodes;
-    
     await user.save();
     this.logger.log(`MFA enabled for user: ${userId}`);
 
     return true;
   }
 
-  /**
-   * Handle OAuth callback
-   */
+  // ── OAuth ──
+
   async handleOAuthCallback(
     provider: 'google' | 'microsoft' | 'saml',
     profile: any,
@@ -311,11 +487,9 @@ export class AuthService {
     });
 
     if (!user) {
-      // Try to find by email
       user = await this.userModel.findOne({ email: profile.email });
 
       if (!user) {
-        // Create new user
         user = new this.userModel({
           email: profile.email,
           firstName: profile.given_name || profile.firstName || 'User',
@@ -323,11 +497,11 @@ export class AuthService {
           isEmailVerified: true,
           roles: ['user'],
           permissions: [],
+          setupStage: 'otp_verified',
         });
       }
     }
 
-    // Update OAuth provider
     if (!user.oauthProviders) {
       user.oauthProviders = {};
     }
@@ -343,57 +517,55 @@ export class AuthService {
     return { user, tokens };
   }
 
-  /**
-   * Get user by ID
-   */
+  // ── User CRUD ──
+
   async getUserById(userId: string): Promise<IUser> {
     const user = await this.userModel.findById(userId);
     if (!user) {
-      throw new HttpException(
-        'User not found',
-        HttpStatus.NOT_FOUND,
-      );
+      throw new HttpException('User not found', HttpStatus.NOT_FOUND);
     }
     return user;
   }
 
-  /**
-   * Validate JWT payload
-   */
   validateJwtPayload(payload: any): boolean {
-    return !!(payload.sub && payload.email && payload.roles);
+    return !!(
+      payload.sub &&
+      payload.email &&
+      Array.isArray(payload.roles) &&
+      typeof payload.isPlatformAdmin === 'boolean' &&
+      (payload.orgRole === undefined || payload.orgRole === null || typeof payload.orgRole === 'string')
+    );
   }
 
-  /**
-   * Check password strength
-   */
   private isStrongPassword(password: string): boolean {
     const hasUppercase = /[A-Z]/.test(password);
     const hasLowercase = /[a-z]/.test(password);
     const hasNumbers = /\d/.test(password);
     const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
     const isLongEnough = password.length >= 8;
-
     return hasUppercase && hasLowercase && hasNumbers && hasSpecialChar && isLongEnough;
   }
 
-  /**
-   * Update user profile
-   */
-  async updateProfile(userId: string, data: { firstName?: string; lastName?: string; avatar?: string; phoneNumber?: string }): Promise<IUser> {
+  async updateProfile(userId: string, data: {
+    firstName?: string;
+    lastName?: string;
+    avatar?: string;
+    phoneNumber?: string;
+    jobTitle?: string;
+    department?: string;
+  }): Promise<IUser> {
     const user = await this.userModel.findById(userId);
     if (!user) throw new HttpException('User not found', HttpStatus.NOT_FOUND);
     if (data.firstName) user.firstName = data.firstName;
     if (data.lastName) user.lastName = data.lastName;
     if (data.avatar !== undefined) user.avatar = data.avatar;
     if (data.phoneNumber !== undefined) user.phoneNumber = data.phoneNumber;
+    if (data.jobTitle !== undefined) (user as any).jobTitle = data.jobTitle;
+    if (data.department !== undefined) (user as any).department = data.department;
     await user.save();
     return user;
   }
 
-  /**
-   * Change user password
-   */
   async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
     const user = await this.userModel.findById(userId).select('+password');
     if (!user) throw new HttpException('User not found', HttpStatus.NOT_FOUND);
@@ -404,9 +576,6 @@ export class AuthService {
     await user.save();
   }
 
-  /**
-   * Disable MFA for a user
-   */
   async disableMFA(userId: string): Promise<void> {
     const user = await this.userModel.findById(userId);
     if (!user) throw new HttpException('User not found', HttpStatus.NOT_FOUND);
@@ -417,23 +586,25 @@ export class AuthService {
     await user.save();
   }
 
-  /**
-   * Logout user (token blacklist)
-   */
-  async logout(token: string): Promise<void> {
-    this.logger.debug('User logout');
-    // In production, add token to Redis blacklist
-    // For now, client should discard token
+  async logout(userId: string, tokenFamily?: string): Promise<void> {
+    this.logger.debug(`User logout: ${userId}`);
+    if (tokenFamily) {
+      await this.sessionModel.updateMany(
+        { refreshTokenFamily: tokenFamily },
+        { $set: { isRevoked: true } },
+      );
+    }
+    await this.auditService.log({
+      action: AuditAction.USER_LOGOUT,
+      userId,
+      resource: 'session',
+    });
   }
 
   // ── Role Management ──
 
-  /**
-   * Create a new role
-   */
   async createRole(dto: CreateRoleDto, organizationId?: string): Promise<IRole> {
     this.logger.debug(`Creating role: ${dto.name}`);
-
     const existing = await this.roleModel.findOne({
       name: dto.name.toLowerCase(),
       organizationId: organizationId || null,
@@ -452,9 +623,6 @@ export class AuthService {
     return role;
   }
 
-  /**
-   * Get all roles (non-deleted)
-   */
   async getRoles(organizationId?: string): Promise<IRole[]> {
     return this.roleModel.find({
       isDeleted: false,
@@ -465,9 +633,6 @@ export class AuthService {
     }).sort({ isSystem: -1, name: 1 });
   }
 
-  /**
-   * Get a single role by ID
-   */
   async getRoleById(id: string, organizationId?: string): Promise<IRole> {
     const role = await this.roleModel.findOne({
       _id: id,
@@ -483,9 +648,6 @@ export class AuthService {
     return role;
   }
 
-  /**
-   * Update a role
-   */
   async updateRole(id: string, dto: UpdateRoleDto, organizationId?: string): Promise<IRole> {
     const role = await this.roleModel.findOne({
       _id: id,
@@ -498,16 +660,12 @@ export class AuthService {
     if (!role) {
       throw new HttpException('Role not found', HttpStatus.NOT_FOUND);
     }
-
     Object.assign(role, dto);
     await role.save();
     this.logger.log(`Role updated: ${role.name}`);
     return role;
   }
 
-  /**
-   * Soft-delete a role (system roles cannot be deleted)
-   */
   async deleteRole(id: string, organizationId?: string): Promise<void> {
     const role = await this.roleModel.findOne({
       _id: id,
@@ -521,41 +679,44 @@ export class AuthService {
       throw new HttpException('System roles cannot be deleted', HttpStatus.FORBIDDEN);
     }
 
+    // Check if role has active members
+    const memberCount = await this.orgMembershipModel.countDocuments({
+      role: role.name,
+      organizationId: organizationId,
+      status: { $in: ['active', 'pending'] },
+    });
+    if (memberCount > 0) {
+      throw new HttpException(
+        'Cannot delete role with active members. Reassign members first.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     role.isDeleted = true;
     role.isActive = false;
     await role.save();
     this.logger.log(`Role deleted: ${role.name}`);
   }
 
-  /**
-   * Assign roles to a user
-   */
   async assignRoleToUser(userId: string, roleNames: string[]): Promise<IUser> {
     const user = await this.userModel.findById(userId);
     if (!user) {
       throw new HttpException('User not found', HttpStatus.NOT_FOUND);
     }
-
-    // Verify all roles exist
     const roles = await this.roleModel.find({
       name: { $in: roleNames.map((r) => r.toLowerCase()) },
       isDeleted: false,
       isActive: true,
     });
-
     if (roles.length !== roleNames.length) {
       throw new HttpException('One or more roles not found or inactive', HttpStatus.BAD_REQUEST);
     }
-
     user.roles = roleNames.map((r) => r.toLowerCase());
     await user.save();
     this.logger.log(`Roles assigned to user ${userId}: ${roleNames.join(', ')}`);
     return user;
   }
 
-  /**
-   * Get all users with a specific role
-   */
   async getUsersByRole(roleName: string): Promise<IUser[]> {
     return this.userModel.find({
       roles: roleName.toLowerCase(),
@@ -564,9 +725,6 @@ export class AuthService {
     });
   }
 
-  /**
-   * Get all users (for admin listing)
-   */
   async getAllUsers(organizationId?: string): Promise<IUser[]> {
     const filter: any = { deletedAt: null, isActive: true };
     if (organizationId) {
@@ -578,30 +736,22 @@ export class AuthService {
       .sort({ createdAt: -1 });
   }
 
-  /**
-   * Find a user by email (public — used by check-email endpoint)
-   */
   async findUserByEmail(email: string): Promise<IUser | null> {
     return this.userModel.findOne({ email: email.toLowerCase() });
   }
 
-  /**
-   * Get user preferences
-   */
+  // ── Preferences ──
+
   async getPreferences(userId: string): Promise<Record<string, unknown>> {
     const user = await this.userModel.findById(userId);
     if (!user) throw new HttpException('User not found', HttpStatus.NOT_FOUND);
     return (user.preferences as Record<string, unknown>) || {};
   }
 
-  /**
-   * Update user preferences (merge with existing)
-   */
   async updatePreferences(userId: string, preferences: Record<string, unknown>): Promise<Record<string, unknown>> {
     const user = await this.userModel.findById(userId);
     if (!user) throw new HttpException('User not found', HttpStatus.NOT_FOUND);
-    // Merge with existing preferences (don't replace entirely)
-    user.preferences = { ...((user.preferences as Record<string, unknown>) || {}), ...preferences };
+    user.preferences = { ...((user.preferences as Record<string, unknown>) || {}), ...preferences } as any;
     user.markModified('preferences');
     await user.save();
     return user.preferences as Record<string, unknown>;
@@ -609,91 +759,205 @@ export class AuthService {
 
   // ── OTP Methods ──
 
-  /**
-   * Send OTP to user's email
-   */
-  async sendOtp(email: string): Promise<{ sent: boolean; isNewUser: boolean }> {
-    // DEV_ONLY: Fixed OTP for development. In production, use random: Math.floor(100000 + Math.random() * 900000).toString()
-    const otp = '000000';
-    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 min expiry
+  async sendOtp(email: string, ipAddress?: string): Promise<{ sent: boolean; isNewUser: boolean }> {
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-    let user = await this.userModel.findOne({ email: email.toLowerCase() });
+    // Hash OTP before storing (bcrypt with 10 rounds)
+    const bcrypt = await import('bcrypt');
+    const otpHash = await bcrypt.hash(otp, 10);
+
+    let user = await this.userModel.findOne({ email: email.toLowerCase() }).select('+otp +otpExpiresAt +otpAttempts +otpLastRequestedAt +otpRequestCount');
     const isNewUser = !user;
 
-    if (!user) {
-      // Don't create account yet — just store OTP temporarily
-      // Create user with isActive: false
-      user = new this.userModel({
-        email: email.toLowerCase(),
-        password: 'pending-otp-' + otp, // placeholder, will be set later
-        firstName: 'Pending',
-        lastName: 'User',
-        otp,
-        otpExpiresAt,
-        otpAttempts: 0,
-        isActive: false, // Not fully registered yet
-      });
-      await user.save();
-    } else {
-      user.otp = otp;
+    if (user) {
+      // Rate limiting: max 5 OTP requests per hour
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      if (user.otpLastRequestedAt && user.otpLastRequestedAt > oneHourAgo && (user.otpRequestCount || 0) >= this.OTP_RATE_LIMIT_PER_HOUR) {
+        throw new HttpException(
+          { success: false, error: { code: 'RATE_LIMIT_OTP', message: 'Too many OTP requests. Please try again later.' } },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+
+      // Resend cooldown
+      if (user.otpLastRequestedAt) {
+        const secondsSinceLastRequest = (Date.now() - user.otpLastRequestedAt.getTime()) / 1000;
+        if (secondsSinceLastRequest < this.OTP_RESEND_COOLDOWN_SECONDS) {
+          throw new HttpException(
+            { success: false, error: { code: 'OTP_COOLDOWN', message: `Please wait ${Math.ceil(this.OTP_RESEND_COOLDOWN_SECONDS - secondsSinceLastRequest)} seconds before requesting a new OTP.` } },
+            HttpStatus.TOO_MANY_REQUESTS,
+          );
+        }
+      }
+
+      // Reset hourly counter if needed
+      if (!user.otpLastRequestedAt || user.otpLastRequestedAt < oneHourAgo) {
+        user.otpRequestCount = 0;
+      }
+
+      user.otp = otpHash;
       user.otpExpiresAt = otpExpiresAt;
       user.otpAttempts = 0;
+      user.otpLastRequestedAt = new Date();
+      user.otpRequestCount = (user.otpRequestCount || 0) + 1;
+      await user.save();
+    } else {
+      user = new this.userModel({
+        email: email.toLowerCase(),
+        password: 'pending-otp-' + uuidv4(),
+        firstName: 'Pending',
+        lastName: 'User',
+        otp: otpHash,
+        otpExpiresAt,
+        otpAttempts: 0,
+        otpLastRequestedAt: new Date(),
+        otpRequestCount: 1,
+        isActive: false,
+        setupStage: 'otp_verified',
+      });
       await user.save();
     }
 
-    // DEV_ONLY: Log OTP to console (in production, send via email)
-    this.logger.log(`OTP for ${email}: ${otp}`);
+    this.logger.log(`[DEV] OTP for ${email}: ${otp}`);
 
-    // TODO: Send OTP via email (MailHog in dev)
-    // await this.emailService.sendOtp(email, otp);
+    // Send plaintext OTP via email BEFORE it's only stored hashed
+    await this.sendOtpEmail(email, otp);
+
+    await this.auditService.log({
+      action: AuditAction.OTP_REQUESTED,
+      userId: user._id.toString(),
+      resource: 'user',
+      resourceId: user._id.toString(),
+      ipAddress,
+    });
 
     return { sent: true, isNewUser };
   }
 
-  /**
-   * Verify OTP and return tokens
-   */
-  async verifyOtp(email: string, otp: string): Promise<{ verified: boolean; user: IUser; tokens: AuthTokens; isNewUser: boolean; orgs: any[] }> {
+  async verifyOtp(email: string, otp: string, ipAddress?: string): Promise<{
+    verified: boolean;
+    user: IUser;
+    tokens: AuthTokens;
+    isNewUser: boolean;
+    route: PostLoginRoute;
+  }> {
     const user = await this.userModel.findOne({ email: email.toLowerCase() }).select('+otp +otpExpiresAt +otpAttempts');
 
-    if (!user) throw new HttpException('User not found', HttpStatus.NOT_FOUND);
+    if (!user) throw new HttpException(
+      { success: false, error: { code: 'USER_NOT_FOUND', message: 'User not found' } },
+      HttpStatus.NOT_FOUND,
+    );
 
-    if (user.otpAttempts >= 5) {
-      throw new HttpException('Too many attempts. Request a new OTP.', HttpStatus.TOO_MANY_REQUESTS);
+    // Check lockout
+    if (user.lockUntil && user.lockUntil > new Date()) {
+      const minutesLeft = Math.ceil((user.lockUntil.getTime() - Date.now()) / 60000);
+      throw new HttpException(
+        { success: false, error: { code: 'ACCOUNT_LOCKED', message: `Too many attempts. Please try again in ${minutesLeft} minutes.`, lockoutMinutes: minutesLeft } },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    if (user.otpAttempts >= this.OTP_MAX_ATTEMPTS) {
+      // Lock the account
+      user.lockUntil = new Date(Date.now() + this.OTP_LOCKOUT_MINUTES * 60 * 1000);
+      await user.save();
+
+      await this.auditService.log({
+        action: AuditAction.ACCOUNT_LOCKED,
+        userId: user._id.toString(),
+        resource: 'user',
+        resourceId: user._id.toString(),
+        ipAddress,
+      });
+
+      throw new HttpException(
+        { success: false, error: { code: 'ACCOUNT_LOCKED', message: `Too many attempts. Please try again in ${this.OTP_LOCKOUT_MINUTES} minutes.`, lockoutMinutes: this.OTP_LOCKOUT_MINUTES } },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
     }
 
     if (!user.otp || !user.otpExpiresAt || new Date() > user.otpExpiresAt) {
-      throw new HttpException('OTP expired. Request a new one.', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        { success: false, error: { code: 'OTP_EXPIRED', message: 'OTP has expired. Please request a new one.' } },
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
-    if (user.otp !== otp) {
+    // Compare using bcrypt (OTP is stored hashed)
+    const bcrypt = await import('bcrypt');
+    const otpMatch = await bcrypt.compare(otp, user.otp);
+    if (!otpMatch) {
       user.otpAttempts = (user.otpAttempts || 0) + 1;
       await user.save();
-      throw new HttpException('Invalid OTP', HttpStatus.BAD_REQUEST);
+
+      await this.auditService.log({
+        action: AuditAction.OTP_FAILED,
+        userId: user._id.toString(),
+        resource: 'user',
+        resourceId: user._id.toString(),
+        details: { attemptsRemaining: this.OTP_MAX_ATTEMPTS - user.otpAttempts },
+        ipAddress,
+      });
+
+      throw new HttpException(
+        { success: false, error: { code: 'INVALID_OTP', message: 'Invalid OTP. Please try again.', attemptsRemaining: this.OTP_MAX_ATTEMPTS - user.otpAttempts } },
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     // OTP verified — clear it
     user.otp = undefined;
     user.otpExpiresAt = undefined;
     user.otpAttempts = 0;
+    user.lockUntil = null;
 
     const isNewUser = !user.isActive;
-    if (!user.isActive) {
-      // Mark as needing completion (name, password)
-      // Don't set active yet — that happens after profile completion
+    if (isNewUser && user.setupStage === 'otp_verified') {
+      user.isActive = true;
     }
 
+    // Auto-activate invited users
+    if (user.setupStage === 'invited') {
+      user.isActive = true;
+    }
+
+    user.lastLogin = new Date();
     await user.save();
 
-    // Generate tokens
-    const tokens = await this.generateTokens(user);
+    await this.auditService.log({
+      action: AuditAction.OTP_VERIFIED,
+      userId: user._id.toString(),
+      resource: 'user',
+      resourceId: user._id.toString(),
+      ipAddress,
+    });
 
-    return { verified: true, user, tokens, isNewUser, orgs: [] };
+    // Determine routing
+    const route = await this.determinePostLoginRoute(user);
+
+    // Generate tokens with org context if available
+    const tokens = await this.generateTokens(user, route.organizationId);
+
+    return { verified: true, user, tokens, isNewUser, route };
   }
 
-  /**
-   * Complete profile for new users after OTP verification
-   */
+  // ── Invite Validation ──
+
+  // ── Invite Validation (delegated to InviteService) ──
+
+  async validateInviteToken(token: string) {
+    return this.inviteService.validateInviteToken(token);
+  }
+
+  async acceptInvite(token: string, userId: string): Promise<IOrgMembership> {
+    return this.inviteService.acceptInvite(token, userId);
+  }
+
+  async declineInvite(token: string, userId: string): Promise<void> {
+    return this.inviteService.declineInvite(token, userId);
+  }
+
   async completeProfile(userId: string, firstName: string, lastName: string, password?: string) {
     const user = await this.userModel.findById(userId);
     if (!user) throw new HttpException('User not found', HttpStatus.NOT_FOUND);
@@ -701,17 +965,99 @@ export class AuthService {
     user.firstName = firstName;
     user.lastName = lastName;
     if (password) {
-      user.password = password; // Will be hashed by pre-save hook
+      user.password = password;
     }
     user.isActive = true;
+
+    // Update setupStage based on current stage
+    if (user.setupStage === 'org_created') {
+      user.setupStage = 'profile_complete';
+    }
+
     await user.save();
+
+    await this.auditService.log({
+      action: AuditAction.PROFILE_UPDATED,
+      userId,
+      resource: 'user',
+      resourceId: userId,
+    });
 
     return user;
   }
-}
 
-/*
- * When: User attempts authentication action
- * if: credentials are valid and account is not locked
- * then: return JWT tokens and update last login timestamp
- */
+  // ── Setup Stage Transitions ──
+
+  async updateSetupStage(userId: string, stage: string): Promise<IUser> {
+    const user = await this.userModel.findById(userId);
+    if (!user) throw new HttpException('User not found', HttpStatus.NOT_FOUND);
+    user.setupStage = stage as any;
+    await user.save();
+
+    if (stage === 'complete') {
+      await this.auditService.log({
+        action: AuditAction.SETUP_COMPLETED,
+        userId,
+        resource: 'user',
+        resourceId: userId,
+      });
+    }
+
+    return user;
+  }
+
+  // ── Member Deactivation/Reactivation ──
+
+  async deactivateMember(orgId: string, targetUserId: string, performedBy: string): Promise<IOrgMembership> {
+    const membership = await this.orgMembershipModel.findOne({
+      userId: targetUserId,
+      organizationId: orgId,
+      status: 'active',
+    });
+    if (!membership) throw new HttpException('Active membership not found', HttpStatus.NOT_FOUND);
+
+    membership.status = 'deactivated';
+    membership.deactivatedAt = new Date();
+    membership.deactivatedBy = performedBy;
+    await membership.save();
+
+    // Revoke all sessions for this user+org
+    await this.revokeAllSessions(targetUserId);
+
+    await this.auditService.log({
+      action: AuditAction.MEMBER_DEACTIVATED,
+      userId: performedBy,
+      targetUserId,
+      resource: 'membership',
+      resourceId: membership._id.toString(),
+      organizationId: orgId,
+    });
+
+    return membership;
+  }
+
+  async reactivateMember(orgId: string, targetUserId: string, performedBy: string): Promise<IOrgMembership> {
+    const membership = await this.orgMembershipModel.findOne({
+      userId: targetUserId,
+      organizationId: orgId,
+      status: 'deactivated',
+    });
+    if (!membership) throw new HttpException('Deactivated membership not found', HttpStatus.NOT_FOUND);
+
+    membership.status = 'active';
+    membership.deactivatedAt = null;
+    membership.deactivatedBy = null;
+    await membership.save();
+
+    await this.auditService.log({
+      action: AuditAction.MEMBER_REACTIVATED,
+      userId: performedBy,
+      targetUserId,
+      resource: 'membership',
+      resourceId: membership._id.toString(),
+      organizationId: orgId,
+    });
+
+    return membership;
+  }
+}

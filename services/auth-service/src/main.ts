@@ -3,6 +3,8 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
+import { ResponseInterceptor } from './common/interceptors/response.interceptor';
+import { HttpExceptionFilterImpl } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
   if (!process.env.JWT_SECRET) {
@@ -35,6 +37,12 @@ async function bootstrap() {
       transform: true,
     }),
   );
+
+  // Global response interceptor (standardized { success, data, meta } format)
+  app.useGlobalInterceptors(new ResponseInterceptor());
+
+  // Global exception filter (standardized { success: false, error: { code, message } } format)
+  app.useGlobalFilters(new HttpExceptionFilterImpl());
 
   // API version prefix
   app.setGlobalPrefix('api/v1');

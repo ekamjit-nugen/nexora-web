@@ -2,6 +2,8 @@
 
 import React, { useRef, useEffect, useCallback } from "react";
 import { cn } from "@/lib/utils";
+import type { ReconnectionState } from "@/lib/hooks/useWebRTC";
+import type { AnnotationStroke } from "@/lib/call-context";
 
 interface VideoTileProps {
   stream: MediaStream | null;
@@ -109,15 +111,52 @@ export function FloatingEmojiOverlay({ emojis }: { emojis: FloatingEmoji[] }) {
   );
 }
 
-// ── Screen Share Annotation Canvas ──
+// ── Reconnecting Overlay ──
+export function ReconnectingOverlay({ state }: { state: ReconnectionState }) {
+  if (state === "stable") return null;
+
+  return (
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="text-center">
+        {state === "reconnecting" ? (
+          <>
+            <div className="mb-3 flex items-center justify-center gap-1">
+              <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce" style={{ animationDelay: "0ms" }} />
+              <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce" style={{ animationDelay: "150ms" }} />
+              <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+            </div>
+            <p className="text-lg font-semibold text-white">Reconnecting...</p>
+            <p className="mt-1 text-sm text-white/60">Please wait while we restore your connection</p>
+          </>
+        ) : (
+          <>
+            <div className="mb-3 flex items-center justify-center">
+              <div className="h-8 w-8 rounded-full bg-red-500 flex items-center justify-center">
+                <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </div>
+            </div>
+            <p className="text-lg font-semibold text-white">Connection Lost</p>
+            <p className="mt-1 text-sm text-white/60">Unable to reconnect. The call may have ended.</p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Screen Share Annotation Canvas (with remote stroke support) ──
 interface AnnotationCanvasProps {
   isEnabled: boolean;
   color?: string;
   brushSize?: number;
   onClear?: () => void;
+  /** Called with normalized stroke coordinates (0-1 range) for broadcast */
+  onStroke?: (stroke: AnnotationStroke) => void;
 }
 
-export function AnnotationCanvas({ isEnabled, color = "#FF3B30", brushSize = 3, onClear }: AnnotationCanvasProps) {
+export function AnnotationCanvas({ isEnabled, color = "#FF3B30", brushSize = 3, onClear, onStroke }: AnnotationCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawingRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -129,24 +168,33 @@ export function AnnotationCanvas({ isEnabled, color = "#FF3B30", brushSize = 3, 
     const resizeCanvas = () => {
       const parent = canvas.parentElement;
       if (!parent) return;
+      // Preserve existing drawing when resizing
+      const imgData = canvas.width > 0 && canvas.height > 0
+        ? canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height)
+        : null;
       canvas.width = parent.clientWidth;
       canvas.height = parent.clientHeight;
+      if (imgData) {
+        canvas.getContext("2d")?.putImageData(imgData, 0, 0);
+      }
     };
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
     return () => window.removeEventListener("resize", resizeCanvas);
   }, []);
 
-  // Clear canvas when onClear changes
-  useEffect(() => {
-    if (!onClear) return;
-  }, [onClear]);
-
   const getPos = (e: React.MouseEvent) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+
+  // Normalize coordinates to 0-1 range for cross-resolution broadcast
+  const normalize = (x: number, y: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas || canvas.width === 0 || canvas.height === 0) return { x: 0, y: 0 };
+    return { x: x / canvas.width, y: y / canvas.height };
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -162,6 +210,8 @@ export function AnnotationCanvas({ isEnabled, color = "#FF3B30", brushSize = 3, 
     if (!ctx || !lastPosRef.current) return;
 
     const pos = getPos(e);
+
+    // Draw locally
     ctx.beginPath();
     ctx.strokeStyle = color;
     ctx.lineWidth = brushSize;
@@ -170,6 +220,21 @@ export function AnnotationCanvas({ isEnabled, color = "#FF3B30", brushSize = 3, 
     ctx.moveTo(lastPosRef.current.x, lastPosRef.current.y);
     ctx.lineTo(pos.x, pos.y);
     ctx.stroke();
+
+    // Broadcast normalized stroke
+    if (onStroke) {
+      const from = normalize(lastPosRef.current.x, lastPosRef.current.y);
+      const to = normalize(pos.x, pos.y);
+      onStroke({
+        fromX: from.x,
+        fromY: from.y,
+        toX: to.x,
+        toY: to.y,
+        color,
+        brushSize,
+      });
+    }
+
     lastPosRef.current = pos;
   };
 
@@ -186,11 +251,30 @@ export function AnnotationCanvas({ isEnabled, color = "#FF3B30", brushSize = 3, 
     }
   }, []);
 
-  // Expose clearCanvas
+  // Expose clearCanvas and drawRemoteStroke via ref
   useEffect(() => {
     if (canvasRef.current) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (canvasRef.current as any).__clearCanvas = clearCanvas;
+      const el = canvasRef.current as any;
+      el.__clearCanvas = clearCanvas;
+      el.__drawRemoteStroke = (stroke: AnnotationStroke) => {
+        const canvas = canvasRef.current;
+        const ctx = canvas?.getContext("2d");
+        if (!ctx || !canvas) return;
+        // Denormalize coordinates
+        const fromX = stroke.fromX * canvas.width;
+        const fromY = stroke.fromY * canvas.height;
+        const toX = stroke.toX * canvas.width;
+        const toY = stroke.toY * canvas.height;
+        ctx.beginPath();
+        ctx.strokeStyle = stroke.color;
+        ctx.lineWidth = stroke.brushSize;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.moveTo(fromX, fromY);
+        ctx.lineTo(toX, toY);
+        ctx.stroke();
+      };
     }
   }, [clearCanvas]);
 
@@ -313,8 +397,10 @@ interface VideoCallWindowProps {
   onAnnotationColorChange?: (color: string) => void;
   onAnnotationBrushSizeChange?: (size: number) => void;
   onAnnotationClear?: () => void;
+  onAnnotationStroke?: (stroke: AnnotationStroke) => void;
   floatingEmojis?: FloatingEmoji[];
   additionalParticipants?: ParticipantStream[];
+  reconnectionState?: ReconnectionState;
 }
 
 export function VideoCallWindow({
@@ -332,8 +418,10 @@ export function VideoCallWindow({
   onAnnotationColorChange,
   onAnnotationBrushSizeChange,
   onAnnotationClear,
+  onAnnotationStroke,
   floatingEmojis = [],
   additionalParticipants = [],
+  reconnectionState = "stable",
 }: VideoCallWindowProps) {
   // Build list of all participants for grid
   const allParticipants: ParticipantStream[] = [];
@@ -342,6 +430,9 @@ export function VideoCallWindow({
   if (screenShareStream && isScreenSharing) {
     return (
       <div className="relative h-full w-full">
+        {/* Reconnecting overlay */}
+        <ReconnectingOverlay state={reconnectionState} />
+
         {/* Screen share as main view */}
         <div className="relative h-full w-full">
           <VideoTile
@@ -350,13 +441,14 @@ export function VideoCallWindow({
             muteAudio
             className="h-full w-full"
           />
-          {/* Annotation overlay for viewers */}
+          {/* Annotation overlay for viewers — now with broadcast support */}
           {onAnnotationToggle && (
             <>
               <AnnotationCanvas
                 isEnabled={isViewerAnnotating}
                 color={annotationColor}
                 brushSize={annotationBrushSize}
+                onStroke={onAnnotationStroke}
               />
               <AnnotationToolbar
                 isAnnotating={isViewerAnnotating}
@@ -439,6 +531,9 @@ export function VideoCallWindow({
   if (totalParticipants === 2 && additionalParticipants.length === 0) {
     return (
       <div className="relative h-full w-full">
+        {/* Reconnecting overlay */}
+        <ReconnectingOverlay state={reconnectionState} />
+
         {remoteStream ? (
           <VideoTile
             stream={remoteStream}
@@ -478,6 +573,9 @@ export function VideoCallWindow({
   // Grid layout for 3+ participants
   return (
     <div className="relative h-full w-full p-2">
+      {/* Reconnecting overlay */}
+      <ReconnectingOverlay state={reconnectionState} />
+
       <div className={`grid ${getGridClass()} gap-2 h-full w-full`}>
         {allParticipants.map((p) => (
           <VideoTile

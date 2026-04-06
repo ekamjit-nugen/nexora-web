@@ -12,15 +12,26 @@ import {
   HttpCode,
   HttpStatus,
   Logger,
+  ForbiddenException,
 } from '@nestjs/common';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { OrgMembershipGuard } from '../common/guards/org-membership.guard';
 import { OrganizationService } from './organization.service';
+
+const ADMIN_ROLES = ['admin', 'owner'];
+function requireAdminRole(req: any): void {
+  const orgRole = req.user?.orgRole;
+  const roles = req.user?.roles || [];
+  const isAdmin = ADMIN_ROLES.includes(orgRole) || roles.some((r: string) => ADMIN_ROLES.includes(r)) || req.user?.isPlatformAdmin;
+  if (!isAdmin) throw new ForbiddenException({ code: 'INSUFFICIENT_PERMISSION', message: 'Admin or owner role required' });
+}
 import {
   CreateOrganizationDto,
   UpdateOrganizationDto,
   InviteMemberDto,
   SwitchOrgDto,
   UpdateOnboardingDto,
+  UpdateMemberRoleDto,
 } from './dto/organization.dto';
 
 @Controller('auth')
@@ -78,7 +89,7 @@ export class OrganizationController {
    * Get a single organization by ID
    */
   @Get('organizations/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, OrgMembershipGuard)
   @HttpCode(HttpStatus.OK)
   async getOrganization(@Param('id') id: string) {
     const organization = await this.organizationService.getOrganization(id);
@@ -93,7 +104,7 @@ export class OrganizationController {
    * Update an organization
    */
   @Put('organizations/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, OrgMembershipGuard)
   @HttpCode(HttpStatus.OK)
   async updateOrganization(@Param('id') id: string, @Body() dto: UpdateOrganizationDto) {
     this.logger.log(`Updating organization: ${id}`);
@@ -109,7 +120,7 @@ export class OrganizationController {
    * Invite a member to an organization
    */
   @Post('organizations/:id/invite')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, OrgMembershipGuard)
   @HttpCode(HttpStatus.CREATED)
   async inviteMember(@Param('id') id: string, @Body() dto: InviteMemberDto, @Req() req: any) {
     this.logger.log(`Inviting ${dto.email} to organization: ${id}`);
@@ -157,7 +168,7 @@ export class OrganizationController {
    * Update onboarding step for an organization
    */
   @Put('organizations/:id/onboarding')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, OrgMembershipGuard)
   @HttpCode(HttpStatus.OK)
   async updateOnboarding(@Param('id') id: string, @Body() dto: UpdateOnboardingDto) {
     this.logger.log(`Updating onboarding for organization: ${id}`);
@@ -173,7 +184,7 @@ export class OrganizationController {
    * List all members of an organization
    */
   @Get('organizations/:id/members')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, OrgMembershipGuard)
   @HttpCode(HttpStatus.OK)
   async getOrgMembers(@Param('id') id: string) {
     const members = await this.organizationService.getOrgMembers(id);
@@ -188,20 +199,39 @@ export class OrganizationController {
    * Update member role in an organization
    */
   @Put('organizations/:id/members/:memberId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, OrgMembershipGuard)
   @HttpCode(HttpStatus.OK)
-  async updateMemberRole(@Param('id') orgId: string, @Param('memberId') memberId: string, @Body() body: { role: string }) {
+  async updateMemberRole(@Param('id') orgId: string, @Param('memberId') memberId: string, @Body() body: UpdateMemberRoleDto, @Req() req: any) {
+    // OrgMembershipGuard already validates user belongs to this org
+    // Verify the user's admin role is specifically in this organization
+    const membership = req.orgMembership;
+    if (!req.user?.isPlatformAdmin && (!membership || !['admin', 'owner'].includes(membership.role))) {
+      throw new ForbiddenException({ code: 'INSUFFICIENT_PERMISSION', message: 'Admin or owner role required in this organization' });
+    }
     const result = await this.organizationService.updateMemberRole(orgId, memberId, body.role);
     return { success: true, message: 'Member role updated', data: result };
+  }
+
+  /**
+   * Resend invitation to a pending member
+   */
+  @Post('organizations/:id/resend-invite')
+  @UseGuards(JwtAuthGuard, OrgMembershipGuard)
+  @HttpCode(HttpStatus.OK)
+  async resendInvite(@Param('id') orgId: string, @Body() body: { email: string }, @Req() req: any) {
+    this.logger.log(`Resending invite to ${body.email} for org: ${orgId}`);
+    const membership = await this.organizationService.resendInvite(orgId, body.email, req.user.userId);
+    return { success: true, message: 'Invitation resent successfully', data: membership };
   }
 
   /**
    * Remove member from an organization
    */
   @Delete('organizations/:id/members/:memberId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, OrgMembershipGuard)
   @HttpCode(HttpStatus.OK)
-  async removeMember(@Param('id') orgId: string, @Param('memberId') memberId: string) {
+  async removeMember(@Param('id') orgId: string, @Param('memberId') memberId: string, @Req() req: any) {
+    requireAdminRole(req);
     await this.organizationService.removeMember(orgId, memberId);
     return { success: true, message: 'Member removed' };
   }
@@ -210,7 +240,7 @@ export class OrganizationController {
    * Delete organization (soft delete)
    */
   @Delete('organizations/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, OrgMembershipGuard)
   @HttpCode(HttpStatus.OK)
   async deleteOrganization(@Param('id') orgId: string, @Req() req) {
     await this.organizationService.deleteOrganization(orgId, req.user.userId);

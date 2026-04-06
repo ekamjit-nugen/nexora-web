@@ -1,20 +1,44 @@
-import { IsString, IsOptional, IsEnum, IsEmail, IsNumber, IsBoolean } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsEmail, IsNumber, IsBoolean, IsIn } from 'class-validator';
 
 export class CreateOrganizationDto {
   @IsString()
   name: string;
 
   @IsOptional()
-  @IsEnum(['it_company', 'agency', 'startup', 'enterprise', 'nonprofit', 'education', 'healthcare', 'finance', 'other'])
+  @IsString()
   industry?: string;
 
   @IsOptional()
-  @IsEnum(['1-10', '11-50', '51-200', '201-500', '500+'])
+  @IsString()
   size?: string;
 
   @IsOptional()
   @IsString()
   domain?: string;
+
+  @IsOptional()
+  @IsString()
+  type?: string;
+
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @IsOptional()
+  @IsString()
+  state?: string;
+
+  @IsOptional()
+  @IsString()
+  timezone?: string;
+
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
+  @IsOptional()
+  @IsNumber()
+  financialYearStart?: number;
 }
 
 export class UpdateOrganizationDto {
@@ -23,11 +47,11 @@ export class UpdateOrganizationDto {
   name?: string;
 
   @IsOptional()
-  @IsEnum(['it_company', 'agency', 'startup', 'enterprise', 'nonprofit', 'education', 'healthcare', 'finance', 'other'])
+  @IsString()
   industry?: string;
 
   @IsOptional()
-  @IsEnum(['1-10', '11-50', '51-200', '201-500', '500+'])
+  @IsString()
   size?: string;
 
   @IsOptional()
@@ -37,6 +61,26 @@ export class UpdateOrganizationDto {
   @IsOptional()
   @IsString()
   logo?: string;
+
+  @IsOptional()
+  @IsString()
+  type?: string;
+
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @IsOptional()
+  @IsString()
+  state?: string;
+
+  @IsOptional()
+  @IsString()
+  timezone?: string;
+
+  @IsOptional()
+  @IsString()
+  currency?: string;
 
   @IsOptional()
   @IsEnum(['free', 'starter', 'professional', 'enterprise'])
@@ -55,7 +99,7 @@ export class InviteMemberDto {
   email: string;
 
   @IsOptional()
-  @IsEnum(['admin', 'manager', 'member', 'viewer'])
+  @IsString()
   role?: string;
 
   @IsOptional()
@@ -65,6 +109,10 @@ export class InviteMemberDto {
   @IsOptional()
   @IsString()
   lastName?: string;
+
+  @IsOptional()
+  @IsString()
+  department?: string;
 }
 
 export class SwitchOrgDto {
@@ -79,4 +127,12 @@ export class UpdateOnboardingDto {
   @IsOptional()
   @IsBoolean()
   completed?: boolean;
+}
+
+const VALID_ORG_ROLES = ['owner', 'admin', 'hr', 'manager', 'developer', 'designer', 'employee', 'member', 'viewer'];
+
+export class UpdateMemberRoleDto {
+  @IsString()
+  @IsIn(VALID_ORG_ROLES, { message: `Role must be one of: ${VALID_ORG_ROLES.join(', ')}` })
+  role: string;
 }

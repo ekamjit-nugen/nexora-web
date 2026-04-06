@@ -22,12 +22,15 @@ const SERVICES = {
   chat: process.env.CHAT_SERVICE_URL || 'http://chat-service:3002',
   calling: process.env.CALLING_SERVICE_URL || 'http://calling-service:3051',
   policy: process.env.POLICY_SERVICE_URL || 'http://policy-service:3013',
+  notification: process.env.NOTIFICATION_SERVICE_URL || 'http://notification-service:3053',
+  media: process.env.MEDIA_SERVICE_URL || 'http://media-service:3052',
 };
 
 // Route map: path prefix -> service URL
 const ROUTES: Array<{ paths: string[]; target: string; name: string }> = [
   { paths: ['/api/v1/platform'], target: SERVICES.auth, name: 'auth-service' },
   { paths: ['/api/v1/auth'], target: SERVICES.auth, name: 'auth-service' },
+  { paths: ['/api/v1/settings'], target: SERVICES.auth, name: 'auth-service' },
   { paths: ['/api/v1/employees', '/api/v1/departments', '/api/v1/designations', '/api/v1/teams', '/api/v1/clients', '/api/v1/invoices', '/api/v1/call-logs'], target: SERVICES.hr, name: 'hr-service' },
   { paths: ['/api/v1/attendance', '/api/v1/shifts', '/api/v1/alerts'], target: SERVICES.attendance, name: 'attendance-service' },
   { paths: ['/api/v1/policies'], target: SERVICES.policy, name: 'policy-service' },
@@ -37,10 +40,18 @@ const ROUTES: Array<{ paths: string[]; target: string; name: string }> = [
   { paths: ['/api/v1/calls', '/api/v1/meetings'], target: SERVICES.calling, name: 'calling-service' },
   { paths: ['/api/v1/ai'], target: SERVICES.ai, name: 'ai-service' },
   { paths: ['/api/v1/chat'], target: SERVICES.chat, name: 'chat-service' },
+  { paths: ['/api/v1/notifications'], target: SERVICES.notification, name: 'notification-service' },
+  { paths: ['/api/v1/media'], target: SERVICES.media, name: 'media-service' },
 ];
 
 // Middleware
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: false, // Disable CSP — API gateway proxies to multiple services on different ports
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+  frameguard: { action: 'deny' as const },
+  noSniff: true,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+}));
 app.use(compression({
   filter: (req: any) => {
     // Don't compress SSE/streaming responses
@@ -51,16 +62,43 @@ app.use(compression({
   },
 }) as any);
 // CORS — restrict to allowed origins
-const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3100').split(',');
-app.use((req, res, next) => {
+// Uses writeHead override to ensure CORS headers survive proxy responses
+const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3100,http://localhost:3005')
+  .split(',').map(o => o.trim());
+app.use((req: any, res: any, next: any) => {
   const origin = req.headers.origin;
-  if (!origin || ALLOWED_ORIGINS.includes(origin)) {
-    res.header('Access-Control-Allow-Origin', origin || ALLOWED_ORIGINS[0]);
+  const allowedOrigin = (!origin || ALLOWED_ORIGINS.includes(origin))
+    ? (origin || ALLOWED_ORIGINS[0])
+    : null;
+
+  // Handle preflight immediately
+  if (req.method === 'OPTIONS') {
+    if (allowedOrigin) {
+      res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    }
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, X-Organization-Id, X-XSRF-TOKEN, X-Internal-Service-Key, X-Nexora-Signature, X-Nexora-Event');
+    return res.sendStatus(204);
   }
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, X-Organization-Id');
-  if (req.method === 'OPTIONS') return res.sendStatus(204);
+
+  // Override writeHead to inject CORS headers AFTER proxy sets its headers
+  const originalWriteHead = res.writeHead.bind(res);
+  res.writeHead = function (statusCode: number, ...args: any[]) {
+    // Remove any downstream CORS headers
+    res.removeHeader('access-control-allow-origin');
+    res.removeHeader('access-control-allow-credentials');
+    res.removeHeader('access-control-allow-methods');
+    res.removeHeader('access-control-allow-headers');
+
+    // Set gateway CORS headers
+    if (allowedOrigin) {
+      res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    }
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    return originalWriteHead(statusCode, ...args);
+  };
+
   next();
 });
 
@@ -73,9 +111,9 @@ const globalLimiter = rateLimit({
   legacyHeaders: false,
 });
 const authLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 10,
-  message: { success: false, message: 'Too many authentication attempts' },
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,
+  message: { success: false, message: 'Too many authentication attempts. Please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
 });

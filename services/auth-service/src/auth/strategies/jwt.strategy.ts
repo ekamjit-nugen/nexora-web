@@ -15,7 +15,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_SECRET') || 'nexora-secret-key',
+      secretOrKey: configService.get<string>('JWT_SECRET') || (() => { throw new Error('FATAL: JWT_SECRET not configured'); })(),
     });
   }
 
@@ -37,8 +37,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       firstName: payload.firstName,
       lastName: payload.lastName,
       roles: payload.roles,
+      orgRole: payload.orgRole || null,
       organizationId: payload.organizationId || null,
       isPlatformAdmin: payload.isPlatformAdmin || false,
+      family: payload.family || null,
     };
   }
 }

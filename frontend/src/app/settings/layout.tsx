@@ -10,6 +10,7 @@ interface SettingsNavItem {
   label: string;
   href: string;
   icon: string;
+  ownerOnly?: boolean;
 }
 
 interface SettingsNavSection {
@@ -22,58 +23,51 @@ const settingsSections: SettingsNavSection[] = [
   {
     title: "ACCOUNT",
     items: [
-      {
-        label: "Profile",
-        href: "/settings/profile",
-        icon: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z",
-      },
-      {
-        label: "Security",
-        href: "/settings/security",
-        icon: "M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z",
-      },
-      {
-        label: "Appearance",
-        href: "/settings/appearance",
-        icon: "M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01",
-      },
-      {
-        label: "Notifications",
-        href: "/settings/notifications",
-        icon: "M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9",
-      },
+      { label: "Profile", href: "/settings/profile", icon: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" },
+      { label: "Security", href: "/settings/security", icon: "M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" },
+      { label: "Appearance", href: "/settings/appearance", icon: "M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" },
     ],
   },
   {
     title: "ORGANIZATION",
-    roles: ["admin", "super_admin", "hr"],
+    roles: ["admin", "super_admin", "hr", "owner"],
     items: [
-      {
-        label: "General",
-        href: "/settings/organization",
-        icon: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4",
-      },
-      {
-        label: "Members",
-        href: "/settings/members",
-        icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z",
-      },
-      {
-        label: "Billing",
-        href: "/settings/billing",
-        icon: "M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z",
-      },
+      { label: "General", href: "/settings/organization", icon: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" },
+      { label: "Business & Legal", href: "/settings/business", icon: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
+      { label: "Work Preferences", href: "/settings/work-preferences", icon: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" },
+      { label: "Departments", href: "/settings/departments", icon: "M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" },
+      { label: "Members", href: "/settings/members", icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" },
+      { label: "Notifications", href: "/settings/notifications", icon: "M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" },
+    ],
+  },
+  {
+    title: "ADVANCED",
+    roles: ["admin", "super_admin", "owner"],
+    items: [
+      { label: "Payroll", href: "/settings/payroll", icon: "M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" },
+      { label: "Branding", href: "/settings/branding", icon: "M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" },
+      { label: "Features", href: "/settings/features", icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" },
+      { label: "Integrations", href: "/settings/integrations", icon: "M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" },
+      { label: "Billing", href: "/settings/billing", icon: "M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" },
+    ],
+  },
+  {
+    title: "",
+    roles: ["owner"],
+    items: [
+      { label: "Danger Zone", href: "/settings/danger-zone", icon: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" },
     ],
   },
 ];
 
-function hasRequiredRole(userRoles: string[], requiredRoles?: string[]): boolean {
+function hasRequiredRole(userRoles: string[], orgRole: string, requiredRoles?: string[]): boolean {
   if (!requiredRoles || requiredRoles.length === 0) return true;
-  return userRoles.some((r) => requiredRoles.includes(r));
+  const allRoles = [...userRoles, orgRole];
+  return allRoles.some((r) => requiredRoles.includes(r));
 }
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading, logout } = useAuth();
+  const { user, loading, logout, orgRole } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -102,7 +96,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
   const userRoles = user.roles || [];
 
   const visibleSections = settingsSections.filter((section) =>
-    hasRequiredRole(userRoles, section.roles)
+    hasRequiredRole(userRoles, orgRole, section.roles)
   );
 
   return (
@@ -121,22 +115,32 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
           {/* Settings sub-navigation */}
           <nav className="w-[220px] shrink-0">
             <div className="space-y-5">
-              {visibleSections.map((section) => (
-                <div key={section.title}>
-                  <p className="px-3 mb-1.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider">
-                    {section.title}
-                  </p>
+              {visibleSections.map((section, sectionIndex) => (
+                <div key={section.title || `section-${sectionIndex}`}>
+                  {section.title === "" && (
+                    <hr className="border-[#E2E8F0] my-3" />
+                  )}
+                  {section.title && (
+                    <p className="px-3 mb-1.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider">
+                      {section.title}
+                    </p>
+                  )}
                   <div className="space-y-0.5">
                     {section.items.map((item) => {
                       const active = pathname === item.href;
+                      const isDangerZone = item.label === "Danger Zone";
                       return (
                         <Link
                           key={item.label}
                           href={item.href}
                           className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors ${
-                            active
-                              ? "bg-[#EBF5FF] text-[#2E86C1]"
-                              : "text-[#64748B] hover:bg-[#F1F5F9] hover:text-[#334155]"
+                            isDangerZone
+                              ? active
+                                ? "bg-red-50 text-red-500"
+                                : "text-red-500 hover:bg-red-50 hover:text-red-600"
+                              : active
+                                ? "bg-[#EBF5FF] text-[#2E86C1]"
+                                : "text-[#64748B] hover:bg-[#F1F5F9] hover:text-[#334155]"
                           }`}
                         >
                           <svg

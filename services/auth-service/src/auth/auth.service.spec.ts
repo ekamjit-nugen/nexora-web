@@ -4,6 +4,12 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { HttpException } from '@nestjs/common';
 import { AuthService } from './auth.service';
+import { AuditService } from './audit.service';
+import { OtpService } from './services/otp.service';
+import { TokenService } from './services/token.service';
+import { SessionService } from './services/session.service';
+import { InviteService } from './services/invite.service';
+import { CompletenessService } from './services/completeness.service';
 import * as bcrypt from 'bcrypt';
 
 describe('AuthService', () => {
@@ -27,20 +33,31 @@ describe('AuthService', () => {
     isEmailVerified: false,
     isPhoneVerified: false,
     oauthProviders: {},
+    setupStage: 'complete',
+    organizations: [],
+    isPlatformAdmin: false,
+    defaultOrganizationId: null,
+    lastOrgId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     comparePassword: jest.fn(),
     isAccountLocked: jest.fn(),
     toObject: jest.fn(),
     save: jest.fn(),
-  };
+  } as any;
 
   beforeEach(async () => {
-    mockUserModel = {
-      findOne: jest.fn(),
-      findById: jest.fn(),
-      create: jest.fn(),
-    };
+    // Mock as both a constructor and object with static methods
+    mockUserModel = jest.fn().mockImplementation((data) => ({
+      ...data,
+      ...mockUser,
+      save: jest.fn().mockResolvedValue({ ...data, ...mockUser }),
+      toObject: jest.fn().mockReturnValue({ ...data, ...mockUser }),
+    }));
+    mockUserModel.findOne = jest.fn();
+    mockUserModel.findById = jest.fn();
+    mockUserModel.create = jest.fn();
+    mockUserModel.find = jest.fn();
 
     mockJwtService = {
       sign: jest.fn(),
@@ -61,18 +78,18 @@ describe('AuthService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
-        {
-          provide: getModelToken('User'),
-          useValue: mockUserModel,
-        },
-        {
-          provide: JwtService,
-          useValue: mockJwtService,
-        },
-        {
-          provide: ConfigService,
-          useValue: mockConfigService,
-        },
+        { provide: getModelToken('User'), useValue: mockUserModel },
+        { provide: getModelToken('Role'), useValue: { find: jest.fn(), findOne: jest.fn() } },
+        { provide: getModelToken('OrgMembership'), useValue: { find: jest.fn(), findOne: jest.fn(), countDocuments: jest.fn() } },
+        { provide: getModelToken('Session'), useValue: { find: jest.fn(), findOne: jest.fn(), create: jest.fn(), updateMany: jest.fn() } },
+        { provide: JwtService, useValue: mockJwtService },
+        { provide: ConfigService, useValue: mockConfigService },
+        { provide: AuditService, useValue: { log: jest.fn() } },
+        { provide: OtpService, useValue: { sendOtp: jest.fn(), verifyOtp: jest.fn() } },
+        { provide: TokenService, useValue: { generateTokens: jest.fn(), refreshToken: jest.fn(), generateCsrfToken: jest.fn().mockReturnValue('csrf'), validateCsrfToken: jest.fn().mockReturnValue(true) } },
+        { provide: SessionService, useValue: { getSessions: jest.fn(), revokeSession: jest.fn(), revokeAllSessions: jest.fn() } },
+        { provide: InviteService, useValue: { validateInviteToken: jest.fn(), acceptInvite: jest.fn(), declineInvite: jest.fn() } },
+        { provide: CompletenessService, useValue: { determinePostLoginRoute: jest.fn(), calculateSetupCompleteness: jest.fn() } },
       ],
     }).compile();
 
@@ -155,7 +172,7 @@ describe('AuthService', () => {
         // Assert
         expect(result).toHaveProperty('accessToken');
         expect(result).toHaveProperty('refreshToken');
-        expect(result.expiresIn).toBe(900);
+        expect(result.expiresIn).toBe(604800);
       },
     );
 
@@ -256,7 +273,7 @@ describe('AuthService', () => {
       'TC-AUTH-010: Should throw error for invalid refresh token',
       async () => {
         // Arrange
-        mockJwtService.verify.mockThrow(new Error('Invalid token'));
+        mockJwtService.verify.mockImplementation(() => { throw new Error('Invalid token'); });
 
         // Act & Assert
         await expect(
@@ -281,7 +298,7 @@ describe('AuthService', () => {
         // Assert
         expect(result.accessToken).toBe('access-token');
         expect(result.refreshToken).toBe('refresh-token');
-        expect(result.expiresIn).toBe(900);
+        expect(result.expiresIn).toBe(604800);
       },
     );
   });

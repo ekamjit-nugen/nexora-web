@@ -116,7 +116,7 @@ export const EmployeeSchema = new Schema<IEmployee>(
     ],
     status: {
       type: String,
-      enum: ['active', 'on_notice', 'exited', 'on_leave', 'probation'],
+      enum: ['active', 'invited', 'pending', 'on_notice', 'exited', 'on_leave', 'probation'],
       default: 'active',
     },
     isActive: { type: Boolean, default: true },

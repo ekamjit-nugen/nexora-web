@@ -46,7 +46,7 @@ export class CreateEmployeeDto {
   skills?: string[];
 
   @IsOptional()
-  @IsEnum(['active', 'on_notice', 'exited', 'on_leave', 'probation'])
+  @IsEnum(['active', 'invited', 'pending', 'on_notice', 'exited', 'on_leave', 'probation'])
   status?: string;
 }
 
@@ -90,7 +90,7 @@ export class UpdateEmployeeDto {
   @IsOptional() @IsArray() @IsString({ each: true })
   skills?: string[];
 
-  @IsOptional() @IsEnum(['active', 'on_notice', 'exited', 'on_leave', 'probation'])
+  @IsOptional() @IsEnum(['active', 'invited', 'pending', 'on_notice', 'exited', 'on_leave', 'probation'])
   status?: string;
 }
 
@@ -107,7 +107,7 @@ export class EmployeeQueryDto {
   @IsOptional() @IsEnum(['full_time', 'part_time', 'contract', 'intern'])
   employmentType?: string;
 
-  @IsOptional() @IsEnum(['active', 'on_notice', 'exited', 'on_leave', 'probation'])
+  @IsOptional() @IsEnum(['active', 'invited', 'pending', 'on_notice', 'exited', 'on_leave', 'probation'])
   status?: string;
 
   @IsOptional() @IsString()

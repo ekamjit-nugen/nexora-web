@@ -15,6 +15,14 @@ COPY . .
 # Build application
 RUN npm run build
 
+# Consolidate dist to a known location
+# Handles both monorepo (services/auth-service/dist) and single-service (dist) builds
+RUN if [ -d /app/services/auth-service/dist ]; then \
+      cp -r /app/services/auth-service/dist /app/_dist; \
+    else \
+      cp -r /app/dist /app/_dist; \
+    fi
+
 # Production stage
 FROM node:20-alpine
 
@@ -29,8 +37,8 @@ COPY package.json ./
 # Install production dependencies only
 RUN npm install --production
 
-# Copy node_modules from builder if needed, and dist
-COPY --from=builder /app/dist ./dist
+# Copy dist from builder
+COPY --from=builder /app/_dist ./dist
 
 # Expose port
 EXPOSE 3001
@@ -41,7 +49,3 @@ HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
 
 # Start application
 CMD ["node", "dist/main.js"]
-
-# When: Docker container starts
-# if: Node.js image is available and dependencies are installed
-# then: run the compiled Auth Service application

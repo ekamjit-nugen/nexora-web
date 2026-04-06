@@ -22,6 +22,15 @@ export interface Call {
   duration?: number;
 }
 
+export interface AnnotationStroke {
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  color: string;
+  brushSize: number;
+}
+
 interface CallContextState {
   call: Call | null;
   isRinging: boolean;
@@ -34,25 +43,26 @@ interface CallContextState {
   sendOffer: (sdp: RTCSessionDescriptionInit) => void;
   sendAnswer: (sdp: RTCSessionDescriptionInit) => void;
   sendIceCandidate: (candidate: RTCIceCandidate) => void;
+  sendAnnotationStroke: (stroke: AnnotationStroke) => void;
+  sendAnnotationClear: () => void;
   onEnded: (handler: (data: any) => void) => () => void;
   onOffer: (handler: (data: any) => void) => () => void;
   onAnswerSdp: (handler: (data: any) => void) => () => void;
   onIceCandidate: (handler: (data: any) => void) => () => void;
+  onAnnotationStroke: (handler: (data: AnnotationStroke & { from: string }) => void) => () => void;
+  onAnnotationClear: (handler: (data: { from: string }) => void) => () => void;
 }
 
 const CallContext = createContext<CallContextState | undefined>(undefined);
 
 // ── Professional ringtone generators ──
-// Incoming call: gentle repeating melody (phone-like double beep)
 function createIncomingRingtone(ctx: AudioContext, gainNode: GainNode): { start: () => void; stop: () => void } {
   let intervalId: NodeJS.Timeout | null = null;
   let oscillators: OscillatorNode[] = [];
 
   const playRingBurst = () => {
-    // Double beep pattern — professional phone ring
     const now = ctx.currentTime;
 
-    // First beep
     const osc1 = ctx.createOscillator();
     const gain1 = ctx.createGain();
     osc1.type = "sine";
@@ -66,7 +76,6 @@ function createIncomingRingtone(ctx: AudioContext, gainNode: GainNode): { start:
     osc1.stop(now + 0.2);
     oscillators.push(osc1);
 
-    // Second beep (slightly higher)
     const osc2 = ctx.createOscillator();
     const gain2 = ctx.createGain();
     osc2.type = "sine";
@@ -80,7 +89,6 @@ function createIncomingRingtone(ctx: AudioContext, gainNode: GainNode): { start:
     osc2.stop(now + 0.47);
     oscillators.push(osc2);
 
-    // Third beep (highest, completes the chord)
     const osc3 = ctx.createOscillator();
     const gain3 = ctx.createGain();
     osc3.type = "sine";
@@ -98,7 +106,7 @@ function createIncomingRingtone(ctx: AudioContext, gainNode: GainNode): { start:
   return {
     start: () => {
       playRingBurst();
-      intervalId = setInterval(playRingBurst, 2000); // Repeat every 2s
+      intervalId = setInterval(playRingBurst, 2000);
     },
     stop: () => {
       if (intervalId) { clearInterval(intervalId); intervalId = null; }
@@ -108,7 +116,6 @@ function createIncomingRingtone(ctx: AudioContext, gainNode: GainNode): { start:
   };
 }
 
-// Outgoing call: steady ringback tone (like a phone dialing out)
 function createOutgoingRingback(ctx: AudioContext, gainNode: GainNode): { start: () => void; stop: () => void } {
   let intervalId: NodeJS.Timeout | null = null;
   let oscillators: OscillatorNode[] = [];
@@ -116,7 +123,6 @@ function createOutgoingRingback(ctx: AudioContext, gainNode: GainNode): { start:
   const playRingback = () => {
     const now = ctx.currentTime;
 
-    // Standard ringback: 440Hz + 480Hz, 2s on, 4s off
     const osc1 = ctx.createOscillator();
     const osc2 = ctx.createOscillator();
     const gain1 = ctx.createGain();
@@ -146,7 +152,7 @@ function createOutgoingRingback(ctx: AudioContext, gainNode: GainNode): { start:
   return {
     start: () => {
       playRingback();
-      intervalId = setInterval(playRingback, 4000); // 2s tone, 2s silence
+      intervalId = setInterval(playRingback, 4000);
     },
     stop: () => {
       if (intervalId) { clearInterval(intervalId); intervalId = null; }
@@ -165,6 +171,12 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
   const [call, setCall] = useState<Call | null>(null);
   const [isRinging, setIsRinging] = useState(false);
+  const callRef = useRef<Call | null>(null);
+
+  // Keep callRef in sync
+  useEffect(() => {
+    callRef.current = call;
+  }, [call]);
 
   // Ringtone refs
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -241,13 +253,45 @@ export function CallProvider({ children }: { children: ReactNode }) {
       setIsRinging(false);
     });
 
+    // Dismissed: call was answered/rejected from another tab
+    const unsub5 = on("call:dismissed", () => {
+      setCall(null);
+      setIsRinging(false);
+    });
+
+    // Already answered: tried to answer but another tab already did
+    const unsub6 = on("call:already-answered", () => {
+      setCall(null);
+      setIsRinging(false);
+    });
+
+    // Missed: ringing timed out
+    const unsub7 = on("call:missed", () => {
+      setCall((prev) =>
+        prev ? { ...prev, status: "missed", endTime: new Date() } : null,
+      );
+      setIsRinging(false);
+    });
+
+    // Reconnection: re-join the call room after socket reconnect
+    const unsubReconnect = on("connect", () => {
+      const currentCall = callRef.current;
+      if (currentCall && currentCall.status === "connected") {
+        emit("call:rejoin", { callId: currentCall.callId });
+      }
+    });
+
     return () => {
       unsub1();
       unsub2();
       unsub3();
       unsub4();
+      unsub5();
+      unsub6();
+      unsub7();
+      unsubReconnect();
     };
-  }, [socket, connected, on]);
+  }, [socket, connected, on, emit]);
 
   // ── Auto-play ringtone based on call state ──
   useEffect(() => {
@@ -396,10 +440,26 @@ export function CallProvider({ children }: { children: ReactNode }) {
     [call, emit],
   );
 
+  // ── Annotation broadcast ──
+  const sendAnnotationStroke = useCallback(
+    (stroke: AnnotationStroke) => {
+      if (!call) return;
+      emit("call:annotation-stroke", { callId: call.callId, stroke });
+    },
+    [call, emit],
+  );
+
+  const sendAnnotationClear = useCallback(() => {
+    if (!call) return;
+    emit("call:annotation-clear", { callId: call.callId });
+  }, [call, emit]);
+
   const onEnded = useCallback((handler: (data: any) => void) => on("call:ended", handler), [on]);
   const onOffer = useCallback((handler: (data: any) => void) => on("call:offer", handler), [on]);
   const onAnswerSdp = useCallback((handler: (data: any) => void) => on("call:answer-sdp", handler), [on]);
   const onIceCandidate = useCallback((handler: (data: any) => void) => on("call:ice-candidate", handler), [on]);
+  const onAnnotationStroke = useCallback((handler: (data: AnnotationStroke & { from: string }) => void) => on("call:annotation-stroke", handler), [on]);
+  const onAnnotationClear = useCallback((handler: (data: { from: string }) => void) => on("call:annotation-clear", handler), [on]);
 
   return (
     <CallContext.Provider
@@ -415,10 +475,14 @@ export function CallProvider({ children }: { children: ReactNode }) {
         sendOffer,
         sendAnswer,
         sendIceCandidate,
+        sendAnnotationStroke,
+        sendAnnotationClear,
         onEnded,
         onOffer,
         onAnswerSdp,
         onIceCandidate,
+        onAnnotationStroke,
+        onAnnotationClear,
       }}
     >
       {children}

@@ -4,13 +4,44 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { useAuth } from "@/lib/auth-context";
-import { chatApi, hrApi } from "@/lib/api";
+import { chatApi, hrApi, uploadFileWithProgress } from "@/lib/api";
 import type { Conversation, ChatMessage, Employee, ChatSettings } from "@/lib/api";
 import { useGlobalSocket } from "@/lib/socket-context";
 import { useWebRTC } from "@/lib/hooks/useWebRTC";
 import { useCallContext } from "@/lib/call-context";
 import { CallControls, VideoCallWindow } from "@/components/calling";
+import {
+  MessageContent, ThreadPanel, PresenceIndicator, StatusSetter,
+  GlobalSearch, FileBrowser, PinnedMessages, BookmarksList, AiSummaryPanel, VoiceRecorder, LinkPreview,
+} from "@/components/chat";
 import { toast } from "sonner";
+
+// ── Upload validation constants ──
+const MAX_UPLOAD_SIZE = 25 * 1024 * 1024; // 25 MB
+
+const ALLOWED_MIME_PATTERNS = [
+  /^image\//,
+  /^video\//,
+  /^audio\//,
+  /^application\/pdf$/,
+  /^application\/msword$/,
+  /^application\/vnd\.openxmlformats/,
+  /^application\/vnd\.ms-/,
+  /^text\//,
+  /^application\/zip$/,
+  /^application\/x-zip/,
+  /^application\/json$/,
+];
+
+const BLOCKED_EXTENSIONS = ['.exe', '.bat', '.cmd', '.msi', '.ps1', '.sh', '.com', '.scr', '.pif', '.vbs', '.js', '.wsf'];
+
+function isFileTypeAllowed(file: File): boolean {
+  const ext = '.' + file.name.split('.').pop()?.toLowerCase();
+  if (BLOCKED_EXTENSIONS.includes(ext)) return false;
+  // If MIME type is empty (unknown), allow as long as extension is not blocked
+  if (!file.type) return true;
+  return ALLOWED_MIME_PATTERNS.some(pattern => pattern.test(file.type));
+}
 
 // ── Helpers ──
 
@@ -171,12 +202,34 @@ export default function MessagesPage() {
   const [addPeopleMembers, setAddPeopleMembers] = useState<Employee[]>([]);
   const [savingConvert, setSavingConvert] = useState(false);
 
+  // Thread panel
+  const [threadMessage, setThreadMessage] = useState<ChatMessage | null>(null);
+
+  // Status setter modal
+  const [showStatusSetter, setShowStatusSetter] = useState(false);
+
+  // Global search (Cmd+K)
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false);
+
+  // Side panels
+  const [showFileBrowser, setShowFileBrowser] = useState(false);
+  const [showPinnedMessages, setShowPinnedMessages] = useState(false);
+  const [showBookmarks, setShowBookmarks] = useState(false);
+  const [showAiSummary, setShowAiSummary] = useState(false);
+  const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
+
   // Emoji picker
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
 
   // File upload spinner
   const [isUploading, setIsUploading] = useState(false);
+
+  // Drag-and-drop & upload progress
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ fileName: string; percent: number } | null>(null);
+  const uploadAbortRef = useRef<AbortController | null>(null);
+  const dragCounterRef = useRef(0);
 
   // Socket state
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
@@ -243,7 +296,7 @@ export default function MessagesPage() {
   // Ringtones are handled globally by CallProvider
 
   // ── Socket ──
-  const { connected, emit, on, onlineUsers: onlineUserIds } = useGlobalSocket();
+  const { connected, emit, on, onlineUsers: onlineUserIds, presenceMap } = useGlobalSocket();
 
   // ── Control message handler — receives media state from remote peer via DataChannel ──
   const handleControlMessage = useCallback((msg: { type: string; hasVideo?: boolean }) => {
@@ -256,6 +309,18 @@ export default function MessagesPage() {
   useEffect(() => {
     if (!showCallWindow) setRemoteHasVideo(false);
   }, [showCallWindow]);
+
+  // ── Cmd+K global search shortcut ──
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setShowGlobalSearch(prev => !prev);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // ── Auth guard ──
   useEffect(() => {
@@ -452,10 +517,11 @@ export default function MessagesPage() {
   };
 
   // ── File upload ──
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !activeId) return;
-    if (file.size > 10 * 1024 * 1024) { toast.error("File must be under 10 MB"); return; }
+    if (file.size > MAX_UPLOAD_SIZE) { toast.error("File must be under 25 MB"); return; }
+    if (!isFileTypeAllowed(file)) { toast.error("File type not allowed"); return; }
 
     const isImage = file.type.startsWith("image/");
     const isVideo = file.type.startsWith("video/");
@@ -467,7 +533,7 @@ export default function MessagesPage() {
       // Read all files as base64 data URL so they can be downloaded by recipients
       let content = file.name;
       let fileUrl: string | undefined;
-      if (file.size < 10 * 1024 * 1024) {
+      if (file.size < MAX_UPLOAD_SIZE) {
         fileUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result as string);
@@ -498,7 +564,7 @@ export default function MessagesPage() {
     }
     // Reset input so same file can be re-selected
     if (fileInputRef.current) fileInputRef.current.value = "";
-  };
+  }, [activeId, emit]);
 
   // ── Typing indicator ──
   const handleTyping = () => {
@@ -517,6 +583,154 @@ export default function MessagesPage() {
       handleSend();
     }
   };
+
+  // ── Upload file with progress and send as message ──
+  const handleUploadAndSend = useCallback(async (file: File) => {
+    if (!activeId) return;
+    if (file.size === 0) {
+      toast.error('Cannot send empty file');
+      return;
+    }
+    if (file.size > MAX_UPLOAD_SIZE) {
+      toast.error(`File "${file.name}" exceeds 25 MB limit`);
+      return;
+    }
+    if (!isFileTypeAllowed(file)) {
+      toast.error("File type not allowed");
+      return;
+    }
+
+    const isImage = file.type.startsWith("image/");
+    const isVideo = file.type.startsWith("video/");
+    const msgType = isImage ? "image" : isVideo ? "video" : "file";
+
+    const abortController = new AbortController();
+    uploadAbortRef.current = abortController;
+    setUploadProgress({ fileName: file.name, percent: 0 });
+    setIsUploading(true);
+
+    try {
+      const token = localStorage.getItem("accessToken") || "";
+      const result = await uploadFileWithProgress(
+        file,
+        token,
+        (percent) => setUploadProgress({ fileName: file.name, percent }),
+        abortController.signal,
+        activeId,
+      );
+
+      // Send message with uploaded file URL
+      emit("message:send", {
+        conversationId: activeId,
+        content: file.name,
+        type: msgType,
+        fileUrl: result.url,
+        fileName: file.name,
+        fileSize: file.size,
+        fileMimeType: file.type,
+      });
+      toast.success(`${isImage ? "Image" : isVideo ? "Video" : "File"} sent`);
+      setUploadProgress({ fileName: file.name, percent: 100 });
+      await new Promise(r => setTimeout(r, 500));
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        toast.info("Upload cancelled");
+      } else {
+        toast.error(`Failed to upload "${file.name}"`);
+      }
+    } finally {
+      setUploadProgress(null);
+      setIsUploading(false);
+      uploadAbortRef.current = null;
+    }
+  }, [activeId, emit]);
+
+  const handleCancelUpload = useCallback(() => {
+    uploadAbortRef.current?.abort();
+  }, []);
+
+  // Abort any in-flight upload on unmount
+  useEffect(() => {
+    return () => {
+      uploadAbortRef.current?.abort();
+    };
+  }, []);
+
+  // ── Drag-and-drop handlers ──
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    if (e.dataTransfer.types.includes("Files")) {
+      setIsDragging(true);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current--;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDragging(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDragging(false);
+
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
+
+    // Process files sequentially so progress bar shows one at a time
+    for (const file of files) {
+      if (uploadAbortRef.current?.signal.aborted) break;
+      await handleUploadAndSend(file);
+    }
+  }, [handleUploadAndSend]);
+
+  // ── Clipboard paste for images ──
+  const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
+    if (!activeId) return;
+    if (isUploading) return; // prevent parallel paste uploads
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const EXT_MAP: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg', 'image/bmp': 'bmp' };
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith("image/")) {
+        // Check if clipboard also contains text
+        const textContent = e.clipboardData.getData("text/plain");
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) {
+          // Give pasted images a meaningful name
+          const ext = EXT_MAP[item.type] || 'png';
+          const namedFile = new File([file], `pasted-image-${Date.now()}.${ext}`, { type: item.type });
+          await handleUploadAndSend(namedFile);
+        }
+        // If there was also text content, insert it into the textarea
+        if (textContent && textareaRef.current) {
+          const ta = textareaRef.current;
+          const start = ta.selectionStart ?? ta.value.length;
+          const end = ta.selectionEnd ?? ta.value.length;
+          const newValue = ta.value.slice(0, start) + textContent + ta.value.slice(end);
+          setNewMessage(newValue);
+        }
+        return; // Only handle first image
+      }
+    }
+  }, [activeId, isUploading, handleUploadAndSend]);
 
   // ── Start direct conversation ──
   const handleStartDirect = async (emp: Employee) => {
@@ -1514,7 +1728,30 @@ export default function MessagesPage() {
         </div>
 
         {/* ── Middle Panel: Active Conversation ── */}
-        <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] min-w-0">
+        <div
+          className="flex-1 flex flex-col h-full bg-[#F8FAFC] min-w-0 relative"
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          {/* Drag-and-drop overlay */}
+          {isDragging && activeConvo && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center bg-blue-500/10 border-2 border-dashed border-blue-400 rounded-lg backdrop-blur-[2px] pointer-events-none">
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-14 h-14 rounded-2xl bg-blue-100 flex items-center justify-center">
+                  <svg className="w-7 h-7 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                  </svg>
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-semibold text-blue-700">Drop files here</p>
+                  <p className="text-xs text-blue-500 mt-0.5">Files will be uploaded and shared</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeConvo ? (
             <>
               {/* Chat Header */}
@@ -1532,15 +1769,26 @@ export default function MessagesPage() {
                         </svg>
                       )}
                     </div>
-                    {activeConvo.type === "direct" && onlineUserIds.has(activeConvo.participants.find(p => p.userId !== user?._id)?.userId || "") && (
-                      <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-[#22C55E] border-2 border-white rounded-full" />
-                    )}
+                    {activeConvo.type === "direct" && (() => {
+                      const otherUserId = activeConvo.participants.find(p => p.userId !== user?._id)?.userId || "";
+                      const presence = presenceMap.get(otherUserId);
+                      const status = presence?.status || (onlineUserIds.has(otherUserId) ? "online" : "offline");
+                      return status !== "offline" ? (
+                        <PresenceIndicator status={status} size="md" className="absolute -bottom-0.5 -right-0.5" />
+                      ) : null;
+                    })()}
                   </div>
                   <div>
                     <p className="text-[13px] font-semibold text-[#0F172A]">{getConversationDisplayName(activeConvo)}</p>
                     <p className="text-[11px] text-[#94A3B8] truncate max-w-[300px]">
                       {activeConvo.type === "direct"
-                        ? (onlineUserIds.has(activeConvo.participants.find(p => p.userId !== user?._id)?.userId || "") ? "Online" : "Offline")
+                        ? (() => {
+                            const otherUserId = activeConvo.participants.find(p => p.userId !== user?._id)?.userId || "";
+                            const presence = presenceMap.get(otherUserId);
+                            if (presence?.customText) return presence.customText;
+                            const status = presence?.status || (onlineUserIds.has(otherUserId) ? "online" : "offline");
+                            return status.charAt(0).toUpperCase() + status.slice(1).replace("_", " ");
+                          })()
                         : getParticipantNames(activeConvo, 4)
                       }
                     </p>
@@ -1764,25 +2012,38 @@ export default function MessagesPage() {
                                           </div>
                                         ) : null}
                                       </div>
-                                    ) : (() => {
-                                      // Auto-link URLs in text messages
-                                      const urlRegex = /(https?:\/\/[^\s<]+)/g;
-                                      const parts = msg.content.split(urlRegex);
-                                      return parts.map((part, i) =>
-                                        urlRegex.test(part) ? (
-                                          <a key={i} href={part} target="_blank" rel="noreferrer" className="underline break-all hover:opacity-80">{part}</a>
-                                        ) : <span key={i}>{part}</span>
-                                      );
-                                    })()}
+                                    ) : (
+                                      <MessageContent content={msg.content} />
+                                    )}
                                     {msg.isEdited && !isDeleted && (
                                       <span className="text-[10px] opacity-60 ml-1">(edited)</span>
                                     )}
                                   </div>
+                                  {/* Thread reply count */}
+                                  {!isDeleted && (msg as any).threadInfo?.replyCount > 0 && (
+                                    <button
+                                      onClick={() => setThreadMessage(msg)}
+                                      className="flex items-center gap-1 mt-0.5 ml-1 text-[11px] text-blue-500 hover:text-blue-700 hover:underline"
+                                    >
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                      {(msg as any).threadInfo.replyCount} {(msg as any).threadInfo.replyCount === 1 ? "reply" : "replies"}
+                                    </button>
+                                  )}
                                   <div className={`flex items-center gap-1 mt-0.5 ${isMe ? "justify-end mr-1" : "ml-1"}`}>
                                     <p className="text-[10px] text-[#94A3B8]">
                                       {formatTime(msg.createdAt)}
                                     </p>
                                     {isMe && getTickStatus(msg)}
+                                    {/* Reply in thread action */}
+                                    {!isDeleted && (
+                                      <button
+                                        onClick={() => setThreadMessage(msg)}
+                                        className="opacity-0 group-hover:opacity-100 ml-1 p-0.5 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition-all"
+                                        title="Reply in thread"
+                                      >
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                      </button>
+                                    )}
                                   </div>
                                 </div>
                               </div>
@@ -1817,8 +2078,40 @@ export default function MessagesPage() {
                 )}
               </div>
 
-              {/* Upload spinner overlay */}
-              {isUploading && (
+              {/* Upload progress bar */}
+              {uploadProgress && (
+                <div className="px-5 pb-1 bg-[#F8FAFC] shrink-0">
+                  <div className="flex items-center gap-2.5 px-4 py-2 bg-[#EBF5FF] border border-[#BFDBFE] rounded-xl">
+                    <svg className="w-4 h-4 text-[#2E86C1] animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[11px] font-medium text-[#2E86C1] truncate">{uploadProgress.fileName}</span>
+                        <span className="text-[10px] text-[#64748B] shrink-0 ml-2">{uploadProgress.percent}%</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-[#BFDBFE] rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-[#2E86C1] rounded-full transition-all duration-300 ease-out"
+                          style={{ width: `${uploadProgress.percent}%` }}
+                        />
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleCancelUpload}
+                      className="p-1 rounded hover:bg-blue-200/60 text-[#64748B] hover:text-red-500 transition-colors shrink-0"
+                      title="Cancel upload"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              )}
+              {/* Upload spinner (fallback for file input uploads without progress) */}
+              {isUploading && !uploadProgress && (
                 <div className="px-5 pb-1 bg-[#F8FAFC] shrink-0">
                   <div className="flex items-center gap-2.5 px-4 py-2.5 bg-[#EBF5FF] border border-[#BFDBFE] rounded-xl">
                     <svg className="w-4 h-4 text-[#2E86C1] animate-spin" fill="none" viewBox="0 0 24 24">
@@ -1840,6 +2133,7 @@ export default function MessagesPage() {
                       value={input}
                       onChange={(e) => { setInput(e.target.value); handleTyping(); }}
                       onKeyDown={handleKeyDown}
+                      onPaste={handlePaste}
                       placeholder={isUploading ? "Uploading file..." : "Type a message..."}
                       disabled={isUploading}
                       rows={1}
@@ -2929,6 +3223,80 @@ export default function MessagesPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Thread panel (slides in from the right) */}
+      {threadMessage && user && (
+        <div className="fixed top-0 right-0 h-full z-40 shadow-2xl">
+          <ThreadPanel
+            rootMessage={threadMessage}
+            employeeMap={employeeMap}
+            currentUserId={user._id}
+            onClose={() => setThreadMessage(null)}
+            onReply={() => {
+              // Refresh messages to update thread reply counts
+              if (activeId) fetchMessages(activeId);
+            }}
+          />
+        </div>
+      )}
+
+      {/* Status setter modal */}
+      {showStatusSetter && (
+        <StatusSetter
+          currentStatus={presenceMap.get(user?._id || "")?.status || "online"}
+          onClose={() => setShowStatusSetter(false)}
+          onStatusChange={() => setShowStatusSetter(false)}
+        />
+      )}
+
+      {/* Global search modal (Cmd+K) */}
+      {showGlobalSearch && (
+        <GlobalSearch
+          onClose={() => setShowGlobalSearch(false)}
+          onNavigate={(conversationId) => {
+            setActiveId(conversationId);
+            setShowGlobalSearch(false);
+          }}
+        />
+      )}
+
+      {/* File browser panel */}
+      {showFileBrowser && activeId && (
+        <div className="fixed top-0 right-0 h-full z-40 shadow-2xl">
+          <FileBrowser conversationId={activeId} onClose={() => setShowFileBrowser(false)} />
+        </div>
+      )}
+
+      {/* Pinned messages panel */}
+      {showPinnedMessages && activeId && (
+        <div className="fixed top-0 right-0 h-full z-40 shadow-2xl">
+          <PinnedMessages
+            conversationId={activeId}
+            onClose={() => setShowPinnedMessages(false)}
+            onUnpin={() => { if (activeId) fetchMessages(activeId); }}
+          />
+        </div>
+      )}
+
+      {/* Bookmarks panel */}
+      {showBookmarks && (
+        <div className="fixed top-0 right-0 h-full z-40 shadow-2xl">
+          <BookmarksList
+            onClose={() => setShowBookmarks(false)}
+            onNavigate={(conversationId) => {
+              setActiveId(conversationId);
+              setShowBookmarks(false);
+            }}
+          />
+        </div>
+      )}
+
+      {/* AI Summary panel */}
+      {showAiSummary && activeId && (
+        <div className="fixed top-0 right-0 h-full z-40 shadow-2xl">
+          <AiSummaryPanel conversationId={activeId} onClose={() => setShowAiSummary(false)} />
         </div>
       )}
 

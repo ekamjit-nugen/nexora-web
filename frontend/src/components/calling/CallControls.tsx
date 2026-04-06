@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import type { QualityLevel } from "@/lib/hooks/useCallQuality";
 
 interface CallControlsProps {
   isAudioEnabled: boolean;
@@ -16,6 +17,8 @@ interface CallControlsProps {
   onAddParticipant: () => void;
   onEndCall: () => void;
   duration?: number;
+  /** Connection quality indicator */
+  connectionQuality?: QualityLevel;
 }
 
 export function CallControls({
@@ -31,13 +34,28 @@ export function CallControls({
   onToggleFullscreen,
   onAddParticipant,
   onEndCall,
+  connectionQuality,
 }: CallControlsProps) {
   const btnBase = "w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200";
   const btnActive = "bg-white/10 text-white hover:bg-white/20";
   const btnOff = "bg-red-500/20 text-red-400 hover:bg-red-500/30";
 
+  const qualityColor = connectionQuality === "good" ? "bg-green-500" : connectionQuality === "acceptable" ? "bg-yellow-500" : connectionQuality === "poor" ? "bg-red-500" : "bg-gray-500";
+  const qualityLabel = connectionQuality === "good" ? "Good connection" : connectionQuality === "acceptable" ? "Unstable connection" : connectionQuality === "poor" ? "Poor connection" : "Unknown";
+
   return (
     <div className="flex items-center gap-3">
+      {/* Connection Quality Indicator */}
+      {connectionQuality && (
+        <div className="flex items-center gap-1.5 mr-1" title={qualityLabel}>
+          <div className="flex items-end gap-0.5 h-4">
+            <div className={`w-1 h-1.5 rounded-sm ${qualityColor}`} />
+            <div className={`w-1 h-2.5 rounded-sm ${connectionQuality !== "poor" ? qualityColor : "bg-gray-600"}`} />
+            <div className={`w-1 h-3.5 rounded-sm ${connectionQuality === "good" ? qualityColor : "bg-gray-600"}`} />
+          </div>
+        </div>
+      )}
+
       {/* Mic */}
       <button
         onClick={() => onToggleAudio(!isAudioEnabled)}

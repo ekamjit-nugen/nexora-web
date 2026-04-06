@@ -1,7 +1,14 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
+
+// Legacy module (existing routes still work)
 import { CallingModule } from './calling/calling.module';
+
+// New domain modules (Phase 2 enhancements)
+import { CallsModule } from './calls/calls.module';
+import { MeetingsModule } from './meetings/meetings.module';
+import { SfuModule } from './sfu/sfu.module';
 
 @Module({
   imports: [
@@ -17,7 +24,14 @@ import { CallingModule } from './calling/calling.module';
         authSource: 'admin',
       }),
     }),
+
+    // Legacy module
     CallingModule,
+
+    // New domain modules
+    CallsModule,
+    MeetingsModule,
+    SfuModule,
   ],
 })
 export class AppModule {}

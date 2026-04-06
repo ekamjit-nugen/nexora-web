@@ -9,8 +9,17 @@ async function bootstrap() {
     logger: ['error', 'warn', 'debug'],
   });
 
-  app.enableCors({ origin: true, credentials: true });
-  // Socket.IO WebSocket CORS is handled by the ChatGateway decorator
+  // RL-006: Trust first proxy so rate limiting uses real client IP from X-Forwarded-For
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+
+  app.enableCors({
+    origin: (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3100,http://localhost:3005')
+      .split(',').map(o => o.trim()),
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-XSRF-TOKEN', 'X-Organization-Id'],
+  });
+  // Socket.IO WebSocket CORS is handled by the MessagesGateway decorator
   app.use(helmet());
 
   app.useGlobalPipes(

@@ -285,6 +285,24 @@ export class CallingService {
     return call;
   }
 
+  async missCall(callId: string) {
+    const call = await this.callModel.findOne({ callId });
+    if (!call) {
+      throw new NotFoundException(`Call ${callId} not found`);
+    }
+
+    if (call.status !== 'initiated') {
+      return call; // Already transitioned — no-op
+    }
+
+    call.status = 'missed';
+    call.endTime = new Date();
+    await call.save();
+
+    this.logger.log(`Call missed: ${callId} (ringing timeout)`);
+    return call;
+  }
+
   async updateCallMetrics(callId: string, metrics: { callQuality?: string; bitrate?: number; frameRate?: number; packetLoss?: number }) {
     const call = await this.callModel.findOne({ callId });
     if (!call) {

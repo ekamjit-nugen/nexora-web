@@ -9,10 +9,12 @@ import {
   Query,
   UseGuards,
   Req,
+  Res,
   HttpCode,
   HttpStatus,
   Logger,
   BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { MeetingService } from './meeting.service';
 import { MeetingGateway } from './meeting.gateway';
@@ -215,5 +217,35 @@ export class MeetingController {
     } catch (err) {
       throw new BadRequestException(err.message);
     }
+  }
+
+  /** Item 24: ICS calendar export */
+  @Get(':meetingId/ics')
+  async getIcs(@Param('meetingId') meetingId: string, @Res() res: any) {
+    const meeting = await this.meetingService.getMeeting(meetingId);
+    if (!meeting) throw new NotFoundException('Meeting not found');
+
+    const start = new Date(meeting.scheduledAt);
+    const end = new Date(start.getTime() + (meeting.durationMinutes || 60) * 60000);
+    const fmt = (d: Date) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+
+    const ics = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Nexora//Meetings//EN',
+      'BEGIN:VEVENT',
+      `DTSTART:${fmt(start)}`,
+      `DTEND:${fmt(end)}`,
+      `SUMMARY:${meeting.title}`,
+      meeting.description ? `DESCRIPTION:${meeting.description.replace(/\n/g, '\\n')}` : '',
+      `UID:${meeting.meetingId}@nexora.io`,
+      `ORGANIZER:${meeting.hostName || 'Host'}`,
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].filter(Boolean).join('\r\n');
+
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${meeting.title || 'meeting'}.ics"`);
+    return res.send(ics);
   }
 }

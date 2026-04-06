@@ -9,7 +9,13 @@ async function bootstrap() {
     logger: ['error', 'warn', 'debug'],
   });
 
-  app.enableCors({ origin: true, credentials: true });
+  app.enableCors({
+    origin: (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3100,http://localhost:3005')
+      .split(',').map(o => o.trim()),
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-XSRF-TOKEN', 'X-Organization-Id'],
+  });
   app.use(helmet());
 
   app.useGlobalPipes(

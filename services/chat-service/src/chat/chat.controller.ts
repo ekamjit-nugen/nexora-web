@@ -3,8 +3,9 @@ import {
   Body, Param, Query, UseGuards, Req,
   HttpCode, HttpStatus, Logger,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ChatService } from './chat.service';
-import { ChatGateway } from './chat.gateway';
+import { MessagesGateway } from '../messages/messages.gateway';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Roles, RolesGuard } from './guards/roles.guard';
 import {
@@ -28,7 +29,7 @@ export class ChatController {
 
   constructor(
     private chatService: ChatService,
-    private chatGateway: ChatGateway,
+    private chatGateway: MessagesGateway,
   ) {}
 
   // ── Conversations ──
@@ -102,6 +103,7 @@ export class ChatController {
   @Post('conversations/:id/messages')
   @UseGuards(JwtAuthGuard)
   @Roles('member', 'manager', 'admin', 'owner')
+  @Throttle({ default: { ttl: 60000, limit: 60 } })
   @HttpCode(HttpStatus.CREATED)
   async sendMessage(@Param('id') id: string, @Body() dto: SendMessageDto, @Req() req) {
     const message = await this.chatService.sendMessage(id, req.user.userId, dto.content, dto.type, dto.replyTo);

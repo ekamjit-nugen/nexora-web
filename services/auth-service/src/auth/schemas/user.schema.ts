@@ -1,6 +1,19 @@
 import { Schema, Document, model } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 
+export type SetupStage = 'otp_verified' | 'org_created' | 'profile_complete' | 'complete' | 'invited';
+
+export interface IUserPreferences {
+  theme?: 'light' | 'dark' | 'system';
+  language?: string;
+  timezone?: string;
+  notifications?: {
+    email?: boolean;
+    inApp?: boolean;
+    desktop?: boolean;
+  };
+}
+
 export interface IUser extends Document {
   email: string;
   password: string;
@@ -14,6 +27,8 @@ export interface IUser extends Document {
   isPhoneVerified: boolean;
   phoneVerificationToken?: string;
   phoneVerificationExpiry?: Date;
+  jobTitle?: string;
+  department?: string;
   mfaEnabled: boolean;
   mfaMethod?: 'TOTP' | 'SMS' | 'EMAIL';
   mfaSecret?: string;
@@ -24,7 +39,9 @@ export interface IUser extends Document {
   lockUntil?: Date;
   isActive: boolean;
   deletedAt?: Date;
+  setupStage: SetupStage;
   defaultOrganizationId?: string;
+  lastOrgId?: string;
   organizations: string[];
   roles: string[];
   permissions: string[];
@@ -34,10 +51,12 @@ export interface IUser extends Document {
     saml?: { id: string; email: string };
   };
   isPlatformAdmin: boolean;
-  preferences?: Record<string, unknown>;
+  preferences?: IUserPreferences;
   otp?: string;
   otpExpiresAt?: Date;
   otpAttempts?: number;
+  otpLastRequestedAt?: Date;
+  otpRequestCount?: number;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -85,6 +104,14 @@ export const UserSchema = new Schema<IUser>(
     emailVerificationExpiry: {
       type: Date,
       select: false,
+    },
+    jobTitle: {
+      type: String,
+      default: null,
+    },
+    department: {
+      type: String,
+      default: null,
     },
     phoneNumber: {
       type: String,
@@ -145,7 +172,17 @@ export const UserSchema = new Schema<IUser>(
       type: Date,
       default: null,
     },
+    setupStage: {
+      type: String,
+      enum: ['otp_verified', 'org_created', 'profile_complete', 'complete', 'invited'],
+      default: 'otp_verified',
+      index: true,
+    },
     defaultOrganizationId: {
+      type: String,
+      default: null,
+    },
+    lastOrgId: {
       type: String,
       default: null,
     },
@@ -175,12 +212,20 @@ export const UserSchema = new Schema<IUser>(
       index: true,
     },
     preferences: {
-      type: Schema.Types.Mixed,
-      default: {},
+      theme: { type: String, enum: ['light', 'dark', 'system'], default: 'system' },
+      language: { type: String, default: 'en' },
+      timezone: { type: String, default: null },
+      notifications: {
+        email: { type: Boolean, default: true },
+        inApp: { type: Boolean, default: true },
+        desktop: { type: Boolean, default: false },
+      },
     },
     otp: { type: String, select: false, default: null },
     otpExpiresAt: { type: Date, select: false, default: null },
     otpAttempts: { type: Number, select: false, default: 0 },
+    otpLastRequestedAt: { type: Date, select: false, default: null },
+    otpRequestCount: { type: Number, select: false, default: 0 },
   },
   {
     timestamps: true,

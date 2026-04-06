@@ -1,6 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { OrganizationService } from './organization.service';
+import { AuditService } from './audit.service';
 
 describe('AuthController', () => {
   let controller: AuthController;
@@ -36,10 +38,9 @@ describe('AuthController', () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
       providers: [
-        {
-          provide: AuthService,
-          useValue: mockAuthService,
-        },
+        { provide: AuthService, useValue: mockAuthService },
+        { provide: OrganizationService, useValue: { claimPendingInvitations: jest.fn(), syncEmployeeName: jest.fn(), syncEmployeeStatus: jest.fn() } },
+        { provide: AuditService, useValue: { log: jest.fn() } },
       ],
     }).compile();
 
@@ -94,6 +95,7 @@ describe('AuthController', () => {
             rememberMe: false,
           },
           { headers: { 'x-forwarded-for': '127.0.0.1' } },
+          { cookie: jest.fn() } as any,
         );
 
         // Assert
@@ -115,9 +117,10 @@ describe('AuthController', () => {
         mockAuthService.refreshToken.mockResolvedValue(mockTokens);
 
         // Act
-        const result = await controller.refreshToken({
-          refreshToken: 'old-refresh-token',
-        });
+        const result = await controller.refreshToken(
+          { refreshToken: 'old-refresh-token' },
+          { cookie: jest.fn() } as any,
+        );
 
         // Assert
         expect(result.success).toBe(true);
@@ -269,10 +272,10 @@ describe('AuthController', () => {
         mockAuthService.logout.mockResolvedValue(undefined);
 
         // Act
-        const result = await controller.logout({
-          user: { userId: mockUser._id },
-          headers: { authorization: 'Bearer token' },
-        });
+        const result = await controller.logout(
+          { user: { userId: mockUser._id }, headers: { authorization: 'Bearer token' } },
+          { cookie: jest.fn() } as any,
+        );
 
         // Assert
         expect(result.success).toBe(true);

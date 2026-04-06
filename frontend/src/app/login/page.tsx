@@ -167,7 +167,7 @@ export default function LoginPage() {
     try {
       await authApi.sendOtp(email);
       toast.success("OTP sent to your email");
-      toast.info("DEV: Use 000000 as OTP");
+      toast.info("Check your email for the OTP");
       setPhase("verify");
       setResendCooldown(60);
     } catch (err: unknown) {
@@ -185,23 +185,57 @@ export default function LoginPage() {
     setOtpLoading(true);
     try {
       const res = await authApi.verifyOtp(email, otp);
-      const data = res.data as { tokens?: { accessToken: string; refreshToken: string }; orgs?: Organization[]; isNewUser?: boolean } | undefined;
+      const data = res.data as {
+        accessToken?: string;
+        refreshToken?: string;
+        tokens?: { accessToken: string; refreshToken: string };
+        route?: string;
+        routeReason?: string;
+        organizationId?: string;
+        isNewUser?: boolean;
+        orgs?: Organization[];
+        user?: { setupStage?: string };
+      } | undefined;
 
-      if (data?.tokens) {
-        localStorage.setItem("accessToken", data.tokens.accessToken);
-        localStorage.setItem("refreshToken", data.tokens.refreshToken);
-      }
-
-      const userOrgs: Organization[] = data?.orgs || [];
+      // Store tokens (handle both response formats)
+      const accessToken = data?.accessToken || data?.tokens?.accessToken;
+      const refreshToken = data?.refreshToken || data?.tokens?.refreshToken;
+      if (accessToken) localStorage.setItem("accessToken", accessToken);
+      if (refreshToken) localStorage.setItem("refreshToken", refreshToken);
 
       // Platform admin — skip org flow entirely
-      const tokenPayload = data?.tokens?.accessToken ? JSON.parse(atob(data.tokens.accessToken.split('.')[1])) : null;
+      const tokenPayload = accessToken ? JSON.parse(atob(accessToken.split('.')[1])) : null;
       if (tokenPayload?.isPlatformAdmin) {
         toast.success("Welcome, Platform Admin!");
         window.location.href = "/platform";
         return;
       }
 
+      // Check for post-login redirect (e.g. from invite link)
+      const postLoginRedirect = localStorage.getItem("postLoginRedirect");
+      if (postLoginRedirect) {
+        localStorage.removeItem("postLoginRedirect");
+        toast.success("Login successful!");
+        window.location.href = postLoginRedirect;
+        return;
+      }
+
+      // Use server-side routing decision if available
+      if (data?.route) {
+        if (data.organizationId) {
+          localStorage.setItem("currentOrgId", data.organizationId);
+        }
+        if (data.isNewUser) {
+          toast.success("Welcome! Let's get you set up.");
+        } else {
+          toast.success("Login successful!");
+        }
+        window.location.href = data.route;
+        return;
+      }
+
+      // Fallback for older response format
+      const userOrgs: Organization[] = data?.orgs || [];
       if (data?.isNewUser) {
         toast.success("Welcome! Let's get you set up.");
         setPhase("welcome-splash");
@@ -230,7 +264,7 @@ export default function LoginPage() {
     try {
       await authApi.sendOtp(email);
       toast.success("OTP resent");
-      toast.info("DEV: Use 000000 as OTP");
+      toast.info("Check your email for the OTP");
       setResendCooldown(60);
       setOtp("");
     } catch (err: unknown) {

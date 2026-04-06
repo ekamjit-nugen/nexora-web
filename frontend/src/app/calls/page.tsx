@@ -357,8 +357,13 @@ export default function CallsPage() {
   }
 
   const filteredEmployees = employees.filter((emp) => {
-    // Hide the logged-in user from team members list
-    if (emp.userId === user._id || emp._id === user._id) return false;
+    // Hide the logged-in user from team members list — check all possible ID/email matches
+    if (
+      emp.userId === user._id ||
+      emp._id === user._id ||
+      (emp as any).userId === (user as any)?.userId ||
+      emp.email === user?.email
+    ) return false;
     if (!contactSearch) return true;
     const q = contactSearch.toLowerCase();
     return (

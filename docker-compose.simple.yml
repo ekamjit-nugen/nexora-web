@@ -65,6 +65,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-debug}
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
+      FRONTEND_URL: http://localhost:3003
     depends_on:
       mongodb:
         condition: service_healthy
@@ -96,7 +97,7 @@ services:
       AUTH_SERVICE_URL: http://auth-service:3001
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
-      FRONTEND_URL: http://localhost:3100
+      FRONTEND_URL: http://localhost:3003
     depends_on:
       mongodb:
         condition: service_healthy
@@ -247,7 +248,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
       LLM_BASE_URL: http://host.docker.internal:7/v1/chat/completions
       LLM_MODEL: deepseek
-      CORS_ORIGINS: http://localhost:3000,http://localhost:3100
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100
       REDIS_URI: redis://redis:6379
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -303,7 +304,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
       STUN_SERVERS: stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
       LOG_LEVEL: ${LOG_LEVEL:-debug}
-      CORS_ORIGINS: http://localhost:3000,http://localhost:3100
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100
       REDIS_URI: redis://redis:6379
     depends_on:
       mongodb:
@@ -339,7 +340,7 @@ services:
       POLICY_SERVICE_URL: http://policy-service:3013
       PROJECT_SERVICE_URL: http://project-service:3020
       TASK_SERVICE_URL: http://task-service:3021
-      CORS_ORIGINS: http://localhost:3000,http://localhost:3100
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100
     depends_on:
       auth-service:
         condition: service_healthy
@@ -372,9 +373,9 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: http://localhost:3005
-        NEXT_PUBLIC_CHAT_SOCKET_URL: http://localhost:3002
-        NEXT_PUBLIC_CALL_SOCKET_URL: http://localhost:3051
+        NEXT_PUBLIC_API_URL: http://192.168.1.21:3005
+        NEXT_PUBLIC_CHAT_SOCKET_URL: http://192.168.1.21:3002
+        NEXT_PUBLIC_CALL_SOCKET_URL: http://192.168.1.21:3051
     container_name: nexora-frontend
     ports:
       - "3100:3000"

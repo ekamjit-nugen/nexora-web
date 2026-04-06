@@ -1,0 +1,438 @@
+import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { JwtService } from '@nestjs/jwt';
+import { v4 as uuidv4 } from 'uuid';
+import * as nodemailer from 'nodemailer';
+import { IOrganization } from '../schemas/organization.schema';
+import { IOrgMembership } from '../schemas/org-membership.schema';
+import { IUser } from '../schemas/user.schema';
+import { AuditService, AuditAction } from '../audit.service';
+import { HrSyncService } from './hr-sync.service';
+
+@Injectable()
+export class InviteService {
+  private readonly logger = new Logger(InviteService.name);
+  private readonly mailTransporter: nodemailer.Transporter;
+  private readonly frontendUrl: string;
+
+  constructor(
+    @InjectModel('Organization') private organizationModel: Model<IOrganization>,
+    @InjectModel('OrgMembership') private orgMembershipModel: Model<IOrgMembership>,
+    @InjectModel('User') private userModel: Model<IUser>,
+    private jwtService: JwtService,
+    private auditService: AuditService,
+    private hrSyncService: HrSyncService,
+  ) {
+    this.frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3100';
+    this.mailTransporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST || 'mailhog',
+      port: parseInt(process.env.SMTP_PORT || '1025', 10),
+      ignoreTLS: true,
+    });
+  }
+
+  /**
+   * Invite a member to an organization.
+   * If the user exists, create membership with userId.
+   * If the user does NOT exist, create membership with email only (userId=null) and send an invite email.
+   */
+  async inviteMember(orgId: string, email: string, role: string, invitedBy: string, firstName?: string, lastName?: string): Promise<IOrgMembership> {
+    this.logger.debug(`Inviting ${email} to org: ${orgId}`);
+
+    const organization = await this.organizationModel.findOne({
+      _id: orgId,
+      isDeleted: false,
+    });
+
+    if (!organization) {
+      throw new HttpException('Organization not found', HttpStatus.NOT_FOUND);
+    }
+
+    // Find or create user
+    let user = await this.userModel.findOne({ email });
+
+    if (user) {
+      // Check if already a member by userId
+      const existingMembership = await this.orgMembershipModel.findOne({
+        userId: user._id.toString(),
+        organizationId: orgId,
+      });
+      if (existingMembership) {
+        throw new HttpException('User is already a member or has a pending invitation', HttpStatus.CONFLICT);
+      }
+      // Update name if provided but don't activate — user must accept invite first
+      if (firstName) {
+        user.firstName = firstName;
+        user.lastName = lastName || '';
+      }
+      if (user.setupStage === 'complete') {
+        // Existing fully onboarded user — mark as invited to this org
+        user.setupStage = 'complete'; // keep complete, they just need to accept
+      }
+      await user.save();
+    } else {
+      // Check if already invited by email
+      const existingInvite = await this.orgMembershipModel.findOne({
+        email,
+        organizationId: orgId,
+        userId: null,
+      });
+      if (existingInvite) {
+        throw new HttpException('An invitation has already been sent to this email', HttpStatus.CONFLICT);
+      }
+    }
+
+    const inviteToken = uuidv4();
+    const inviteExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+
+    const membership = new this.orgMembershipModel({
+      userId: user ? user._id.toString() : null,
+      email: user ? null : email,
+      organizationId: orgId,
+      role: role || 'employee',
+      status: 'pending',
+      invitedBy,
+      invitedAt: new Date(),
+      joinedAt: null,
+      inviteToken,
+      inviteExpiresAt,
+    });
+
+    await membership.save();
+
+    // If user doesn't exist, create a placeholder with setupStage: 'invited'
+    if (!user) {
+      const invitedUser = new this.userModel({
+        email,
+        firstName: firstName || email.split('@')[0],
+        lastName: lastName || '',
+        // No password for invited users — they authenticate via OTP or OAuth
+        isActive: false,
+        setupStage: 'invited',
+        roles: ['user'],
+        organizations: [orgId],
+        defaultOrganizationId: orgId,
+      });
+      await invitedUser.save();
+      // Link the membership to the new user
+      membership.userId = invitedUser._id.toString();
+      membership.email = null;
+      await membership.save();
+    }
+
+    // Log invite link to console (dev mode)
+    if (!user) {
+      this.logger.log(`[DEV] Invite link for ${email}: ${this.frontendUrl}/auth/accept-invite?token=${inviteToken}`);
+    }
+
+    await this.auditService.log({
+      action: AuditAction.MEMBER_INVITED,
+      userId: invitedBy,
+      targetUserId: membership.userId,
+      resource: 'membership',
+      resourceId: membership._id.toString(),
+      organizationId: orgId,
+      details: { email, role },
+    });
+
+    // Provision employee record with 'invited' status so they show in directory
+    const empFirstName = firstName || (user ? user.firstName : email.split('@')[0]);
+    const empLastName = lastName || (user ? user.lastName : '');
+    await this.hrSyncService.provisionEmployee(email, empFirstName, empLastName, orgId, invitedBy, 'invited');
+
+    // Send invitation email
+    await this.sendInvitationEmail(email, organization, orgId, user ? undefined : inviteToken);
+
+    this.logger.log(`Invitation sent to ${email} for org: ${organization.name}`);
+    return membership;
+  }
+
+  /**
+   * Resend invitation to a pending member — generates a new invite token with fresh 7-day expiry
+   */
+  async resendInvite(orgId: string, memberEmail: string, performedBy: string): Promise<IOrgMembership> {
+    this.logger.debug(`Resending invite to ${memberEmail} for org: ${orgId}`);
+
+    // First try finding by email on the membership
+    let membership = await this.orgMembershipModel.findOne({
+      organizationId: orgId,
+      status: { $in: ['pending', 'invited'] },
+      email: memberEmail,
+    });
+
+    // If not found, look up the user by email and find membership by userId
+    if (!membership) {
+      const user = await this.userModel.findOne({ email: memberEmail.toLowerCase() });
+      if (user) {
+        membership = await this.orgMembershipModel.findOne({
+          organizationId: orgId,
+          status: { $in: ['pending', 'invited'] },
+          userId: user._id.toString(),
+        });
+      }
+    }
+
+    if (!membership) {
+      throw new HttpException('No pending invitation found for this email', HttpStatus.NOT_FOUND);
+    }
+
+    // Generate new invite token with fresh expiry
+    const newToken = uuidv4();
+    membership.inviteToken = newToken;
+    membership.inviteExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    membership.invitedAt = new Date();
+    await membership.save();
+
+    // Get org for email
+    const organization = await this.organizationModel.findById(orgId);
+    if (organization) {
+      await this.sendInvitationEmail(memberEmail, organization, orgId, newToken);
+    }
+
+    this.logger.log(`[DEV] Resend invite link for ${memberEmail}: ${this.frontendUrl}/auth/accept-invite?token=${newToken}`);
+
+    await this.auditService.log({
+      action: AuditAction.INVITE_RESENT,
+      userId: performedBy,
+      targetUserId: membership.userId || undefined,
+      resource: 'membership',
+      resourceId: membership._id.toString(),
+      organizationId: orgId,
+      details: { email: memberEmail },
+    });
+
+    return membership;
+  }
+
+  /**
+   * Validate an invite token and return invite details
+   */
+  async validateInviteToken(token: string): Promise<{
+    valid: boolean;
+    email?: string;
+    orgName?: string;
+    orgId?: string;
+    role?: string;
+  }> {
+    const membership = await this.orgMembershipModel.findOne({ inviteToken: token });
+
+    // Return consistent error response to prevent invite token enumeration
+    if (!membership ||
+        membership.status === 'removed' ||
+        membership.status === 'active' ||
+        (membership.inviteExpiresAt && new Date() > membership.inviteExpiresAt)) {
+      return { valid: false };
+    }
+
+    // Get user email if userId is set
+    let email = membership.email;
+    if (!email && membership.userId) {
+      const user = await this.userModel.findById(membership.userId);
+      email = user?.email;
+    }
+
+    // Get org name from the organization model
+    let orgName = 'Unknown Organization';
+    try {
+      const org = await this.organizationModel.findById(membership.organizationId);
+      if (org) orgName = org.name;
+    } catch {
+      // fallback
+    }
+
+    return {
+      valid: true,
+      email: email || undefined,
+      orgName,
+      orgId: membership.organizationId,
+      role: membership.role,
+    };
+  }
+
+  /**
+   * Accept an invitation via invite token
+   */
+  async acceptInvite(token: string, userId: string): Promise<IOrgMembership> {
+    const membership = await this.orgMembershipModel.findOne({
+      inviteToken: token,
+      status: { $in: ['pending', 'invited'] },
+    });
+
+    if (!membership) {
+      throw new HttpException('No pending invitation found', HttpStatus.NOT_FOUND);
+    }
+
+    // Validate that the accepting user's email matches the invitation
+    const acceptingUser = await this.userModel.findById(userId);
+    if (!acceptingUser) {
+      throw new HttpException('User not found', HttpStatus.NOT_FOUND);
+    }
+
+    // If membership has a userId, verify it matches the accepting user
+    // If membership was email-based, verify email matches
+    if (membership.userId && membership.userId !== userId) {
+      const invitedUser = await this.userModel.findById(membership.userId);
+      if (invitedUser && invitedUser.email !== acceptingUser.email) {
+        throw new HttpException('This invitation was sent to a different email address', HttpStatus.FORBIDDEN);
+      }
+    }
+    if (membership.email && membership.email.toLowerCase() !== acceptingUser.email.toLowerCase()) {
+      throw new HttpException('This invitation was sent to a different email address', HttpStatus.FORBIDDEN);
+    }
+
+    // Determine the actual user for this invite
+    const actualUserId = membership.userId || userId;
+
+    // Check if this user already has an active membership in this org
+    if (actualUserId !== membership.userId) {
+      const existing = await this.orgMembershipModel.findOne({
+        userId: actualUserId,
+        organizationId: membership.organizationId,
+        status: 'active',
+      });
+      if (existing) {
+        // Already a member — just clean up the invite
+        membership.status = 'removed';
+        membership.inviteToken = null;
+        await membership.save();
+        throw new HttpException('You are already a member of this organization', HttpStatus.CONFLICT);
+      }
+    }
+
+    membership.status = 'active';
+    membership.joinedAt = new Date();
+    if (!membership.userId) {
+      membership.userId = actualUserId;
+    }
+    membership.inviteToken = null;
+    await membership.save();
+
+    // Update user
+    const user = await this.userModel.findById(actualUserId);
+    if (user) {
+      if (!user.organizations.includes(membership.organizationId)) {
+        user.organizations.push(membership.organizationId);
+      }
+      if (user.setupStage === 'invited') {
+        user.setupStage = 'complete';
+      }
+      user.defaultOrganizationId = membership.organizationId;
+      user.lastOrgId = membership.organizationId;
+      user.isActive = true;
+      await user.save();
+    }
+
+    await this.auditService.log({
+      action: AuditAction.INVITE_ACCEPTED,
+      userId,
+      resource: 'membership',
+      resourceId: membership._id.toString(),
+      organizationId: membership.organizationId,
+    });
+
+    // Publish event so chat-service can activate the user in pre-added conversations
+    try {
+      const IORedis = (await (Function('return import("ioredis")')())).default;
+      const redis = new IORedis(process.env.REDIS_URI || 'redis://redis:6379');
+      await redis.publish('invite:accepted', JSON.stringify({ userId: actualUserId, organizationId: membership.organizationId }));
+      await redis.quit();
+    } catch {
+      // Non-critical — user will be activated on next conversation load
+    }
+
+    return membership;
+  }
+
+  /**
+   * Decline an invitation via invite token
+   */
+  async declineInvite(token: string, userId: string): Promise<void> {
+    const membership = await this.orgMembershipModel.findOne({
+      inviteToken: token,
+      status: { $in: ['pending', 'invited'] },
+    });
+
+    if (!membership) {
+      throw new HttpException('No pending invitation found', HttpStatus.NOT_FOUND);
+    }
+
+    membership.status = 'removed';
+    membership.inviteToken = null;
+    await membership.save();
+
+    await this.auditService.log({
+      action: AuditAction.INVITE_DECLINED,
+      userId,
+      resource: 'membership',
+      resourceId: membership._id.toString(),
+      organizationId: membership.organizationId,
+    });
+  }
+
+  /**
+   * Send a branded invitation email
+   */
+  private async sendInvitationEmail(email: string, organization: IOrganization, orgId: string, inviteToken?: string): Promise<void> {
+    const inviteLink = inviteToken
+      ? `${this.frontendUrl}/auth/accept-invite?token=${inviteToken}`
+      : `${this.frontendUrl}/auth/login?invite=${orgId}&email=${encodeURIComponent(email)}`;
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#F3F4F6;font-family:'Inter',Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F3F4F6;padding:40px 0;">
+    <tr><td align="center">
+      <table width="520" cellpadding="0" cellspacing="0" style="background:#FFFFFF;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+        <!-- Header -->
+        <tr>
+          <td style="background:#2E86C1;padding:28px 40px;text-align:center;">
+            <span style="display:inline-block;width:44px;height:44px;line-height:44px;background:rgba(255,255,255,0.2);border-radius:10px;font-size:22px;font-weight:700;color:#FFFFFF;">N</span>
+            <div style="color:#FFFFFF;font-size:20px;font-weight:600;margin-top:8px;">Nexora</div>
+          </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+          <td style="padding:36px 40px 24px;">
+            <h1 style="margin:0 0 12px;font-size:22px;font-weight:600;color:#111827;">You're invited!</h1>
+            <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#4B5563;">
+              You've been invited to join <strong style="color:#111827;">${organization.name}</strong> on Nexora — the unified platform for IT operations.
+            </p>
+            <table cellpadding="0" cellspacing="0" width="100%"><tr><td align="center">
+              <a href="${inviteLink}" style="display:inline-block;background:#2E86C1;color:#FFFFFF;font-size:15px;font-weight:600;text-decoration:none;padding:12px 32px;border-radius:8px;">
+                Accept Invitation
+              </a>
+            </td></tr></table>
+            <p style="margin:28px 0 0;font-size:13px;line-height:1.5;color:#9CA3AF;">
+              If the button doesn't work, copy and paste this link into your browser:<br/>
+              <a href="${inviteLink}" style="color:#2E86C1;word-break:break-all;">${inviteLink}</a>
+            </p>
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td style="padding:20px 40px 28px;border-top:1px solid #F3F4F6;text-align:center;">
+            <p style="margin:0;font-size:12px;color:#9CA3AF;">&copy; ${new Date().getFullYear()} Nexora. All rights reserved.</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+    try {
+      await this.mailTransporter.sendMail({
+        from: '"Nexora" <no-reply@nexora.io>',
+        to: email,
+        subject: `You've been invited to join ${organization.name} on Nexora`,
+        html,
+      });
+      this.logger.log(`Invitation email sent to ${email}`);
+    } catch (err) {
+      this.logger.warn(`Failed to send invitation email to ${email}: ${err.message || err}`);
+    }
+  }
+}

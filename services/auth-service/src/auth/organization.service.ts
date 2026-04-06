@@ -2,11 +2,13 @@ import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
+import { v4 as uuidv4 } from 'uuid';
 import * as nodemailer from 'nodemailer';
 import { IOrganization } from './schemas/organization.schema';
 import { IOrgMembership } from './schemas/org-membership.schema';
 import { IUser } from './schemas/user.schema';
 import { IRole } from './schemas/role.schema';
+import { AuditService, AuditAction } from './audit.service';
 import { CreateOrganizationDto, UpdateOrganizationDto } from './dto/organization.dto';
 
 @Injectable()
@@ -21,6 +23,7 @@ export class OrganizationService {
     @InjectModel('User') private userModel: Model<IUser>,
     @InjectModel('Role') private roleModel: Model<IRole>,
     private jwtService: JwtService,
+    private auditService: AuditService,
   ) {
     this.frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3100';
     this.mailTransporter = nodemailer.createTransport({
@@ -65,26 +68,44 @@ export class OrganizationService {
       industry: dto.industry || 'other',
       size: dto.size || '1-10',
       domain: dto.domain || null,
+      type: dto.type || null,
       createdBy: userId,
+      settings: {
+        timezone: dto.timezone || null,
+        currency: dto.currency || null,
+      },
     });
 
     await organization.save();
 
-    // Create admin membership (org creator is always admin)
+    // Create owner membership (org creator is always owner)
     const membership = new this.orgMembershipModel({
       userId,
       organizationId: organization._id.toString(),
-      role: 'admin',
+      role: 'owner',
       status: 'active',
       joinedAt: new Date(),
     });
 
     await membership.save();
 
-    // Update user's organizations array, default org, and ensure admin role
+    // Update user's organizations array, default org, setupStage, and ensure admin role
     await this.userModel.findByIdAndUpdate(userId, {
       $addToSet: { organizations: organization._id.toString(), roles: 'admin' },
-      $set: { defaultOrganizationId: organization._id.toString() },
+      $set: {
+        defaultOrganizationId: organization._id.toString(),
+        lastOrgId: organization._id.toString(),
+        setupStage: 'org_created',
+      },
+    });
+
+    await this.auditService.log({
+      action: AuditAction.ORG_CREATED,
+      userId,
+      resource: 'organization',
+      resourceId: organization._id.toString(),
+      organizationId: organization._id.toString(),
+      details: { name: organization.name, slug },
     });
 
     // Seed default roles for this organization
@@ -107,7 +128,7 @@ export class OrganizationService {
    * Provision an employee record in the HR service for a user joining an org.
    * This is best-effort — failure does not block the org/invite flow.
    */
-  private async provisionEmployee(email: string, firstName: string, lastName: string, orgId: string, createdBy: string): Promise<void> {
+  private async provisionEmployee(email: string, firstName: string, lastName: string, orgId: string, createdBy: string, status: string = 'active'): Promise<void> {
     try {
       const hrUrl = process.env.HR_SERVICE_URL || 'http://hr-service:3010';
 
@@ -128,6 +149,7 @@ export class OrganizationService {
         lastName: lastName || '',
         email,
         joiningDate: new Date().toISOString().split('T')[0],
+        status,
       });
 
       await new Promise<void>((resolve) => {
@@ -174,6 +196,145 @@ export class OrganizationService {
     }
   }
 
+  /**
+   * Update an employee's name in the HR service (best-effort).
+   * Used after profile completion to sync the name.
+   */
+  async syncEmployeeName(email: string, firstName: string, lastName: string, orgId: string, userId: string): Promise<void> {
+    try {
+      const hrUrl = process.env.HR_SERVICE_URL || 'http://hr-service:3010';
+      const tempToken = this.jwtService.sign({
+        sub: userId, email, firstName, lastName, roles: ['admin'], organizationId: orgId,
+      }, { expiresIn: '1m' });
+
+      const http = await import('http');
+
+      // First, find the employee by email
+      const employees: any[] = await new Promise((resolve) => {
+        const req = http.request(`${hrUrl}/api/v1/employees?search=${encodeURIComponent(email)}`, {
+          method: 'GET',
+          headers: { 'Authorization': `Bearer ${tempToken}` },
+          timeout: 5000,
+        }, (res) => {
+          let body = '';
+          res.on('data', (chunk) => (body += chunk));
+          res.on('end', () => {
+            try { resolve(JSON.parse(body)?.data || []); } catch { resolve([]); }
+          });
+        });
+        req.on('error', () => resolve([]));
+        req.on('timeout', () => { req.destroy(); resolve([]); });
+        req.end();
+      });
+
+      const emp = employees.find((e: any) => e.email === email);
+      if (!emp?._id) {
+        this.logger.debug(`No HR employee found for ${email} to update name`);
+        return;
+      }
+
+      // Update the employee name
+      const putData = JSON.stringify({ firstName, lastName });
+      await new Promise<void>((resolve) => {
+        const req = http.request(`${hrUrl}/api/v1/employees/${emp._id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${tempToken}`,
+            'Content-Length': Buffer.byteLength(putData),
+          },
+          timeout: 5000,
+        }, (res) => {
+          let body = '';
+          res.on('data', (chunk) => (body += chunk));
+          res.on('end', () => {
+            if (res.statusCode === 200) {
+              this.logger.log(`Employee name updated for ${email}: ${firstName} ${lastName}`);
+            } else {
+              this.logger.warn(`Employee name update returned ${res.statusCode} for ${email}: ${body}`);
+            }
+            resolve();
+          });
+        });
+        req.on('error', (err) => { this.logger.warn(`Employee name sync failed: ${err.message}`); resolve(); });
+        req.on('timeout', () => { req.destroy(); resolve(); });
+        req.write(putData);
+        req.end();
+      });
+    } catch (err) {
+      this.logger.warn(`Employee name sync error for ${email}: ${err.message || err}`);
+    }
+  }
+
+  /**
+   * Update an employee's status in the HR service (best-effort).
+   * Used after invite acceptance to change status from 'invited' to 'active'.
+   */
+  async syncEmployeeStatus(email: string, status: string, orgId: string, userId: string): Promise<void> {
+    try {
+      const hrUrl = process.env.HR_SERVICE_URL || 'http://hr-service:3010';
+      const tempToken = this.jwtService.sign({
+        sub: userId, email, roles: ['admin'], organizationId: orgId,
+      }, { expiresIn: '1m' });
+
+      const http = await import('http');
+
+      // Find employee by email
+      const employees: any[] = await new Promise((resolve) => {
+        const req = http.request(`${hrUrl}/api/v1/employees?search=${encodeURIComponent(email)}`, {
+          method: 'GET',
+          headers: { 'Authorization': `Bearer ${tempToken}` },
+          timeout: 5000,
+        }, (res) => {
+          let body = '';
+          res.on('data', (chunk) => (body += chunk));
+          res.on('end', () => {
+            try { resolve(JSON.parse(body)?.data || []); } catch { resolve([]); }
+          });
+        });
+        req.on('error', () => resolve([]));
+        req.on('timeout', () => { req.destroy(); resolve([]); });
+        req.end();
+      });
+
+      const emp = employees.find((e: any) => e.email === email);
+      if (!emp?._id) {
+        this.logger.debug(`No HR employee found for ${email} to update status`);
+        return;
+      }
+
+      const putData = JSON.stringify({ status });
+      await new Promise<void>((resolve) => {
+        const req = http.request(`${hrUrl}/api/v1/employees/${emp._id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${tempToken}`,
+            'Content-Length': Buffer.byteLength(putData),
+          },
+          timeout: 5000,
+        }, (res) => {
+          let body = '';
+          res.on('data', (chunk) => (body += chunk));
+          res.on('end', () => {
+            if (res.statusCode === 200) {
+              this.logger.log(`Employee status updated to '${status}' for ${email}`);
+            } else {
+              this.logger.warn(`Employee status update returned ${res.statusCode} for ${email}: ${body}`);
+            }
+            resolve();
+          });
+        });
+        req.on('error', (err) => { this.logger.warn(`Employee status sync failed: ${err.message}`); resolve(); });
+        req.on('timeout', () => { req.destroy(); resolve(); });
+        req.write(putData);
+        req.end();
+      });
+    } catch (err) {
+      this.logger.warn(`Employee status sync error for ${email}: ${err.message || err}`);
+    }
+  }
+
   private async seedDefaultRoles(orgId: string, createdBy: string): Promise<void> {
     const allActions = ['view', 'create', 'edit', 'delete', 'export', 'assign'];
     const allResources = [
@@ -184,10 +345,19 @@ export class OrganizationService {
 
     const defaultRoles = [
       {
+        name: 'owner',
+        displayName: 'Owner',
+        description: 'Organization creator. Full unrestricted access.',
+        color: '#7C3AED',
+        isSystem: true,
+        permissions: allResources.map((resource) => ({ resource, actions: [...allActions] })),
+      },
+      {
         name: 'admin',
         displayName: 'Admin',
-        description: 'Full access to all organization resources',
+        description: 'Full administrative access. Can manage members, roles, settings.',
         color: '#EF4444',
+        isSystem: true,
         permissions: allResources.map((resource) => ({ resource, actions: [...allActions] })),
       },
       {
@@ -418,20 +588,15 @@ export class OrganizationService {
       if (existingMembership) {
         throw new HttpException('User is already a member or has a pending invitation', HttpStatus.CONFLICT);
       }
-      // Fully provision the user if names provided (e.g. admin inviting with details)
+      // Update name if provided but don't activate — user must accept invite first
       if (firstName) {
         user.firstName = firstName;
         user.lastName = lastName || '';
       }
-      // Activate and link to org if not already
-      if (!user.isActive) user.isActive = true;
-      if (!user.organizations) user.organizations = [];
-      if (!user.organizations.includes(orgId)) user.organizations.push(orgId);
-      if (!user.defaultOrganizationId) user.defaultOrganizationId = orgId;
-      // Set appropriate role
-      const roleName = role === 'admin' ? 'admin' : role === 'manager' ? 'manager' : 'employee';
-      if (!user.roles) user.roles = [];
-      if (!user.roles.includes(roleName)) user.roles.push(roleName);
+      if (user.setupStage === 'complete') {
+        // Existing fully onboarded user — mark as invited to this org
+        user.setupStage = 'complete'; // keep complete, they just need to accept
+      }
       await user.save();
     } else {
       // Check if already invited by email
@@ -443,45 +608,68 @@ export class OrganizationService {
       if (existingInvite) {
         throw new HttpException('An invitation has already been sent to this email', HttpStatus.CONFLICT);
       }
-
-      // Create a fully active user account if firstName/lastName provided
-      if (firstName) {
-        user = new this.userModel({
-          email,
-          firstName,
-          lastName: lastName || '',
-          password: 'invited-' + Date.now(), // placeholder — user authenticates via OTP
-          isActive: true,
-          isEmailVerified: true,
-          roles: [role === 'admin' ? 'admin' : role === 'manager' ? 'manager' : 'employee'],
-          organizations: [orgId],
-          defaultOrganizationId: orgId,
-        });
-        await user.save();
-        this.logger.log(`Active user account created for ${email}`);
-      }
     }
+
+    const inviteToken = uuidv4();
+    const inviteExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
     const membership = new this.orgMembershipModel({
       userId: user ? user._id.toString() : null,
       email: user ? null : email,
       organizationId: orgId,
-      role: role || 'member',
-      status: user ? 'active' : 'invited',
+      role: role || 'employee',
+      status: 'pending',
       invitedBy,
       invitedAt: new Date(),
-      joinedAt: user ? new Date() : null,
+      joinedAt: null,
+      inviteToken,
+      inviteExpiresAt,
     });
 
     await membership.save();
 
-    // Provision employee record in HR service
+    // If user doesn't exist, create a placeholder with setupStage: 'invited'
+    if (!user) {
+      const invitedUser = new this.userModel({
+        email,
+        firstName: firstName || email.split('@')[0],
+        lastName: lastName || '',
+        password: 'invited-' + uuidv4(),
+        isActive: false,
+        setupStage: 'invited',
+        roles: ['user'],
+        organizations: [orgId],
+        defaultOrganizationId: orgId,
+      });
+      await invitedUser.save();
+      // Link the membership to the new user
+      membership.userId = invitedUser._id.toString();
+      membership.email = null;
+      await membership.save();
+    }
+
+    // Log invite link to console (dev mode)
+    if (!user) {
+      this.logger.log(`[DEV] Invite link for ${email}: ${this.frontendUrl}/auth/accept-invite?token=${inviteToken}`);
+    }
+
+    await this.auditService.log({
+      action: AuditAction.MEMBER_INVITED,
+      userId: invitedBy,
+      targetUserId: membership.userId,
+      resource: 'membership',
+      resourceId: membership._id.toString(),
+      organizationId: orgId,
+      details: { email, role },
+    });
+
+    // Provision employee record with 'invited' status so they show in directory
     const empFirstName = firstName || (user ? user.firstName : email.split('@')[0]);
     const empLastName = lastName || (user ? user.lastName : '');
-    await this.provisionEmployee(email, empFirstName, empLastName, orgId, invitedBy);
+    await this.provisionEmployee(email, empFirstName, empLastName, orgId, invitedBy, 'invited');
 
     // Send invitation email
-    await this.sendInvitationEmail(email, organization, orgId);
+    await this.sendInvitationEmail(email, organization, orgId, user ? undefined : inviteToken);
 
     this.logger.log(`Invitation sent to ${email} for org: ${organization.name}`);
     return membership;
@@ -490,8 +678,10 @@ export class OrganizationService {
   /**
    * Send a branded invitation email
    */
-  private async sendInvitationEmail(email: string, organization: IOrganization, orgId: string): Promise<void> {
-    const inviteLink = `${this.frontendUrl}/invite?email=${encodeURIComponent(email)}&org=${orgId}`;
+  private async sendInvitationEmail(email: string, organization: IOrganization, orgId: string, inviteToken?: string): Promise<void> {
+    const inviteLink = inviteToken
+      ? `${this.frontendUrl}/auth/accept-invite?token=${inviteToken}`
+      : `${this.frontendUrl}/auth/login?invite=${orgId}&email=${encodeURIComponent(email)}`;
 
     const html = `
 <!DOCTYPE html>
@@ -607,6 +797,63 @@ export class OrganizationService {
   }
 
   /**
+   * Resend invitation to a pending member — generates a new invite token with fresh 7-day expiry
+   */
+  async resendInvite(orgId: string, memberEmail: string, performedBy: string): Promise<IOrgMembership> {
+    this.logger.debug(`Resending invite to ${memberEmail} for org: ${orgId}`);
+
+    // First try finding by email on the membership
+    let membership = await this.orgMembershipModel.findOne({
+      organizationId: orgId,
+      status: { $in: ['pending', 'invited'] },
+      email: memberEmail,
+    });
+
+    // If not found, look up the user by email and find membership by userId
+    if (!membership) {
+      const user = await this.userModel.findOne({ email: memberEmail.toLowerCase() });
+      if (user) {
+        membership = await this.orgMembershipModel.findOne({
+          organizationId: orgId,
+          status: { $in: ['pending', 'invited'] },
+          userId: user._id.toString(),
+        });
+      }
+    }
+
+    if (!membership) {
+      throw new HttpException('No pending invitation found for this email', HttpStatus.NOT_FOUND);
+    }
+
+    // Generate new invite token with fresh expiry
+    const newToken = uuidv4();
+    membership.inviteToken = newToken;
+    membership.inviteExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    membership.invitedAt = new Date();
+    await membership.save();
+
+    // Get org for email
+    const organization = await this.organizationModel.findById(orgId);
+    if (organization) {
+      await this.sendInvitationEmail(memberEmail, organization, orgId, newToken);
+    }
+
+    this.logger.log(`[DEV] Resend invite link for ${memberEmail}: ${this.frontendUrl}/auth/accept-invite?token=${newToken}`);
+
+    await this.auditService.log({
+      action: AuditAction.INVITE_RESENT,
+      userId: performedBy,
+      targetUserId: membership.userId || undefined,
+      resource: 'membership',
+      resourceId: membership._id.toString(),
+      organizationId: orgId,
+      details: { email: memberEmail },
+    });
+
+    return membership;
+  }
+
+  /**
    * Switch the active organization context and generate new JWT tokens
    */
   async switchOrganization(userId: string, orgId: string): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
@@ -716,9 +963,9 @@ export class OrganizationService {
   async deleteOrganization(orgId: string, userId: string): Promise<void> {
     const org = await this.organizationModel.findOne({ _id: orgId, isDeleted: false });
     if (!org) throw new HttpException('Organization not found', HttpStatus.NOT_FOUND);
-    // Only the creator or an admin can delete
-    const membership = await this.orgMembershipModel.findOne({ userId, organizationId: orgId, role: { $in: ['admin', 'owner'] } });
-    if (!membership) throw new HttpException('Only admins can delete organizations', HttpStatus.FORBIDDEN);
+    // Only the owner can delete
+    const membership = await this.orgMembershipModel.findOne({ userId, organizationId: orgId, role: 'owner' });
+    if (!membership) throw new HttpException('Only the organization owner can delete it', HttpStatus.FORBIDDEN);
     org.isDeleted = true;
     org.isActive = false;
     await org.save();
@@ -728,6 +975,121 @@ export class OrganizationService {
   /**
    * Get all members of an organization
    */
+  /**
+   * Calculate setup completeness for an organization
+   */
+  async calculateSetupCompleteness(orgId: string): Promise<{ percentage: number; categories: Record<string, { weight: number; complete: boolean }>; nextAction: string }> {
+    const org = await this.getOrganization(orgId);
+    const memberCount = await this.orgMembershipModel.countDocuments({ organizationId: orgId, status: 'active' });
+
+    const checks = {
+      basicInfo: { weight: 15, complete: !!(org.name && (org as any).type && org.size && (org as any).country) },
+      businessDetails: { weight: 20, complete: !!((org as any).business?.registeredAddress?.city && (org as any).business?.registeredAddress?.pincode && (org as any).business?.pan) },
+      payrollSetup: { weight: 25, complete: !!((org as any).payroll?.pfConfig?.registrationNumber && (org as any).payroll?.tdsConfig?.tanNumber) },
+      workConfig: { weight: 15, complete: !!((org as any).workPreferences?.workingDays?.length > 0 && (org as any).workPreferences?.workingHours?.start && (org as any).workPreferences?.holidays?.length > 0) },
+      branding: { weight: 10, complete: !!((org as any).branding?.logo) },
+      teamSetup: { weight: 15, complete: memberCount >= 2 },
+    };
+
+    const percentage = Object.values(checks).reduce((sum, c) => sum + (c.complete ? c.weight : 0), 0);
+
+    let nextAction = '';
+    if (!checks.basicInfo.complete) nextAction = 'Complete basic organization info in General Settings';
+    else if (!checks.teamSetup.complete) nextAction = 'Invite at least 2 team members';
+    else if (!checks.businessDetails.complete) nextAction = 'Add business details to enable payroll';
+    else if (!checks.workConfig.complete) nextAction = 'Configure working hours and holidays';
+    else if (!checks.payrollSetup.complete) nextAction = 'Set up payroll configuration';
+    else if (!checks.branding.complete) nextAction = 'Upload your organization logo';
+
+    return { percentage, categories: checks, nextAction };
+  }
+
+  /**
+   * Add a holiday to workPreferences.holidays
+   */
+  async addHoliday(orgId: string, holiday: any): Promise<IOrganization> {
+    const org = await this.getOrganization(orgId);
+    if (!(org as any).workPreferences) (org as any).workPreferences = {};
+    if (!(org as any).workPreferences.holidays) (org as any).workPreferences.holidays = [];
+    (org as any).workPreferences.holidays.push(holiday);
+    org.markModified('workPreferences');
+    await org.save();
+    return org;
+  }
+
+  /**
+   * Update a holiday at a given index
+   */
+  async updateHoliday(orgId: string, holidayIndex: string, data: any): Promise<IOrganization> {
+    const org = await this.getOrganization(orgId);
+    const idx = parseInt(holidayIndex, 10);
+    if (!(org as any).workPreferences?.holidays?.[idx]) {
+      throw new HttpException('Holiday not found', HttpStatus.NOT_FOUND);
+    }
+    (org as any).workPreferences.holidays[idx] = { ...(org as any).workPreferences.holidays[idx], ...data };
+    org.markModified('workPreferences');
+    await org.save();
+    return org;
+  }
+
+  /**
+   * Remove a holiday at a given index
+   */
+  async removeHoliday(orgId: string, holidayIndex: string): Promise<IOrganization> {
+    const org = await this.getOrganization(orgId);
+    const idx = parseInt(holidayIndex, 10);
+    if (!(org as any).workPreferences?.holidays?.[idx]) {
+      throw new HttpException('Holiday not found', HttpStatus.NOT_FOUND);
+    }
+    (org as any).workPreferences.holidays.splice(idx, 1);
+    org.markModified('workPreferences');
+    await org.save();
+    return org;
+  }
+
+  /**
+   * Add a leave type to workPreferences.leaveTypes
+   */
+  async addLeaveType(orgId: string, leaveType: any): Promise<IOrganization> {
+    const org = await this.getOrganization(orgId);
+    if (!(org as any).workPreferences) (org as any).workPreferences = {};
+    if (!(org as any).workPreferences.leaveTypes) (org as any).workPreferences.leaveTypes = [];
+    (org as any).workPreferences.leaveTypes.push(leaveType);
+    org.markModified('workPreferences');
+    await org.save();
+    return org;
+  }
+
+  /**
+   * Update a leave type at a given index
+   */
+  async updateLeaveType(orgId: string, leaveTypeIndex: string, data: any): Promise<IOrganization> {
+    const org = await this.getOrganization(orgId);
+    const idx = parseInt(leaveTypeIndex, 10);
+    if (!(org as any).workPreferences?.leaveTypes?.[idx]) {
+      throw new HttpException('Leave type not found', HttpStatus.NOT_FOUND);
+    }
+    (org as any).workPreferences.leaveTypes[idx] = { ...(org as any).workPreferences.leaveTypes[idx], ...data };
+    org.markModified('workPreferences');
+    await org.save();
+    return org;
+  }
+
+  /**
+   * Remove a leave type at a given index
+   */
+  async removeLeaveType(orgId: string, leaveTypeIndex: string): Promise<IOrganization> {
+    const org = await this.getOrganization(orgId);
+    const idx = parseInt(leaveTypeIndex, 10);
+    if (!(org as any).workPreferences?.leaveTypes?.[idx]) {
+      throw new HttpException('Leave type not found', HttpStatus.NOT_FOUND);
+    }
+    (org as any).workPreferences.leaveTypes.splice(idx, 1);
+    org.markModified('workPreferences');
+    await org.save();
+    return org;
+  }
+
   async getOrgMembers(orgId: string): Promise<any[]> {
     this.logger.debug(`Getting members for org: ${orgId}`);
 

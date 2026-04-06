@@ -164,13 +164,24 @@ export class CallingController {
    * Get ICE servers for WebRTC
    */
   @Get('ice-servers')
-  getIceServers() {
+  getIceServers(@Req() req: any) {
     const stunServers = (process.env.STUN_SERVERS || 'stun:stun.l.google.com:19302').split(',');
     const iceServers: any[] = stunServers.map((s: string) => ({ urls: s.trim() }));
 
-    if (process.env.TURN_SERVER_URL) {
+    const turnServer = process.env.TURN_SERVER_URL;
+    const turnSecret = process.env.TURN_SECRET;
+
+    if (turnServer && turnSecret) {
+      // Item 22: Time-limited HMAC-SHA1 TURN credentials (12-hour validity)
+      const crypto = require('crypto');
+      const userId = req.user?.userId || 'anon';
+      const timestamp = Math.floor(Date.now() / 1000) + 43200;
+      const username = `${timestamp}:${userId}`;
+      const credential = crypto.createHmac('sha1', turnSecret).update(username).digest('base64');
+      iceServers.push({ urls: turnServer, username, credential });
+    } else if (turnServer) {
       iceServers.push({
-        urls: process.env.TURN_SERVER_URL,
+        urls: turnServer,
         username: process.env.TURN_USERNAME || '',
         credential: process.env.TURN_CREDENTIAL || '',
       });

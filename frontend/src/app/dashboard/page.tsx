@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { chatApi, hrApi } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
+import { SetupCompletenessWidget } from "@/components/setup-completeness-widget";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -190,6 +191,9 @@ export default function DashboardPage() {
             </Avatar>
           </div>
         </div>
+
+        {/* Setup Completeness */}
+        <SetupCompletenessWidget />
 
         {/* Stat cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">

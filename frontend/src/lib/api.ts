@@ -9,6 +9,12 @@ interface ApiResponse<T = unknown> {
   pagination?: { page: number; limit: number; total: number; pages: number };
 }
 
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 async function request<T>(
   endpoint: string,
   options: RequestInit = {}
@@ -24,9 +30,19 @@ async function request<T>(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
+  // Attach CSRF token for state-changing requests
+  const method = (options.method || 'GET').toUpperCase();
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      headers["X-XSRF-TOKEN"] = csrfToken;
+    }
+  }
+
   const res = await fetch(`${API_BASE}/api/v1${endpoint}`, {
     ...options,
     headers,
+    credentials: 'include', // Send httpOnly cookies automatically
   });
 
   const data = await res.json();
@@ -55,6 +71,7 @@ export interface User {
   isActive: boolean;
   mfaEnabled: boolean;
   isPlatformAdmin?: boolean;
+  setupStage?: string;
   createdAt: string;
 }
 
@@ -136,6 +153,20 @@ export const authApi = {
     request<ApiResponse<Record<string, unknown>>>("/auth/preferences"),
   updatePreferences: (prefs: Record<string, unknown>) =>
     request<ApiResponse<Record<string, unknown>>>("/auth/preferences", { method: "PUT", body: JSON.stringify(prefs) }),
+  updateSetupStage: (stage: string) =>
+    request("/auth/setup-stage", { method: "PUT", body: JSON.stringify({ stage }) }),
+  validateInvite: (token: string) =>
+    request<{ valid: boolean; email: string; orgName: string; role: string; orgId: string }>("/auth/invites/" + token + "/validate"),
+  acceptInvite: (token: string) =>
+    request("/auth/invites/" + token + "/accept", { method: "POST" }),
+  declineInvite: (token: string) =>
+    request("/auth/invites/" + token + "/decline", { method: "POST" }),
+  getSessions: () =>
+    request("/auth/sessions"),
+  revokeSession: (sessionId: string) =>
+    request(`/auth/sessions/${sessionId}`, { method: "DELETE" }),
+  revokeAllSessions: () =>
+    request("/auth/sessions", { method: "DELETE" }),
 };
 
 // ── HR API ──
@@ -672,12 +703,165 @@ export const chatApi = {
   updateSettings: (data: Partial<ChatSettings>) =>
     request<ChatSettings>("/chat/settings", { method: "PUT", body: JSON.stringify(data) }),
 
+  // Threads
+  getThreadReplies: (messageId: string, params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/chat/threads/${messageId}${qs}`);
+  },
+  replyToThread: (messageId: string, content: string) =>
+    request<ChatMessage>(`/chat/threads/${messageId}/reply`, { method: "POST", body: JSON.stringify({ content }) }),
+  followThread: (messageId: string) =>
+    request(`/chat/threads/${messageId}/follow`, { method: "POST" }),
+  unfollowThread: (messageId: string) =>
+    request(`/chat/threads/${messageId}/follow`, { method: "DELETE" }),
+
+  // Presence
+  setPresenceStatus: (status: string, customEmoji?: string, customText?: string) =>
+    request("/chat/presence/status", { method: "PUT", body: JSON.stringify({ status, customEmoji, customText }) }),
+  getPresenceBatch: (userIds: string[]) => {
+    const qs = userIds.map(id => `userIds=${id}`).join("&");
+    return request(`/chat/presence/batch?${qs}`);
+  },
+  getDndSchedule: () => request("/chat/presence/dnd"),
+  updateDndSchedule: (schedule: Record<string, unknown>) =>
+    request("/chat/presence/dnd", { method: "PUT", body: JSON.stringify(schedule) }),
+
+  // Channels
+  browseChannels: () => request("/chat/channels/browse"),
+  joinChannel: (channelId: string) =>
+    request(`/chat/channels/${channelId}/join`, { method: "POST" }),
+  getChannelCategories: () => request("/chat/channels/categories"),
+  createChannelCategory: (name: string) =>
+    request("/chat/channels/categories", { method: "POST", body: JSON.stringify({ name }) }),
+
+  // Pins
+  pinMessage: (messageId: string) =>
+    request(`/chat/messages/${messageId}/pin`, { method: "POST" }),
+  unpinMessage: (messageId: string) =>
+    request(`/chat/messages/${messageId}/pin`, { method: "DELETE" }),
+  getPinnedMessages: (conversationId: string) =>
+    request(`/chat/conversations/${conversationId}/pins`),
+
+  // Bookmarks
+  getBookmarks: () => request("/chat/bookmarks"),
+  saveBookmark: (messageId: string, label?: string, note?: string) =>
+    request("/chat/bookmarks", { method: "POST", body: JSON.stringify({ messageId, label, note }) }),
+  removeBookmark: (bookmarkId: string) =>
+    request(`/chat/bookmarks/${bookmarkId}`, { method: "DELETE" }),
+
+  // Polls
+  createPoll: (conversationId: string, question: string, options: string[], settings?: Record<string, unknown>) =>
+    request("/chat/polls", { method: "POST", body: JSON.stringify({ conversationId, question, options, ...settings }) }),
+  votePoll: (pollId: string, optionId: string) =>
+    request(`/chat/polls/${pollId}/vote`, { method: "POST", body: JSON.stringify({ optionId }) }),
+  closePoll: (pollId: string) =>
+    request(`/chat/polls/${pollId}/close`, { method: "POST" }),
+
+  // Forwarding
+  forwardMessage: (messageId: string, targetConversationId: string) =>
+    request(`/chat/messages/${messageId}/forward`, { method: "POST", body: JSON.stringify({ targetConversationId }) }),
+
   // Moderation
   getFlagged: () => request("/chat/moderation/flagged"),
   reviewFlagged: (id: string, data: { status: string }) =>
     request(`/chat/moderation/flagged/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   getModerationStats: () => request("/chat/moderation/stats"),
 };
+
+// ── Media API ──
+
+export const mediaApi = {
+  uploadFile: async (file: File, conversationId?: string) => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+    const formData = new FormData();
+    formData.append("file", file);
+    if (conversationId) formData.append("conversationId", conversationId);
+
+    const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3005";
+    const res = await fetch(`${API_BASE}/api/v1/media/upload`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+      credentials: "include",
+    });
+    return res.json();
+  },
+
+  getFile: (fileId: string) => request(`/media/files/${fileId}`),
+  getDownloadUrl: (fileId: string) => request(`/media/files/${fileId}/download`),
+  getPreviewUrl: (fileId: string) => request(`/media/files/${fileId}/preview`),
+  getThumbnailUrl: (fileId: string) => request(`/media/files/${fileId}/thumbnail`),
+
+  getConversationFiles: (conversationId: string, params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/media/conversations/${conversationId}/files${qs}`);
+  },
+
+  deleteFile: (fileId: string) =>
+    request(`/media/files/${fileId}`, { method: "DELETE" }),
+};
+
+// ── Upload with progress tracking (uses XMLHttpRequest for onprogress) ──
+
+export function uploadFileWithProgress(
+  file: File,
+  token: string,
+  onProgress: (percent: number) => void,
+  signal?: AbortSignal,
+  conversationId?: string,
+): Promise<{ url: string; fileId: string; thumbnailUrl?: string }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const url = `${API_BASE}/api/v1/media/upload`;
+
+    // Allow aborting via AbortSignal
+    if (signal) {
+      signal.addEventListener("abort", () => {
+        xhr.abort();
+        reject(new DOMException("Upload cancelled", "AbortError"));
+      }, { once: true });
+    }
+
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    });
+
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          resolve({
+            url: data.data?.storageUrl || data.data?.url || data.url || "",
+            fileId: data.data?._id || data.data?.fileId || data.fileId || "",
+            thumbnailUrl: data.data?.processing?.thumbnail?.storageKey || data.data?.thumbnailUrl,
+          });
+        } catch {
+          reject(new Error("Invalid response from upload"));
+        }
+      } else {
+        reject(new Error(`Upload failed with status ${xhr.status}`));
+      }
+    });
+
+    xhr.addEventListener("error", () => reject(new Error("Upload network error")));
+    xhr.addEventListener("abort", () => reject(new DOMException("Upload cancelled", "AbortError")));
+
+    const formData = new FormData();
+    formData.append("file", file);
+    if (conversationId) formData.append("conversationId", conversationId);
+
+    xhr.open("POST", url);
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      xhr.setRequestHeader('X-XSRF-TOKEN', csrfToken);
+    }
+    xhr.withCredentials = true;
+    xhr.send(formData);
+  });
+}
 
 // ── Types: Organization ──
 
@@ -749,8 +933,65 @@ export const orgApi = {
     request<ApiResponse<void>>(`/auth/organizations/${orgId}/members/${memberId}`, { method: "DELETE" }),
   deleteOrg: (orgId: string) =>
     request<ApiResponse<void>>(`/auth/organizations/${orgId}`, { method: "DELETE" }),
+  resendInvite: (orgId: string, email: string) =>
+    request(`/auth/organizations/${orgId}/resend-invite`, { method: "POST", body: JSON.stringify({ email }) }),
 };
 
+// ── Settings API ──
+
+export const settingsApi = {
+  // General
+  getGeneral: () => request("/settings/general"),
+  updateGeneral: (data: Record<string, unknown>) =>
+    request("/settings/general", { method: "PUT", body: JSON.stringify(data) }),
+  checkSlug: (slug: string) =>
+    request<{ available: boolean }>("/settings/general/check-slug?slug=" + encodeURIComponent(slug)),
+
+  // Business
+  getBusiness: () => request("/settings/business"),
+  updateBusiness: (data: Record<string, unknown>) =>
+    request("/settings/business", { method: "PUT", body: JSON.stringify(data) }),
+
+  // Payroll
+  getPayroll: () => request("/settings/payroll"),
+  updatePayroll: (data: Record<string, unknown>) =>
+    request("/settings/payroll", { method: "PUT", body: JSON.stringify(data) }),
+
+  // Work Preferences
+  getWorkPreferences: () => request("/settings/work-preferences"),
+  updateWorkPreferences: (data: Record<string, unknown>) =>
+    request("/settings/work-preferences", { method: "PUT", body: JSON.stringify(data) }),
+  addHoliday: (data: Record<string, unknown>) =>
+    request("/settings/work-preferences/holidays", { method: "POST", body: JSON.stringify(data) }),
+  updateHoliday: (id: string, data: Record<string, unknown>) =>
+    request("/settings/work-preferences/holidays/" + id, { method: "PUT", body: JSON.stringify(data) }),
+  deleteHoliday: (id: string) =>
+    request("/settings/work-preferences/holidays/" + id, { method: "DELETE" }),
+  addLeaveType: (data: Record<string, unknown>) =>
+    request("/settings/work-preferences/leave-types", { method: "POST", body: JSON.stringify(data) }),
+  updateLeaveType: (id: string, data: Record<string, unknown>) =>
+    request("/settings/work-preferences/leave-types/" + id, { method: "PUT", body: JSON.stringify(data) }),
+  deleteLeaveType: (id: string) =>
+    request("/settings/work-preferences/leave-types/" + id, { method: "DELETE" }),
+
+  // Branding
+  getBranding: () => request("/settings/branding"),
+  updateBranding: (data: Record<string, unknown>) =>
+    request("/settings/branding", { method: "PUT", body: JSON.stringify(data) }),
+
+  // Features
+  getFeatures: () => request("/settings/features"),
+  updateFeatures: (data: Record<string, unknown>) =>
+    request("/settings/features", { method: "PUT", body: JSON.stringify(data) }),
+
+  // Notifications
+  getNotifications: () => request("/settings/notifications"),
+  updateNotifications: (data: Record<string, unknown>) =>
+    request("/settings/notifications", { method: "PUT", body: JSON.stringify(data) }),
+
+  // Completeness
+  getCompleteness: () => request("/settings/completeness"),
+};
 
 // ── Types: Call Log ──
 
