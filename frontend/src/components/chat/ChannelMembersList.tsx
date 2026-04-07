@@ -57,7 +57,7 @@ export function ChannelMembersList({
   const onlineCount = participants.filter(p => onlineUserIds.has(p.userId)).length;
 
   return (
-    <div className="flex flex-col h-full bg-white border-l border-slate-200 w-[300px]">
+    <div className="flex flex-col h-full bg-white border-l border-slate-200 w-full md:w-[300px]">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
         <div>

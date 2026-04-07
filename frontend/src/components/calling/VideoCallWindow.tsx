@@ -186,11 +186,15 @@ export function AnnotationCanvas({ isEnabled, color = "#FF3B30", brushSize = 3, 
     return () => window.removeEventListener("resize", resizeCanvas);
   }, []);
 
-  const getPos = (e: React.MouseEvent) => {
+  const getPos = (e: React.MouseEvent | React.TouchEvent) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    if ("touches" in e) {
+      const touch = e.touches[0] || e.changedTouches[0];
+      return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+    }
+    return { x: (e as React.MouseEvent).clientX - rect.left, y: (e as React.MouseEvent).clientY - rect.top };
   };
 
   // Normalize coordinates to 0-1 range for cross-resolution broadcast
@@ -200,13 +204,13 @@ export function AnnotationCanvas({ isEnabled, color = "#FF3B30", brushSize = 3, 
     return { x: x / canvas.width, y: y / canvas.height };
   };
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handlePointerDown = (e: React.MouseEvent | React.TouchEvent) => {
     if (!isEnabled) return;
     isDrawingRef.current = true;
     lastPosRef.current = getPos(e);
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handlePointerMove = (e: React.MouseEvent | React.TouchEvent) => {
     if (!isDrawingRef.current || !isEnabled) return;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
@@ -241,7 +245,7 @@ export function AnnotationCanvas({ isEnabled, color = "#FF3B30", brushSize = 3, 
     lastPosRef.current = pos;
   };
 
-  const handleMouseUp = () => {
+  const handlePointerUp = () => {
     isDrawingRef.current = false;
     lastPosRef.current = null;
   };
@@ -288,10 +292,14 @@ export function AnnotationCanvas({ isEnabled, color = "#FF3B30", brushSize = 3, 
         "absolute inset-0 z-30",
         isEnabled ? "cursor-crosshair" : "pointer-events-none"
       )}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
+      onMouseDown={handlePointerDown}
+      onMouseMove={handlePointerMove}
+      onMouseUp={handlePointerUp}
+      onMouseLeave={handlePointerUp}
+      onTouchStart={handlePointerDown}
+      onTouchMove={handlePointerMove}
+      onTouchEnd={handlePointerUp}
+      onTouchCancel={handlePointerUp}
     />
   );
 }
@@ -320,7 +328,7 @@ export function AnnotationToolbar({
   const sizes = [2, 4, 6, 8];
 
   return (
-    <div className="absolute top-3 right-3 z-40 flex items-center gap-2">
+    <div className="absolute top-2 right-2 sm:top-3 sm:right-3 z-40 flex flex-wrap items-center gap-1.5 sm:gap-2 max-w-[calc(100%-1rem)]">
       <button
         onClick={onToggle}
         className={cn(
@@ -467,9 +475,9 @@ export function VideoCallWindow({
         </div>
 
         {/* Participant thumbnails strip at bottom */}
-        <div className="absolute bottom-4 left-4 right-4 flex gap-2 justify-center z-10">
+        <div className="absolute bottom-2 left-2 right-2 sm:bottom-4 sm:left-4 sm:right-4 flex gap-1.5 sm:gap-2 justify-center z-10">
           {localStream && (
-            <div className="w-32 h-24 rounded-lg shadow-lg overflow-hidden border-2 border-white/20">
+            <div className="w-20 h-16 sm:w-32 sm:h-24 rounded-lg shadow-lg overflow-hidden border-2 border-white/20">
               <VideoTile
                 stream={localStream}
                 label={localUserName}
@@ -480,7 +488,7 @@ export function VideoCallWindow({
             </div>
           )}
           {remoteStream && (
-            <div className="w-32 h-24 rounded-lg shadow-lg overflow-hidden border-2 border-white/20">
+            <div className="w-20 h-16 sm:w-32 sm:h-24 rounded-lg shadow-lg overflow-hidden border-2 border-white/20">
               <VideoTile
                 stream={remoteStream}
                 label={remoteUserName}
@@ -490,7 +498,7 @@ export function VideoCallWindow({
             </div>
           )}
           {additionalParticipants.map((p) => (
-            <div key={p.userId} className="w-32 h-24 rounded-lg shadow-lg overflow-hidden border-2 border-white/20">
+            <div key={p.userId} className="w-20 h-16 sm:w-32 sm:h-24 rounded-lg shadow-lg overflow-hidden border-2 border-white/20">
               <VideoTile
                 stream={p.stream}
                 label={p.name}
@@ -520,14 +528,14 @@ export function VideoCallWindow({
 
   const totalParticipants = allParticipants.length;
 
-  // Calculate grid layout - equal sizing for all participants
+  // Calculate grid layout - responsive: single column on mobile, multi-col on larger screens
   const getGridClass = () => {
     if (totalParticipants <= 1) return "grid-cols-1 grid-rows-1";
-    if (totalParticipants === 2) return "grid-cols-2 grid-rows-1";
-    if (totalParticipants <= 4) return "grid-cols-2 grid-rows-2";
-    if (totalParticipants <= 6) return "grid-cols-3 grid-rows-2";
-    if (totalParticipants <= 9) return "grid-cols-3 grid-rows-3";
-    return "grid-cols-4 grid-rows-3";
+    if (totalParticipants === 2) return "grid-cols-1 sm:grid-cols-2 grid-rows-1";
+    if (totalParticipants <= 4) return "grid-cols-1 sm:grid-cols-2 grid-rows-2";
+    if (totalParticipants <= 6) return "grid-cols-1 sm:grid-cols-2 md:grid-cols-3 grid-rows-2";
+    if (totalParticipants <= 9) return "grid-cols-1 sm:grid-cols-2 md:grid-cols-3 grid-rows-3";
+    return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 grid-rows-3";
   };
 
   // If only 1 remote + local, use the classic PIP layout
@@ -557,7 +565,7 @@ export function VideoCallWindow({
         )}
 
         {localStream && (
-          <div className="absolute bottom-4 right-4 h-32 w-32 rounded-lg shadow-lg border-2 border-white/20">
+          <div className="absolute bottom-3 right-3 h-20 w-20 sm:h-32 sm:w-32 rounded-lg shadow-lg border-2 border-white/20">
             <VideoTile
               stream={localStream}
               label={localUserName}

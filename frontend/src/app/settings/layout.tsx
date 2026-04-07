@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
@@ -81,6 +81,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
   const { user, loading, logout, orgRole } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const [settingsNavOpen, setSettingsNavOpen] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -114,17 +115,29 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
-      <main className="flex-1 ml-[260px] p-8">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold text-[#0F172A]">Settings</h1>
-          <p className="text-[13px] text-[#64748B] mt-1">
-            Manage your account settings and preferences.
-          </p>
+      <main className="flex-1 md:ml-[260px] p-4 md:p-8">
+        <div className="mb-6 flex items-center gap-3">
+          {/* Mobile hamburger for settings nav */}
+          <button
+            onClick={() => setSettingsNavOpen(!settingsNavOpen)}
+            className="md:hidden p-2 rounded-lg text-[#64748B] hover:bg-[#F1F5F9] transition-colors -ml-1"
+            aria-label="Toggle settings menu"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+            </svg>
+          </button>
+          <div>
+            <h1 className="text-xl md:text-2xl font-semibold text-[#0F172A]">Settings</h1>
+            <p className="text-[13px] text-[#64748B] mt-1">
+              Manage your account settings and preferences.
+            </p>
+          </div>
         </div>
 
-        <div className="flex gap-6">
+        <div className="flex gap-6 relative">
           {/* Settings sub-navigation */}
-          <nav className="w-[220px] shrink-0">
+          <nav className={`${settingsNavOpen ? 'block' : 'hidden'} md:block absolute md:relative z-30 bg-white md:bg-transparent rounded-xl md:rounded-none shadow-xl md:shadow-none p-4 md:p-0 left-0 top-0 w-[260px] md:w-[220px] shrink-0 border md:border-0 border-[#E2E8F0]`}>
             <div className="space-y-5">
               {visibleSections.map((section, sectionIndex) => (
                 <div key={section.title || `section-${sectionIndex}`}>
@@ -144,6 +157,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
                         <Link
                           key={item.label}
                           href={item.href}
+                          onClick={() => setSettingsNavOpen(false)}
                           className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors ${
                             isDangerZone
                               ? active
@@ -173,8 +187,8 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
             </div>
           </nav>
 
-          {/* Content area */}
-          <div className="flex-1 min-w-0">{children}</div>
+          {/* Content area - full width on mobile, add horizontal scroll for tables */}
+          <div className="flex-1 min-w-0 overflow-x-auto">{children}</div>
         </div>
       </main>
     </div>

@@ -25,12 +25,12 @@ function getInitials(name: string): string {
 
 function getGridClass(count: number): string {
   if (count <= 1) return "grid-cols-1";
-  if (count <= 2) return "grid-cols-2";
+  if (count <= 2) return "grid-cols-1 sm:grid-cols-2";
   if (count <= 4) return "grid-cols-2 grid-rows-2";
-  if (count <= 6) return "grid-cols-3 grid-rows-2";
-  if (count <= 9) return "grid-cols-3 grid-rows-3";
-  if (count <= 16) return "grid-cols-4 grid-rows-4";
-  return "grid-cols-5";
+  if (count <= 6) return "grid-cols-2 md:grid-cols-3 grid-rows-2";
+  if (count <= 9) return "grid-cols-2 md:grid-cols-3 grid-rows-3";
+  if (count <= 16) return "grid-cols-2 md:grid-cols-3 lg:grid-cols-4 grid-rows-4";
+  return "grid-cols-2 md:grid-cols-3 lg:grid-cols-5";
 }
 
 export function ParticipantGrid({
@@ -56,7 +56,7 @@ export function ParticipantGrid({
           <div
             key={p.userId}
             className={`relative bg-slate-800 rounded-xl overflow-hidden flex items-center justify-center cursor-pointer ${
-              isSpeaking ? "ring-2 ring-green-500" : isPinned ? "ring-2 ring-blue-500" : ""
+              isSpeaking ? "ring-2 ring-green-500 col-span-full sm:col-span-1" : isPinned ? "ring-2 ring-blue-500 col-span-full sm:col-span-1" : ""
             }`}
             onClick={() => onPinParticipant?.(isPinned ? null : p.userId)}
           >

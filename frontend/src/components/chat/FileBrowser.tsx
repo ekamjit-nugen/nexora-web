@@ -74,7 +74,7 @@ export function FileBrowser({ conversationId, onClose }: FileBrowserProps) {
   useEffect(() => { fetchFiles(); }, [fetchFiles]);
 
   return (
-    <div className="flex flex-col h-full bg-white border-l border-slate-200 w-[360px] min-w-[320px]">
+    <div className="flex flex-col h-full bg-white border-l border-slate-200 w-full md:w-[360px] md:min-w-[320px]">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
         <h3 className="text-sm font-semibold text-slate-800">Shared Files</h3>

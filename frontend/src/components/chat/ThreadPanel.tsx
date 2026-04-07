@@ -59,7 +59,7 @@ export function ThreadPanel({ rootMessage, employeeMap, currentUserId, onClose, 
   const replyCount = (rootMessage as any).threadInfo?.replyCount || replies.length;
 
   return (
-    <div className="flex flex-col h-full bg-white border-l border-slate-200 w-[380px] min-w-[340px]">
+    <div className="flex flex-col h-full bg-white border-l border-slate-200 w-full md:w-[380px] md:min-w-[340px]">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
         <div>

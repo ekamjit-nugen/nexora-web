@@ -60,14 +60,14 @@ export function GifPicker({ onSelect }: GifPickerProps) {
 
   if (!TENOR_API_KEY) {
     return (
-      <div className="w-[340px] max-h-[400px] bg-white border border-[#E2E8F0] rounded-xl shadow-xl z-50 flex items-center justify-center p-8" aria-label="GIF picker">
+      <div className="w-full sm:w-[340px] max-h-[50vh] sm:max-h-[400px] bg-white border border-[#E2E8F0] rounded-t-xl sm:rounded-xl shadow-xl z-50 flex items-center justify-center p-8" aria-label="GIF picker">
         <p className="text-sm text-slate-400">GIF search unavailable</p>
       </div>
     );
   }
 
   return (
-    <div className="w-[340px] max-h-[400px] bg-white border border-[#E2E8F0] rounded-xl shadow-xl z-50 flex flex-col overflow-hidden" aria-label="GIF picker">
+    <div className="w-full sm:w-[340px] max-h-[50vh] sm:max-h-[400px] bg-white border border-[#E2E8F0] rounded-t-xl sm:rounded-xl shadow-xl z-50 flex flex-col overflow-hidden" aria-label="GIF picker">
       {/* Search input */}
       <div className="p-2.5 border-b border-[#E2E8F0] shrink-0" role="search">
         <input
