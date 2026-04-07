@@ -15,6 +15,7 @@ import { FlaggedMessageSchema } from '../moderation/schemas/flagged-message.sche
 import { ModerationService } from '../moderation/moderation.service';
 import { MentionsService } from '../mentions/mentions.service';
 import { ConversationsModule } from '../conversations/conversations.module';
+import { ComplianceModule } from '../compliance/compliance.module';
 
 @Module({
   imports: [
@@ -27,11 +28,16 @@ import { ConversationsModule } from '../conversations/conversations.module';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'nexora-secret-key-change-in-production',
-      }),
+      useFactory: (configService: ConfigService) => {
+        const secret = configService.get<string>('JWT_SECRET');
+        if (!secret) {
+          throw new Error('FATAL: JWT_SECRET environment variable is not set. Refusing to start without a JWT secret.');
+        }
+        return { secret };
+      },
     }),
     forwardRef(() => ConversationsModule),
+    ComplianceModule,
   ],
   controllers: [MessagesController],
   providers: [MessagesService, MessagesGateway, ModerationService, MentionsService, ForwardingService, CreateTaskService, LinkPreviewService],

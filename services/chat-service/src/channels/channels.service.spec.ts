@@ -48,7 +48,7 @@ describe('ChannelsService', () => {
       mockConversationModel.findOne.mockResolvedValue(mockChannel);
       mockConversationModel.findByIdAndUpdate.mockResolvedValue({ ...mockChannel, participants: [...mockChannel.participants, { userId: 'user1' }] });
 
-      const result = await service.joinChannel('ch1', 'user1');
+      const result = await service.joinChannel('ch1', 'user1', 'org1');
       expect(mockConversationModel.findByIdAndUpdate).toHaveBeenCalled();
     });
 
@@ -59,14 +59,14 @@ describe('ChannelsService', () => {
       };
       mockConversationModel.findOne.mockResolvedValue(mockChannel);
 
-      const result = await service.joinChannel('ch1', 'user1');
+      const result = await service.joinChannel('ch1', 'user1', 'org1');
       expect(result).toEqual(mockChannel);
       expect(mockConversationModel.findByIdAndUpdate).not.toHaveBeenCalled();
     });
 
     it('should throw if channel not found', async () => {
       mockConversationModel.findOne.mockResolvedValue(null);
-      await expect(service.joinChannel('ch1', 'user1')).rejects.toThrow(NotFoundException);
+      await expect(service.joinChannel('ch1', 'user1', 'org1')).rejects.toThrow(NotFoundException);
     });
   });
 

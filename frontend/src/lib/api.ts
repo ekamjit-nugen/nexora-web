@@ -45,6 +45,12 @@ async function request<T>(
     credentials: 'include', // Send httpOnly cookies automatically
   });
 
+  // Token rotation: if the server returns a refreshed token, update localStorage
+  const newAccessToken = res.headers.get('x-new-access-token');
+  if (newAccessToken && typeof window !== 'undefined') {
+    localStorage.setItem('accessToken', newAccessToken);
+  }
+
   const data = await res.json();
 
   if (!res.ok) {

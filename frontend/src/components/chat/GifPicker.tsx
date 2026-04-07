@@ -15,15 +15,16 @@ interface GifPickerProps {
   onSelect: (gifUrl: string) => void;
 }
 
-const TENOR_API_KEY = process.env.NEXT_PUBLIC_TENOR_API_KEY || "AIzaSyAyimkuYQYF_FXVALexPuGQctUWRURdCYQ";
+const TENOR_API_KEY = process.env.NEXT_PUBLIC_TENOR_API_KEY;
 
 export function GifPicker({ onSelect }: GifPickerProps) {
   const [query, setQuery] = useState("");
   const [gifs, setGifs] = useState<TenorGif[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!!TENOR_API_KEY);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchGifs = useCallback(async (searchQuery: string) => {
+    if (!TENOR_API_KEY) return;
     setLoading(true);
     try {
       const endpoint = searchQuery.trim()
@@ -56,6 +57,14 @@ export function GifPicker({ onSelect }: GifPickerProps) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [query, fetchGifs]);
+
+  if (!TENOR_API_KEY) {
+    return (
+      <div className="w-[340px] max-h-[400px] bg-white border border-[#E2E8F0] rounded-xl shadow-xl z-50 flex items-center justify-center p-8" aria-label="GIF picker">
+        <p className="text-sm text-slate-400">GIF search unavailable</p>
+      </div>
+    );
+  }
 
   return (
     <div className="w-[340px] max-h-[400px] bg-white border border-[#E2E8F0] rounded-xl shadow-xl z-50 flex flex-col overflow-hidden" aria-label="GIF picker">

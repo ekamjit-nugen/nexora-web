@@ -5,6 +5,12 @@ import { authApi, orgApi, User, Organization, OrgFeatures } from "./api";
 import { useRouter } from "next/navigation";
 import { resetTheme } from "./theme";
 
+// SECURITY NOTE: Tokens are stored in localStorage, which is vulnerable to XSS attacks.
+// TODO: Migrate to httpOnly cookie-based auth to eliminate XSS token theft risk.
+// localStorage is used as a fallback until the server fully supports httpOnly cookie auth.
+// Token rotation: on each API response, if a new token is returned via x-new-access-token
+// header, update the stored token to limit the window of token compromise.
+
 // Role hierarchy for comparison
 const ROLE_HIERARCHY = ['viewer', 'member', 'employee', 'designer', 'developer', 'manager', 'hr', 'admin', 'owner'];
 

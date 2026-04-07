@@ -67,12 +67,15 @@ export class WebhooksService {
     const webhook = await this.webhookModel.findOne({ webhookUrl: webhookId, type: 'incoming', isActive: true });
     if (!webhook) throw new NotFoundException('Webhook not found or inactive');
 
+    // Sanitize webhook message content — strip all HTML tags to prevent stored XSS
+    const sanitizedText = payload.text.replace(/<[^>]*>/g, '');
+
     const message = new this.messageModel({
       conversationId: webhook.conversationId,
       senderId: `webhook:${webhook._id}`,
       senderName: payload.username || webhook.name,
-      content: payload.text,
-      contentPlainText: payload.text,
+      content: sanitizedText,
+      contentPlainText: sanitizedText,
       type: 'text',
       webhookId: webhook._id.toString(),
       readBy: [],
@@ -83,7 +86,7 @@ export class WebhooksService {
     await this.conversationModel.findByIdAndUpdate(webhook.conversationId, {
       lastMessage: {
         _id: message._id.toString(),
-        content: payload.text.substring(0, 100),
+        content: sanitizedText.substring(0, 100),
         senderId: `webhook:${webhook._id}`,
         senderName: payload.username || webhook.name,
         type: 'text',
@@ -180,12 +183,13 @@ export class WebhooksService {
     return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
   }
 
-  async deleteWebhook(webhookId: string) {
-    await this.webhookModel.findByIdAndDelete(webhookId);
+  async deleteWebhook(webhookId: string, organizationId: string) {
+    const webhook = await this.webhookModel.findOneAndDelete({ _id: webhookId, organizationId });
+    if (!webhook) throw new NotFoundException('Webhook not found');
   }
 
-  async toggleWebhook(webhookId: string) {
-    const webhook = await this.webhookModel.findById(webhookId);
+  async toggleWebhook(webhookId: string, organizationId: string) {
+    const webhook = await this.webhookModel.findOne({ _id: webhookId, organizationId });
     if (!webhook) throw new NotFoundException('Webhook not found');
     webhook.isActive = !webhook.isActive;
     await webhook.save();

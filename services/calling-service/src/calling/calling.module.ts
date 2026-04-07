@@ -25,9 +25,13 @@ import { MeetingsModule } from '../meetings/meetings.module';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'nexora-secret-key-change-in-production',
-      }),
+      useFactory: (configService: ConfigService) => {
+        const secret = configService.get<string>('JWT_SECRET');
+        if (!secret) {
+          throw new Error('FATAL: JWT_SECRET environment variable is not set. Refusing to start calling-service without a JWT secret.');
+        }
+        return { secret };
+      },
     }),
   ],
   controllers: [CallingController, MeetingController],

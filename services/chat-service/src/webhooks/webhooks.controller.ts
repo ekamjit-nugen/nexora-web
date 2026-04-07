@@ -37,16 +37,16 @@ export class WebhooksController {
 
   @Delete('webhooks/:id')
   @Roles('admin', 'owner')
-  async deleteWebhook(@Param('id') id: string) {
-    await this.webhooksService.deleteWebhook(id);
+  async deleteWebhook(@Param('id') id: string, @Req() req) {
+    await this.webhooksService.deleteWebhook(id, req.user.organizationId);
     return { success: true, message: 'Webhook deleted' };
   }
 
   @Post('webhooks/:id/toggle')
   @Roles('admin', 'owner')
   @HttpCode(HttpStatus.OK)
-  async toggleWebhook(@Param('id') id: string) {
-    const webhook = await this.webhooksService.toggleWebhook(id);
+  async toggleWebhook(@Param('id') id: string, @Req() req) {
+    const webhook = await this.webhooksService.toggleWebhook(id, req.user.organizationId);
     return { success: true, data: webhook };
   }
 }
@@ -66,13 +66,14 @@ export class IncomingWebhookController {
     @Body() body: { text: string; username?: string; icon_url?: string },
     @Req() req: any,
   ) {
-    // Validate HMAC signature if provided
+    // HMAC signature verification is MANDATORY
     const signature = req.headers['x-nexora-signature'];
-    if (signature) {
-      const isValid = await this.webhooksService.verifyIncomingSignature(webhookId, JSON.stringify(body), signature);
-      if (!isValid) {
-        throw new HttpException('Invalid webhook signature', 401);
-      }
+    if (!signature) {
+      throw new HttpException('Missing required X-Nexora-Signature header', 401);
+    }
+    const isValid = await this.webhooksService.verifyIncomingSignature(webhookId, JSON.stringify(body), signature);
+    if (!isValid) {
+      throw new HttpException('Invalid webhook signature', 401);
     }
 
     const message = await this.webhooksService.processIncomingWebhook(webhookId, body);

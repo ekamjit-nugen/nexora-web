@@ -55,7 +55,8 @@ export class UploadController {
     @Body() body: { fileName: string; contentType: string },
     @Req() req: any,
   ) {
-    const organizationId = req.user?.organizationId || req.headers['x-organization-id'] || 'default';
+    const organizationId = req.user?.organizationId;
+    if (!organizationId) throw new BadRequestException('Organization context required');
     const result = await this.uploadService.getPresignedUploadUrl(
       organizationId, body.fileName, body.contentType,
     );

@@ -124,17 +124,22 @@ app.use('/api/v1/auth/verify-otp', authLimiter as any);
 app.use('/api/v1/auth/register', authLimiter as any);
 
 // Extract organizationId from JWT and forward as header to downstream services
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.warn('WARNING: JWT_SECRET is not set — skipping JWT verification middleware. x-organization-id header will not be forwarded.');
+}
 app.use((req, _res, next) => {
+  if (!JWT_SECRET) return next();
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
       const token = authHeader.slice(7);
-      const decoded = jwt.decode(token) as any;
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
       if (decoded?.organizationId) {
         req.headers['x-organization-id'] = decoded.organizationId;
       }
     } catch {
-      // Ignore decode errors — downstream service handles auth validation
+      // Verification failed — do NOT set x-organization-id; downstream service handles auth
     }
   }
   next();

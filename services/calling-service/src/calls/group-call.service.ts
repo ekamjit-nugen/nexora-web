@@ -13,7 +13,7 @@ export class GroupCallService {
   ) {}
 
   async initiateGroupCall(initiatorId: string, participantIds: string[], type: string, organizationId: string, initiatorName?: string) {
-    const callId = uuidv4().split('-')[0];
+    const callId = uuidv4();
     const allParticipantIds = Array.from(new Set([initiatorId, ...participantIds]));
 
     const call = new this.callModel({

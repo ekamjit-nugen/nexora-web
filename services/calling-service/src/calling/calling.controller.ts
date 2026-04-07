@@ -43,7 +43,7 @@ export class CallingController {
   @HttpCode(HttpStatus.CREATED)
   async initiateCall(@Body() dto: InitiateCallDto, @Req() req: any) {
     try {
-      const orgId = req.user?.organizationId || req.headers?.['x-organization-id'] || 'default-org';
+      const orgId = req.user.organizationId;
       const call = await this.callingService.initiateCall(req.user.sub || req.user.userId, orgId, dto);
       return { success: true, message: 'Call initiated', data: call };
     } catch (err) {
@@ -106,7 +106,7 @@ export class CallingController {
   async getCallHistory(@Query() query: CallHistoryQueryDto, @Req() req: any) {
     try {
       const userId = req.user.sub || req.user.userId;
-      const orgId = req.user?.organizationId || req.headers?.['x-organization-id'] || 'default-org';
+      const orgId = req.user.organizationId;
       const result = await this.callingService.getCallHistory(userId, orgId, query);
       return { success: true, message: 'Call history retrieved', data: result.calls, pagination: result.pagination };
     } catch (err) {
@@ -121,7 +121,7 @@ export class CallingController {
   async getMissedCalls(@Query('limit') limit: number = 10, @Req() req: any) {
     try {
       const userId = req.user.sub || req.user.userId;
-      const orgId = req.user?.organizationId || req.headers?.['x-organization-id'] || 'default-org';
+      const orgId = req.user.organizationId;
       const missedCalls = await this.callingService.getMissedCalls(userId, orgId, limit);
       return { success: true, message: 'Missed calls retrieved', data: missedCalls };
     } catch (err) {
@@ -136,7 +136,7 @@ export class CallingController {
   async getRecentCalls(@Req() req: any) {
     try {
       const userId = req.user.sub || req.user.userId;
-      const orgId = req.user?.organizationId || req.headers?.['x-organization-id'] || 'default-org';
+      const orgId = req.user.organizationId;
       const result = await this.callingService.getCallHistory(userId, orgId, { limit: 20, page: 1 });
       return { success: true, message: 'Recent calls retrieved', data: result.calls };
     } catch (err) {
@@ -152,7 +152,7 @@ export class CallingController {
   async getCallStats(@Req() req: any) {
     try {
       const userId = req.user.sub || req.user.userId;
-      const orgId = req.user?.organizationId || req.headers?.['x-organization-id'] || 'default-org';
+      const orgId = req.user.organizationId;
       const stats = await this.callingService.getCallStats(userId, orgId);
       return { success: true, message: 'Call stats retrieved', data: stats };
     } catch (err) {

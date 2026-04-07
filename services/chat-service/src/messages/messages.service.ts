@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { IMessage } from './schemas/message.schema';
@@ -7,6 +7,8 @@ import { IFlaggedMessage } from '../moderation/schemas/flagged-message.schema';
 import { ModerationService } from '../moderation/moderation.service';
 import { ConversationsService } from '../conversations/conversations.service';
 import { LinkPreviewService } from './link-preview.service';
+import { DlpService } from '../compliance/dlp.service';
+import { LegalHoldService } from '../compliance/legal-hold.service';
 import * as DOMPurify from 'isomorphic-dompurify';
 
 const ALLOWED_TAGS = ['b', 'i', 'u', 's', 'em', 'strong', 'a', 'p', 'br', 'ul', 'ol', 'li', 'code', 'pre', 'blockquote', 'h1', 'h2', 'h3', 'span'];
@@ -37,6 +39,8 @@ export class MessagesService {
     private moderationService: ModerationService,
     private conversationsService: ConversationsService,
     private linkPreviewService: LinkPreviewService,
+    private dlpService: DlpService,
+    private legalHoldService: LegalHoldService,
   ) {}
 
   async sendMessage(
@@ -58,7 +62,24 @@ export class MessagesService {
     }
 
     // Sanitize HTML to prevent stored XSS
-    const sanitizedContent = content ? this.sanitizeHtml(content) : '';
+    let sanitizedContent = content ? this.sanitizeHtml(content) : '';
+
+    // DLP enforcement: check content against org DLP rules BEFORE saving
+    const organizationId = (conversation as any).organizationId;
+    if (sanitizedContent && organizationId) {
+      const dlpResult = await this.dlpService.checkMessage(organizationId, sanitizedContent);
+      if (dlpResult.action === 'block') {
+        throw new BadRequestException('Message blocked by DLP policy');
+      }
+      if (dlpResult.action === 'redact' && dlpResult.redactedContent) {
+        sanitizedContent = dlpResult.redactedContent;
+      }
+      // 'flag' is handled after save (below with moderation)
+      // 'warn' is client-side only — save normally
+      var dlpFlagged = dlpResult.action === 'flag';
+      var dlpRuleName = dlpResult.rule;
+    }
+
     // Strip HTML tags for plain text search index
     const contentPlainText = sanitizedContent ? sanitizedContent.replace(/<[^>]*>/g, '').replace(/[*_~`#>\[\]()!|]/g, '').trim() : '';
 
@@ -105,6 +126,22 @@ export class MessagesService {
       });
     }
 
+    // DLP flag: if DLP action was 'flag', create a moderation flag entry
+    if (dlpFlagged) {
+      const flagged = new this.flaggedMessageModel({
+        messageId: message._id.toString(),
+        conversationId,
+        senderId,
+        senderName: senderName || `User ${senderId.toString().slice(-6)}`,
+        content,
+        reason: `DLP rule triggered: ${dlpRuleName}`,
+        severity: 'warning',
+      });
+      flagged.save().catch((err) => {
+        this.logger.error(`DLP flag save failed: ${err.message}`);
+      });
+    }
+
     // Link preview fetching (async, non-blocking)
     if (sanitizedContent && type === 'text') {
       this.linkPreviewService
@@ -123,14 +160,15 @@ export class MessagesService {
     });
     if (!conversation) throw new ForbiddenException('Not a participant');
 
-    const skip = (page - 1) * limit;
+    const safeLimit = Math.min(limit || 50, 200);
+    const skip = (page - 1) * safeLimit;
     const [data, total] = await Promise.all([
       this.messageModel.find({ conversationId, isDeleted: false, threadId: null })
-        .sort({ createdAt: 1 }).skip(skip).limit(limit),
+        .sort({ createdAt: 1 }).skip(skip).limit(safeLimit),
       this.messageModel.countDocuments({ conversationId, isDeleted: false, threadId: null }),
     ]);
 
-    return { data, pagination: { page, limit, total, pages: Math.ceil(total / limit) } };
+    return { data, pagination: { page, limit: safeLimit, total, pages: Math.ceil(total / safeLimit) } };
   }
 
   async editMessage(messageId: string, senderId: string, newContent: string) {
@@ -155,6 +193,16 @@ export class MessagesService {
     const message = await this.messageModel.findOne({ _id: messageId, isDeleted: false });
     if (!message) throw new NotFoundException('Message not found');
     if (message.senderId !== senderId) throw new ForbiddenException('Can only delete your own messages');
+
+    // Legal hold enforcement: prevent deletion of messages under legal hold
+    const conversation = await this.conversationModel.findById(message.conversationId);
+    const orgId = (conversation as any)?.organizationId;
+    if (orgId) {
+      const underHold = await this.legalHoldService.isUnderHold(orgId, message.conversationId, message.senderId);
+      if (underHold) {
+        throw new ForbiddenException('Message cannot be deleted — under legal hold');
+      }
+    }
 
     await this.messageModel.findByIdAndUpdate(messageId, {
       isDeleted: true, deletedAt: new Date(), deletedBy: senderId,

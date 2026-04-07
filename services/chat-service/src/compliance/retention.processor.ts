@@ -1,5 +1,8 @@
 import { Injectable, Logger, OnModuleInit, Inject } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import { RetentionService } from './retention.service';
+import { IRetentionPolicy } from './schemas/retention-policy.schema';
 
 /**
  * BullMQ processor for retention policy execution.
@@ -12,6 +15,7 @@ export class RetentionProcessor implements OnModuleInit {
   constructor(
     @Inject('BULLMQ_CONNECTION') private readonly connection: any,
     private readonly retentionService: RetentionService,
+    @InjectModel('RetentionPolicy') private readonly policyModel: Model<IRetentionPolicy>,
   ) {}
 
   async onModuleInit() {
@@ -21,11 +25,22 @@ export class RetentionProcessor implements OnModuleInit {
       const { Queue, Worker } = await (Function('return import("bullmq")')());
 
       const queue = new Queue('retention-cleanup', { connection: this.connection });
-      new Worker('retention-cleanup', async (job) => {
-        const orgId = job.data.organizationId;
-        if (orgId) {
-          const result = await this.retentionService.executeRetention(orgId);
-          this.logger.log(`Retention cleanup for org ${orgId}: ${result.deleted} messages deleted`);
+      new Worker('retention-cleanup', async () => {
+        // Fetch all distinct organizations that have active retention policies
+        const orgIds: string[] = await this.policyModel.distinct('organizationId', { isActive: true });
+
+        if (orgIds.length === 0) {
+          this.logger.log('Retention cleanup: no organizations with active policies, skipping');
+          return;
+        }
+
+        for (const orgId of orgIds) {
+          try {
+            const result = await this.retentionService.executeRetention(orgId);
+            this.logger.log(`Retention cleanup for org ${orgId}: ${result.deleted} messages deleted`);
+          } catch (err) {
+            this.logger.error(`Retention cleanup failed for org ${orgId}: ${err.message}`);
+          }
         }
       }, {
         connection: this.connection,

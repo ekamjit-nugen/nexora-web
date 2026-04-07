@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import * as DOMPurify from 'isomorphic-dompurify';
 import { IMessage } from '../messages/schemas/message.schema';
 import { IConversation } from '../conversations/schemas/conversation.schema';
 
@@ -22,13 +23,17 @@ export class ScheduledMessagesService {
     });
     if (!conversation) throw new ForbiddenException('Not a participant');
 
-    const contentPlainText = content ? content.replace(/[*_~`#>\[\]()!|]/g, '').trim() : '';
+    const sanitizedContent = content ? DOMPurify.sanitize(content, {
+      ALLOWED_TAGS: ['b', 'i', 'u', 's', 'em', 'strong', 'a', 'code', 'pre', 'br', 'p', 'ul', 'ol', 'li', 'blockquote'],
+      ALLOWED_ATTR: ['href', 'target', 'rel'],
+    }) : '';
+    const contentPlainText = sanitizedContent ? sanitizedContent.replace(/<[^>]*>/g, '').replace(/[*_~`#>\[\]()!|]/g, '').trim() : '';
 
     const message = new this.messageModel({
       conversationId,
       senderId,
       senderName: senderName || null,
-      content,
+      content: sanitizedContent,
       contentPlainText,
       type: 'text',
       isScheduled: true,

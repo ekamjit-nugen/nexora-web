@@ -59,9 +59,13 @@ import { HealthModule } from './health/health.module';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'nexora-secret-key-change-in-production',
-      }),
+      useFactory: (configService: ConfigService) => {
+        const secret = configService.get<string>('JWT_SECRET');
+        if (!secret) {
+          throw new Error('FATAL: JWT_SECRET environment variable is not set. Refusing to start chat-service without a JWT secret.');
+        }
+        return { secret };
+      },
     }),
 
     // Infrastructure

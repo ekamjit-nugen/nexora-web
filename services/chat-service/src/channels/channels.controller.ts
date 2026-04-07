@@ -29,7 +29,7 @@ export class ChannelsController {
   @Post(':id/join')
   @HttpCode(HttpStatus.OK)
   async joinChannel(@Param('id') id: string, @Req() req) {
-    const channel = await this.channelsService.joinChannel(id, req.user.userId);
+    const channel = await this.channelsService.joinChannel(id, req.user.userId, req.user.organizationId);
     return { success: true, message: 'Joined channel', data: channel };
   }
 

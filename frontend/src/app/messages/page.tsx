@@ -966,7 +966,7 @@ export default function MessagesPage() {
           const start = ta.selectionStart ?? ta.value.length;
           const end = ta.selectionEnd ?? ta.value.length;
           const newValue = ta.value.slice(0, start) + textContent + ta.value.slice(end);
-          setNewMessage(newValue);
+          setInput(newValue);
         }
         return; // Only handle first image
       }

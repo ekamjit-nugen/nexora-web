@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import * as DOMPurify from 'isomorphic-dompurify';
 import { IMessage } from '../messages/schemas/message.schema';
 import { IConversation } from '../conversations/schemas/conversation.schema';
 
@@ -13,6 +14,14 @@ export class ThreadsService {
     @InjectModel('Conversation') private conversationModel: Model<IConversation>,
   ) {}
 
+  private sanitizeHtml(html: string): string {
+    if (!html) return '';
+    return DOMPurify.sanitize(html, {
+      ALLOWED_TAGS: ['b', 'i', 'u', 's', 'em', 'strong', 'a', 'code', 'pre', 'br', 'p', 'ul', 'ol', 'li', 'blockquote'],
+      ALLOWED_ATTR: ['href', 'target', 'rel'],
+    });
+  }
+
   async replyToThread(rootMessageId: string, senderId: string, content: string, senderName?: string) {
     const rootMessage = await this.messageModel.findById(rootMessageId);
     if (!rootMessage) throw new NotFoundException('Root message not found');
@@ -22,14 +31,15 @@ export class ThreadsService {
     });
     if (!conversation) throw new ForbiddenException('Not a participant');
 
-    const contentPlainText = content ? content.replace(/[*_~`#>\[\]()!|]/g, '').trim() : '';
+    const sanitizedContent = this.sanitizeHtml(content);
+    const contentPlainText = sanitizedContent ? sanitizedContent.replace(/<[^>]*>/g, '').replace(/[*_~`#>\[\]()!|]/g, '').trim() : '';
 
     const reply = new this.messageModel({
       conversationId: rootMessage.conversationId,
       threadId: rootMessageId,
       senderId,
       senderName: senderName || null,
-      content,
+      content: sanitizedContent,
       contentPlainText,
       type: 'text',
       readBy: [{ userId: senderId, readAt: new Date() }],

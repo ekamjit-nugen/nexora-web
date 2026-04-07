@@ -6,6 +6,7 @@ import { DlpService } from './dlp.service';
 import { EDiscoveryService } from './ediscovery.service';
 import { LegalHoldService } from './legal-hold.service';
 import { GuestAccessService } from './guest-access.service';
+import { CreateDlpRuleDto, CreateRetentionPolicyDto, CreateLegalHoldDto } from './dto/compliance.dto';
 
 @Controller('chat/compliance')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -30,7 +31,7 @@ export class ComplianceController {
   @Post('retention')
   @Roles('admin', 'owner')
   @HttpCode(HttpStatus.CREATED)
-  async createRetentionPolicy(@Body() body: any, @Req() req) {
+  async createRetentionPolicy(@Body() body: CreateRetentionPolicyDto, @Req() req) {
     const policy = await this.retentionService.createPolicy(req.user.organizationId || 'default', body, req.user.userId);
     return { success: true, message: 'Retention policy created', data: policy };
   }
@@ -69,7 +70,7 @@ export class ComplianceController {
   @Post('dlp')
   @Roles('admin', 'owner')
   @HttpCode(HttpStatus.CREATED)
-  async createDlpRule(@Body() body: any, @Req() req) {
+  async createDlpRule(@Body() body: CreateDlpRuleDto, @Req() req) {
     const rule = await this.dlpService.createRule(req.user.organizationId || 'default', body, req.user.userId);
     return { success: true, message: 'DLP rule created', data: rule };
   }
@@ -133,7 +134,7 @@ export class ComplianceController {
   @Post('legal-holds')
   @Roles('owner')
   @HttpCode(HttpStatus.CREATED)
-  async createLegalHold(@Body() body: any, @Req() req) {
+  async createLegalHold(@Body() body: CreateLegalHoldDto, @Req() req) {
     const hold = await this.legalHoldService.createHold(req.user.organizationId || 'default', body, req.user.userId);
     return { success: true, message: 'Legal hold created', data: hold };
   }

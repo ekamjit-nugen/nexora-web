@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import DOMPurify from "isomorphic-dompurify";
 import { chatApi } from "@/lib/api";
 import { MessageContent } from "./MessageContent";
 
@@ -143,7 +144,7 @@ export function GlobalSearch({ onClose, onNavigate }: GlobalSearchProps) {
                   </div>
                   <div className="text-sm text-slate-700 line-clamp-2">
                     {r.highlights?.[0] ? (
-                      <span dangerouslySetInnerHTML={{ __html: r.highlights[0].replace(/\*\*([^*]+)\*\*/g, '<mark class="bg-yellow-200 rounded px-0.5">$1</mark>') }} />
+                      <span dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(r.highlights[0].replace(/\*\*([^*]+)\*\*/g, '<mark class="bg-yellow-200 rounded px-0.5">$1</mark>')) }} />
                     ) : (
                       <MessageContent content={r.message.content} className="text-sm" />
                     )}

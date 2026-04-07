@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsNumber, Min } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsNumber, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class SendMessageDto {
@@ -35,6 +35,7 @@ export class MessageQueryDto {
   @Type(() => Number)
   @IsNumber()
   @Min(1)
+  @Max(200)
   limit?: number;
 }
 

@@ -24,8 +24,8 @@ export class ModerationController {
 
   @Get('flagged')
   @Roles('admin', 'owner')
-  async getFlaggedMessages() {
-    const flagged = await this.flaggedMessageModel.find().sort({ createdAt: -1 }).lean();
+  async getFlaggedMessages(@Req() req) {
+    const flagged = await this.flaggedMessageModel.find({ organizationId: req.user.organizationId }).sort({ createdAt: -1 }).lean();
     return { success: true, message: 'Flagged messages retrieved', data: flagged };
   }
 

@@ -1,5 +1,7 @@
 "use client";
 
+import DOMPurify from "isomorphic-dompurify";
+
 /**
  * Renders rich message content (HTML from TipTap or plain text).
  * Handles markdown-like formatting, @mentions highlighting, and code blocks.
@@ -34,7 +36,7 @@ export function MessageContent({ content, isHtml, className = "" }: MessageConte
           prose-blockquote:border-l-blue-400 prose-blockquote:bg-blue-50 prose-blockquote:my-1 prose-blockquote:py-1
           prose-a:text-blue-500
           ${className}`}
-        dangerouslySetInnerHTML={{ __html: highlighted }}
+        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(highlighted) }}
       />
     );
   }

@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { randomUUID } from 'crypto';
 import { ICall } from './schemas/call.schema';
 import { InitiateCallDto, AnswerCallDto, RejectCallDto, EndCallDto, CallHistoryQueryDto, CallType } from './dto/index';
 
@@ -13,7 +14,7 @@ export class CallingService {
   ) {}
 
   async initiateCall(userId: string, organizationId: string, dto: InitiateCallDto) {
-    const callId = `nxr-call-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const callId = `nxr-call-${randomUUID()}`;
 
     const call = await this.callModel.create({
       organizationId,

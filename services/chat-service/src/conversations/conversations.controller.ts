@@ -49,6 +49,12 @@ export class ConversationsController {
     return { success: true, message: 'Conversations retrieved', data: conversations };
   }
 
+  @Get('conversations/self')
+  async getSelfConversation(@Req() req) {
+    const conversation = await this.conversationsService.getOrCreateSelfConversation(req.user.userId, req.user.organizationId || 'default');
+    return { success: true, message: 'Self conversation retrieved', data: conversation };
+  }
+
   @Get('conversations/:id')
   async getConversation(@Param('id') id: string, @Req() req) {
     const conversation = await this.conversationsService.getConversation(id, req.user.userId);
@@ -85,12 +91,6 @@ export class ConversationsController {
   async muteConversation(@Param('id') id: string, @Req() req) {
     const result = await this.conversationsService.muteConversation(id, req.user.userId);
     return { success: true, message: 'Mute toggled', data: result };
-  }
-
-  @Get('conversations/self')
-  async getSelfConversation(@Req() req) {
-    const conversation = await this.conversationsService.getOrCreateSelfConversation(req.user.userId, req.user.organizationId || 'default');
-    return { success: true, message: 'Self conversation retrieved', data: conversation };
   }
 
   @Put('conversations/:id/unarchive')
@@ -133,6 +133,7 @@ export class ConversationsController {
   // Called by auth-service (via Redis event) when an invited user accepts their invite
   // Activates their memberStatus in all conversations they were pre-added to
   @Post('conversations/activate-user')
+  @Roles('admin', 'owner')
   @HttpCode(HttpStatus.OK)
   async activateUser(@Body() body: { userId: string }) {
     const count = await this.conversationsService.activateInvitedUser(body.userId);

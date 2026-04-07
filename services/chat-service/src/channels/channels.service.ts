@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { IConversation } from '../conversations/schemas/conversation.schema';
@@ -22,11 +22,15 @@ export class ChannelsService {
     }).sort({ name: 1 }).lean();
   }
 
-  async joinChannel(channelId: string, userId: string) {
+  async joinChannel(channelId: string, userId: string, userOrganizationId: string) {
     const channel = await this.conversationModel.findOne({
       _id: channelId, type: 'channel', channelType: 'public', isDeleted: false,
     });
     if (!channel) throw new NotFoundException('Public channel not found');
+
+    if (channel.organizationId && channel.organizationId !== userOrganizationId) {
+      throw new ForbiddenException('Cannot join a channel from a different organization');
+    }
 
     const isAlready = channel.participants.some(p => p.userId === userId);
     if (isAlready) return channel;

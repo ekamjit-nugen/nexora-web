@@ -12,6 +12,7 @@ import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { MeetingService } from './meeting.service';
+import { isHost, isCoHost } from '../meetings/meeting-permissions';
 
 interface MeetingParticipantInfo {
   userId?: string;
@@ -77,11 +78,15 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
         this.logger.log(`Authenticated user connected: ${userId}`);
         return;
       } catch {
-        // Token invalid — treat as anonymous if displayName provided later
+        // Token was provided but is invalid/expired — reject the connection
+        this.logger.warn('Connection rejected: invalid or expired token');
+        client.emit('meeting:error', { message: 'Invalid or expired authentication token' });
+        client.disconnect();
+        return;
       }
     }
 
-    // Anonymous connection — displayName will come with meeting:join
+    // No token provided at all — allow anonymous connection (displayName will come with meeting:join)
     this.socketParticipants.set(client.id, { displayName: 'Guest', isAnonymous: true, socketId: client.id });
     client.emit('meeting:connected', { anonymous: true });
   }
@@ -115,6 +120,33 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     }
 
     this.socketParticipants.delete(client.id);
+  }
+
+  /**
+   * Check if the socket user is host or co-host of the meeting.
+   * Returns the meeting if authorized, null otherwise (emits error to client).
+   */
+  private async requireHostOrCoHost(client: Socket, meetingId: string): Promise<any | null> {
+    const info = this.socketParticipants.get(client.id);
+    if (!info?.userId) {
+      client.emit('error', { message: 'Authentication required for this action' });
+      return null;
+    }
+    try {
+      const meeting = await this.meetingService.getMeeting(meetingId);
+      if (!meeting) {
+        client.emit('error', { message: 'Meeting not found' });
+        return null;
+      }
+      if (!isHost(meeting, info.userId) && !isCoHost(meeting, info.userId)) {
+        client.emit('error', { message: 'Only the host or co-host can perform this action' });
+        return null;
+      }
+      return meeting;
+    } catch {
+      client.emit('error', { message: 'Meeting not found' });
+      return null;
+    }
   }
 
   // ── Join / Leave ──
@@ -253,8 +285,16 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     @MessageBody() data: { meetingId: string; text: string; speakerName: string },
   ) {
     const info = this.socketParticipants.get(client.id);
-    const speakerId = info?.userId || client.id;
-    const speakerName = data.speakerName || info?.displayName || 'Unknown';
+    if (!info) return;
+
+    // Validate transcript text length
+    if (!data.text || data.text.length > 5000) {
+      client.emit('error', { message: 'Transcript text must be between 1 and 5000 characters' });
+      return;
+    }
+
+    const speakerId = info.userId || client.id;
+    const speakerName = data.speakerName || info.displayName || 'Unknown';
 
     await this.meetingService.addTranscript(data.meetingId, speakerId, {
       text: data.text,
@@ -346,14 +386,16 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
 
   @SubscribeMessage('meeting:lobby-admit')
   async handleLobbyAdmit(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string; userId: string }) {
-    const info = this.socketParticipants.get(client.id);
-    if (!info || !client.rooms.has(`meeting:${data.meetingId}`)) return;
+    const meeting = await this.requireHostOrCoHost(client, data.meetingId);
+    if (!meeting) return;
     this.notifyUser(data.userId, 'meeting:lobby-admitted', { meetingId: data.meetingId });
     this.server.to(`meeting:${data.meetingId}`).emit('meeting:lobby-updated', { action: 'admitted', userId: data.userId });
   }
 
   @SubscribeMessage('meeting:lobby-admit-all')
   async handleLobbyAdmitAll(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string; userIds: string[] }) {
+    const meeting = await this.requireHostOrCoHost(client, data.meetingId);
+    if (!meeting) return;
     for (const userId of data.userIds || []) {
       this.notifyUser(userId, 'meeting:lobby-admitted', { meetingId: data.meetingId });
     }
@@ -362,6 +404,8 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
 
   @SubscribeMessage('meeting:lobby-deny')
   async handleLobbyDeny(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string; userId: string }) {
+    const meeting = await this.requireHostOrCoHost(client, data.meetingId);
+    if (!meeting) return;
     this.notifyUser(data.userId, 'meeting:lobby-denied', { meetingId: data.meetingId });
     this.server.to(`meeting:${data.meetingId}`).emit('meeting:lobby-updated', { action: 'denied', userId: data.userId });
   }
@@ -388,7 +432,8 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
 
   @SubscribeMessage('meeting:hand-lower-all')
   async handleHandLowerAll(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string }) {
-    if (!client.rooms.has(`meeting:${data.meetingId}`)) return;
+    const meeting = await this.requireHostOrCoHost(client, data.meetingId);
+    if (!meeting) return;
     this.server.to(`meeting:${data.meetingId}`).emit('meeting:hands-lowered', {});
   }
 
@@ -396,6 +441,13 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
   async handleReaction(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string; emoji: string }) {
     const info = this.socketParticipants.get(client.id);
     if (!info) return;
+
+    // Validate emoji: must be non-empty and max 10 characters
+    if (!data.emoji || data.emoji.length > 10) {
+      client.emit('error', { message: 'Invalid emoji: must be 1-10 characters' });
+      return;
+    }
+
     // Ephemeral — auto-dismiss on client after 5s
     this.server.to(`meeting:${data.meetingId}`).emit('meeting:reaction:broadcast', {
       userId: info.userId, displayName: info.displayName, emoji: data.emoji,
@@ -406,21 +458,29 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
 
   @SubscribeMessage('meeting:breakout-open')
   async handleBreakoutOpen(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string }) {
+    const meeting = await this.requireHostOrCoHost(client, data.meetingId);
+    if (!meeting) return;
     this.server.to(`meeting:${data.meetingId}`).emit('meeting:breakout-opened', {});
   }
 
   @SubscribeMessage('meeting:breakout-close')
   async handleBreakoutClose(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string }) {
+    const meeting = await this.requireHostOrCoHost(client, data.meetingId);
+    if (!meeting) return;
     this.server.to(`meeting:${data.meetingId}`).emit('meeting:breakout-closed', {});
   }
 
   @SubscribeMessage('meeting:breakout-move')
   async handleBreakoutMove(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string; userId: string; roomId: string }) {
+    const meeting = await this.requireHostOrCoHost(client, data.meetingId);
+    if (!meeting) return;
     this.notifyUser(data.userId, 'meeting:breakout-assigned', { meetingId: data.meetingId, roomId: data.roomId });
   }
 
   @SubscribeMessage('meeting:breakout-broadcast')
   async handleBreakoutBroadcast(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string; message: string }) {
+    const meeting = await this.requireHostOrCoHost(client, data.meetingId);
+    if (!meeting) return;
     this.server.to(`meeting:${data.meetingId}`).emit('meeting:breakout-broadcast', { message: data.message });
   }
 
@@ -428,6 +488,8 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
 
   @SubscribeMessage('meeting:mute-participant')
   async handleMuteParticipant(@ConnectedSocket() client: Socket, @MessageBody() data: { meetingId: string; userId: string }) {
+    const meeting = await this.requireHostOrCoHost(client, data.meetingId);
+    if (!meeting) return;
     this.notifyUser(data.userId, 'meeting:muted-by-host', { meetingId: data.meetingId });
   }
 

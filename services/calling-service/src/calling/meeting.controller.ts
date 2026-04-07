@@ -46,7 +46,7 @@ export class MeetingController {
   async scheduleMeeting(@Body() dto: ScheduleMeetingDto, @Req() req: any) {
     try {
       const userId = req.user.sub || req.user.userId;
-      const organizationId = req.user.organizationId || req.headers['x-organization-id'] || 'default-org';
+      const organizationId = req.user.organizationId;
       const hostName = [req.user.firstName, req.user.lastName].filter(Boolean).join(' ') || req.user.email || userId;
       const meeting = await this.meetingService.scheduleMeeting(userId, hostName, organizationId, dto);
       return { success: true, message: 'Meeting scheduled', data: meeting };
@@ -61,7 +61,7 @@ export class MeetingController {
   async listMeetings(@Query() query: MeetingQueryDto, @Req() req: any) {
     try {
       const userId = req.user.sub || req.user.userId;
-      const organizationId = req.user.organizationId || req.headers['x-organization-id'] || 'default-org';
+      const organizationId = req.user.organizationId;
       const result = await this.meetingService.listMeetings(userId, organizationId, query);
       return { success: true, message: 'Meetings retrieved', data: result.meetings, pagination: result.pagination };
     } catch (err) {

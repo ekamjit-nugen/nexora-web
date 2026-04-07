@@ -39,11 +39,12 @@ export class EDiscoveryService {
     const orgConvoIds = orgConvos.map(c => c._id.toString());
     filter.conversationId = { $in: orgConvoIds };
 
-    // Text search
+    // Text search (escape regex metacharacters to prevent ReDoS)
     if (query.q) {
+      const escapedQuery = query.q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       filter.$or = [
-        { content: { $regex: query.q, $options: 'i' } },
-        { contentPlainText: { $regex: query.q, $options: 'i' } },
+        { content: { $regex: escapedQuery, $options: 'i' } },
+        { contentPlainText: { $regex: escapedQuery, $options: 'i' } },
       ];
     }
 
@@ -77,10 +78,13 @@ export class EDiscoveryService {
     const convoMap = new Map(orgConvos.map(c => [c._id.toString(), c]));
     filter.conversationId = { $in: orgConvoIds };
 
-    if (query.q) filter.$or = [
-      { content: { $regex: query.q, $options: 'i' } },
-      { contentPlainText: { $regex: query.q, $options: 'i' } },
-    ];
+    if (query.q) {
+      const escapedQuery = query.q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.$or = [
+        { content: { $regex: escapedQuery, $options: 'i' } },
+        { contentPlainText: { $regex: escapedQuery, $options: 'i' } },
+      ];
+    }
     if (query.from) filter.senderId = query.from;
     if (query.conversationId) filter.conversationId = query.conversationId;
     if (query.before) filter.createdAt = { ...filter.createdAt, $lt: new Date(query.before) };

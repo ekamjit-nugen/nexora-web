@@ -4,6 +4,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { SfuService } from './sfu.service';
 
 /**
@@ -38,7 +39,10 @@ export class SfuGateway {
   // Map socketId -> { userId, roomId }
   private socketMap = new Map<string, { userId: string; roomId: string }>();
 
-  constructor(private sfuService: SfuService) {}
+  constructor(
+    private sfuService: SfuService,
+    private jwtService: JwtService,
+  ) {}
 
   /**
    * Join an SFU room. Returns:
@@ -55,13 +59,7 @@ export class SfuGateway {
     const token = client.handshake.auth?.token || client.handshake.query?.token as string;
     let userId: string;
     try {
-      const jwt = require('jsonwebtoken');
-      const secret = process.env.JWT_SECRET;
-      if (!secret) {
-        client.emit('sfu:error', { message: 'Server misconfigured: JWT_SECRET not set' });
-        return;
-      }
-      const payload = jwt.verify(token, secret);
+      const payload = this.jwtService.verify(token);
       userId = payload.sub;
     } catch {
       client.emit('sfu:error', { message: 'Authentication required' });
