@@ -5,12 +5,18 @@ import { chatApi } from "@/lib/api";
 import type { Conversation } from "@/lib/api";
 import { toast } from "sonner";
 
+interface EmployeeEntry {
+  firstName?: string;
+  lastName?: string;
+}
+
 interface ForwardModalProps {
   messageId: string;
   onClose: () => void;
+  employeeMap?: Record<string, EmployeeEntry>;
 }
 
-export function ForwardModal({ messageId, onClose }: ForwardModalProps) {
+export function ForwardModal({ messageId, onClose, employeeMap }: ForwardModalProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -66,7 +72,12 @@ export function ForwardModal({ messageId, onClose }: ForwardModalProps) {
     if (c.name) return c.name;
     if (c.type === "direct") {
       const other = c.participants?.find((p: { userId?: string }) => p.userId !== undefined);
-      return other?.userId ? `User ${other.userId.toString().slice(-6)}` : "Direct Message";
+      if (other?.userId) {
+        const emp = employeeMap?.[other.userId];
+        if (emp?.firstName) return `${emp.firstName}${emp.lastName ? ` ${emp.lastName}` : ""}`;
+        return `User ${other.userId.toString().slice(-6)}`;
+      }
+      return "Direct Message";
     }
     return c.type === "channel" ? "Channel" : "Group";
   };

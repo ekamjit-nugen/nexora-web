@@ -57,8 +57,25 @@ export class MessagesService {
 
     const conversation = await this.conversationModel.findOne({ _id: conversationId, isDeleted: false });
     if (!conversation) throw new NotFoundException('Conversation not found');
+
+    // UC-007: Reject messages to archived conversations
+    if (conversation.isArchived) {
+      throw new BadRequestException('Cannot send messages to archived conversation');
+    }
+
     if (!conversation.participants.some((p) => p.userId === senderId)) {
       throw new ForbiddenException('You are not a participant of this conversation');
+    }
+
+    // UC-005: Enforce whoCanPost restriction on channels
+    if (
+      conversation.type === 'channel' &&
+      conversation.settings?.whoCanPost === 'admins'
+    ) {
+      const senderParticipant = conversation.participants.find((p) => p.userId === senderId);
+      if (senderParticipant?.role !== 'admin' && senderParticipant?.role !== 'owner') {
+        throw new ForbiddenException('Only admins can post in this channel');
+      }
     }
 
     // Sanitize HTML to prevent stored XSS
@@ -83,6 +100,11 @@ export class MessagesService {
     // Strip HTML tags for plain text search index
     const contentPlainText = sanitizedContent ? sanitizedContent.replace(/<[^>]*>/g, '').replace(/[*_~`#>\[\]()!|]/g, '').trim() : '';
 
+    // UC-008: Reject whitespace-only text messages
+    if (contentPlainText.trim().length === 0 && type === 'text') {
+      throw new BadRequestException('Message cannot be empty');
+    }
+
     const message = new this.messageModel({
       conversationId,
       senderId,
@@ -106,8 +128,9 @@ export class MessagesService {
     await this.conversationsService.updateLastMessage(conversationId, message);
 
     // Content moderation (async, non-blocking)
-    if (content) {
-      this.moderationService.checkMessage(content, senderId).then(async (result) => {
+    // L-002: Run moderation on sanitized plain text, not raw HTML content
+    if (contentPlainText) {
+      this.moderationService.checkMessage(contentPlainText, senderId).then(async (result) => {
         if (result.flagged) {
           const flagged = new this.flaggedMessageModel({
             messageId: message._id.toString(),

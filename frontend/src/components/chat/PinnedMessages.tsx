@@ -3,15 +3,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { chatApi, type ChatMessage } from "@/lib/api";
 import { MessageContent } from "./MessageContent";
+import { formatTime } from "@/lib/utils";
 
 interface PinnedMessagesProps {
   conversationId: string;
   onClose: () => void;
   onUnpin?: () => void;
-}
-
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 export function PinnedMessages({ conversationId, onClose, onUnpin }: PinnedMessagesProps) {
@@ -68,7 +65,7 @@ export function PinnedMessages({ conversationId, onClose, onUnpin }: PinnedMessa
                   <span className="text-xs text-slate-500">{formatTime(msg.createdAt)}</span>
                   <button
                     onClick={() => handleUnpin(msg._id)}
-                    className="opacity-0 group-hover:opacity-100 text-[10px] text-red-400 hover:text-red-600"
+                    className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-[10px] text-red-400 hover:text-red-600"
                   >
                     Unpin
                   </button>

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { PresenceIndicator } from "./PresenceIndicator";
+import { getInitials } from "@/lib/utils";
 
 interface UserInfo {
   _id: string;
@@ -14,19 +15,28 @@ interface UserInfo {
   timezone?: string;
 }
 
+interface EmployeeEntry {
+  firstName?: string;
+  lastName?: string;
+  profilePicture?: string;
+  department?: string;
+  designation?: string;
+  email?: string;
+  avatar?: string;
+  jobTitle?: string;
+  timezone?: string;
+  location?: string;
+}
+
 interface UserProfileCardProps {
   userId: string;
   presenceStatus?: string;
   customStatusText?: string;
-  employeeMap: Record<string, any>;
+  employeeMap: Record<string, EmployeeEntry>;
   anchorEl: HTMLElement | null;
   onClose: () => void;
   onMessage: (userId: string) => void;
   onCall: (userId: string) => void;
-}
-
-function getInitials(firstName?: string, lastName?: string): string {
-  return `${(firstName || "")[0] || ""}${(lastName || "")[0] || ""}`.toUpperCase();
 }
 
 function getLocalTime(timezone?: string): string {

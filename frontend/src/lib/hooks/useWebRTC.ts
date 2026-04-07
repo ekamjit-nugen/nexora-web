@@ -147,7 +147,9 @@ export function useWebRTC(): UseWebRTCReturn {
       });
 
       localStreamRef.current = stream;
-      allLocalStreamsRef.current.push(stream);
+      // Stop tracks on any previous streams before accumulating
+      allLocalStreamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+      allLocalStreamsRef.current = [stream];
       setLocalStream(stream);
 
       const pc = new RTCPeerConnection({
@@ -450,6 +452,10 @@ export function useWebRTC(): UseWebRTCReturn {
         const camTrack = camStream.getVideoTracks()[0];
         if (!camTrack) return;
 
+        // Stop the previous camera track before replacing
+        if (cameraVideoTrackRef.current) {
+          cameraVideoTrackRef.current.stop();
+        }
         cameraVideoTrackRef.current = camTrack;
         allLocalStreamsRef.current.push(camStream);
 

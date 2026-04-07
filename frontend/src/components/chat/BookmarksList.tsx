@@ -84,7 +84,7 @@ export function BookmarksList({ onClose, onNavigate }: BookmarksListProps) {
                   </div>
                   <button
                     onClick={() => handleRemove(bm._id)}
-                    className="opacity-0 group-hover:opacity-100 text-[10px] text-red-400 hover:text-red-600"
+                    className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-[10px] text-red-400 hover:text-red-600"
                   >
                     Remove
                   </button>

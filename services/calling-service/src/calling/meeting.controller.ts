@@ -164,6 +164,9 @@ export class MeetingController {
         endedAt: meeting.endedAt,
       });
 
+      // Clean up captions state for this meeting to prevent memory leak
+      this.captionsService.cleanupMeeting(meetingId);
+
       return { success: true, message: 'Meeting ended', data: meeting };
     } catch (err) {
       throw new BadRequestException(err.message);
@@ -314,7 +317,7 @@ export class MeetingController {
       `SUMMARY:${meeting.title}`,
       meeting.description ? `DESCRIPTION:${meeting.description.replace(/\n/g, '\\n')}` : '',
       `UID:${meeting.meetingId}@nexora.io`,
-      `ORGANIZER:${meeting.hostName || 'Host'}`,
+      `ORGANIZER;CN=${meeting.hostName || 'Host'}:MAILTO:noreply@nexora.app`,
       'END:VEVENT',
       'END:VCALENDAR',
     ].filter(Boolean).join('\r\n');

@@ -21,7 +21,7 @@ export class ConversationsController {
   @Roles('member', 'manager', 'admin', 'owner')
   @HttpCode(HttpStatus.CREATED)
   async createDirectConversation(@Body() dto: CreateDirectConversationDto, @Req() req) {
-    const conversation = await this.conversationsService.createDirectConversation(req.user.userId, dto.targetUserId);
+    const conversation = await this.conversationsService.createDirectConversation(req.user.userId, dto.targetUserId, req.user.organizationId);
     return { success: true, message: 'Direct conversation created', data: conversation };
   }
 

@@ -1,9 +1,10 @@
-import { IsString, IsOptional, IsEnum, IsNumber, Min, Max } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsNumber, Min, Max, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class SendMessageDto {
   @IsOptional()
   @IsString()
+  @MaxLength(40000)
   content?: string;
 
   @IsOptional()

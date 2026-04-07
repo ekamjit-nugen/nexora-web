@@ -63,6 +63,10 @@ app.use(compression({
 }) as any);
 // CORS — restrict to allowed origins
 // Uses writeHead override to ensure CORS headers survive proxy responses
+// GW-008: Warn if CORS_ORIGINS is not explicitly set in production
+if (process.env.NODE_ENV === 'production' && !process.env.CORS_ORIGINS) {
+  console.warn('WARNING: CORS_ORIGINS not set in production — defaulting to localhost origins. This should be configured for production deployments.');
+}
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3100,http://localhost:3005')
   .split(',').map(o => o.trim());
 app.use((req: any, res: any, next: any) => {
@@ -78,7 +82,8 @@ app.use((req: any, res: any, next: any) => {
     }
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, X-Organization-Id, X-XSRF-TOKEN, X-Internal-Service-Key, X-Nexora-Signature, X-Nexora-Event');
+    // GW-002: Removed X-Internal-Service-Key — internal keys must never be sent from browsers
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, X-Organization-Id, X-XSRF-TOKEN, X-Nexora-Signature, X-Nexora-Event');
     return res.sendStatus(204);
   }
 
@@ -103,9 +108,10 @@ app.use((req: any, res: any, next: any) => {
 });
 
 // Rate limiting
+// GW-003: Increased from 100 to 300 req/min — 100 was too aggressive for dashboard-heavy SPAs
 const globalLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 100,
+  max: 300,
   message: { success: false, message: 'Too many requests, please try again later' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -214,6 +220,11 @@ app.use('/api/v1/attendance/policies', createProxyMiddleware({
   changeOrigin: true,
   pathRewrite: { '^/api/v1/attendance/policies': '/api/v1/policies' },
 }));
+
+// GW-005: WebSocket connections (Socket.IO for chat, calling, presence) bypass this HTTP
+// gateway and connect directly to the respective services (chat-service:3002, calling-service:3051).
+// This is intentional — the gateway only proxies REST/HTTP traffic. WebSocket auth is handled
+// by each service's own socket middleware using JWT verification.
 
 // Register proxy routes
 for (const route of ROUTES) {

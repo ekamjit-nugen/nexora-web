@@ -36,7 +36,12 @@ export class CallingController {
   ) {}
 
   /**
-   * Initiate a new call
+   * Initiate a new call (REST endpoint).
+   *
+   * NOTE: This endpoint creates a call record but does NOT send WebSocket
+   * notifications to the recipient. It is intended for internal/testing use only.
+   * In production, calls should be initiated via the WebSocket `call:initiate` event
+   * in CallingGateway, which handles real-time signaling and push notifications.
    */
   @Post()
   @Roles('member', 'manager', 'admin', 'owner')

@@ -1,8 +1,9 @@
-import { Injectable, Logger, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { IBookmark } from './schemas/bookmark.schema';
 import { IMessage } from '../messages/schemas/message.schema';
+import { IConversation } from '../conversations/schemas/conversation.schema';
 
 @Injectable()
 export class BookmarksService {
@@ -11,11 +12,18 @@ export class BookmarksService {
   constructor(
     @InjectModel('Bookmark') private bookmarkModel: Model<IBookmark>,
     @InjectModel('Message') private messageModel: Model<IMessage>,
+    @InjectModel('Conversation') private conversationModel: Model<IConversation>,
   ) {}
 
   async saveBookmark(userId: string, messageId: string, organizationId?: string, label?: string, note?: string): Promise<IBookmark> {
     const message = await this.messageModel.findOne({ _id: messageId, isDeleted: false });
     if (!message) throw new NotFoundException('Message not found');
+
+    // L-006: Verify user is a participant of the conversation before allowing bookmark
+    const conversation = await this.conversationModel.findOne({
+      _id: message.conversationId, 'participants.userId': userId, isDeleted: false,
+    });
+    if (!conversation) throw new ForbiddenException('Not a participant of this conversation');
 
     const existing = await this.bookmarkModel.findOne({ userId, messageId });
     if (existing) throw new ConflictException('Message already bookmarked');

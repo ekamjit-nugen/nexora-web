@@ -26,9 +26,11 @@ export class ModerationService {
     if (content.length < 5) return { flagged: false };
 
     // Instant check for critical words
+    // M-005: Use word-boundary regex to avoid false positives (e.g. "class" matching "ass")
     const lower = content.toLowerCase();
     for (const word of this.instantFlagWords) {
-      if (lower.includes(word)) {
+      const regex = new RegExp('\\b' + word + '\\b', 'i');
+      if (regex.test(lower)) {
         return { flagged: true, reason: `Contains critical word: "${word}"`, severity: 'critical' };
       }
     }

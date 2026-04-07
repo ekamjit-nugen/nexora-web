@@ -84,8 +84,10 @@ export class PushService implements OnModuleInit {
     const prefs = await this.preferencesService.getPreferences(userId, organizationId);
 
     // Check DND
-    if (prefs.dnd?.enabled && priority !== 'critical') {
-      if (!prefs.dnd.allowUrgent || priority !== 'high') {
+    // NS-003: Incoming calls always bypass DND (treated as critical priority)
+    const effectivePriority = payload.type === 'incoming_call' ? 'critical' : priority;
+    if (prefs.dnd?.enabled && effectivePriority !== 'critical') {
+      if (!prefs.dnd.allowUrgent || effectivePriority !== 'high') {
         this.logger.debug(`Notification suppressed for ${userId}: DND active`);
         return;
       }

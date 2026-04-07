@@ -255,7 +255,7 @@ export class CallingService {
 
     const [totalToday, completedToday, missedToday, durationAgg] = await Promise.all([
       this.callModel.countDocuments(filter),
-      this.callModel.countDocuments({ ...filter, status: { $in: ['completed', 'ended'] } }),
+      this.callModel.countDocuments({ ...filter, status: 'ended' }),
       this.callModel.countDocuments({ ...filter, status: 'missed', initiatorId: { $ne: userId } }),
       this.callModel.aggregate([
         { $match: { ...filter, duration: { $gt: 0 } } },
@@ -304,13 +304,29 @@ export class CallingService {
     return call;
   }
 
+  /**
+   * UC-012: Find if a user has any active call (initiated or connected).
+   */
+  async findActiveCallForUser(userId: string): Promise<ICall | null> {
+    return this.callModel.findOne({
+      participantIds: userId,
+      status: { $in: ['initiated', 'connected'] },
+    });
+  }
+
   async updateCallMetrics(callId: string, metrics: { callQuality?: string; bitrate?: number; frameRate?: number; packetLoss?: number }) {
     const call = await this.callModel.findOne({ callId });
     if (!call) {
       throw new NotFoundException(`Call ${callId} not found`);
     }
 
-    Object.assign(call.metadata, metrics);
+    // Whitelist allowed metric fields to prevent prototype pollution
+    const allowed: (keyof typeof metrics)[] = ['callQuality', 'bitrate', 'frameRate', 'packetLoss'];
+    for (const key of allowed) {
+      if (metrics[key] !== undefined) {
+        (call.metadata as any)[key] = metrics[key];
+      }
+    }
     await call.save();
     return call;
   }

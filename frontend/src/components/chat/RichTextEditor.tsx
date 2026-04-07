@@ -7,7 +7,7 @@ import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { common, createLowlight } from "lowlight";
-import { useCallback, useEffect, KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, KeyboardEvent } from "react";
 
 const lowlight = createLowlight(common);
 
@@ -19,6 +19,8 @@ interface RichTextEditorProps {
 }
 
 export function RichTextEditor({ onSend, placeholder = "Type a message...", disabled = false, className = "" }: RichTextEditorProps) {
+  const handleSendRef = useRef<() => void>(() => {});
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -39,7 +41,7 @@ export function RichTextEditor({ onSend, placeholder = "Type a message...", disa
       handleKeyDown: (_view, event) => {
         if (event.key === "Enter" && !event.shiftKey) {
           event.preventDefault();
-          handleSend();
+          handleSendRef.current();
           return true;
         }
         return false;
@@ -56,6 +58,11 @@ export function RichTextEditor({ onSend, placeholder = "Type a message...", disa
     onSend(html, text);
     editor.commands.clearContent();
   }, [editor, onSend]);
+
+  // Keep ref in sync to avoid stale closure in keydown handler
+  useEffect(() => {
+    handleSendRef.current = handleSend;
+  }, [handleSend]);
 
   // Expose handleSend on editor instance for external triggers
   useEffect(() => {

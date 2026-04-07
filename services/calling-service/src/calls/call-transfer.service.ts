@@ -3,9 +3,13 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ICall } from './schemas/call.schema';
 
+const RINGING_TIMEOUT_MS = 45_000; // 45 seconds before marking transferred call as missed
+
 @Injectable()
 export class CallTransferService {
   private readonly logger = new Logger(CallTransferService.name);
+  // Track ringing timeouts for cold transfers: callId -> timeout handle
+  private transferRingingTimeouts = new Map<string, NodeJS.Timeout>();
 
   constructor(
     @InjectModel('Call') private callModel: Model<ICall>,
@@ -45,6 +49,24 @@ export class CallTransferService {
     call.status = 'ringing'; // Ring the new target
     await call.save();
 
+    // Register a 45-second ringing timeout — if target doesn't answer, mark as missed
+    this.clearTransferRingingTimeout(callId);
+    const timer = setTimeout(async () => {
+      this.transferRingingTimeouts.delete(callId);
+      try {
+        const current = await this.callModel.findOne({ callId, status: 'ringing' });
+        if (current) {
+          current.status = 'missed';
+          current.endTime = new Date();
+          await current.save();
+          this.logger.log(`Cold transfer ringing timeout: call ${callId} marked as missed`);
+        }
+      } catch (err) {
+        this.logger.error(`Error handling cold transfer ringing timeout for ${callId}: ${err.message}`);
+      }
+    }, RINGING_TIMEOUT_MS);
+    this.transferRingingTimeouts.set(callId, timer);
+
     this.logger.log(`Cold transfer: ${transferringUserId} → ${targetUserId} on call ${callId}`);
     return call;
   }
@@ -73,8 +95,10 @@ export class CallTransferService {
 
     await call.save();
 
-    // The consult call is handled by the regular call initiation flow
-    // Return the original call with transfer metadata
+    // The consult call is handled by the regular call initiation flow.
+    // STUB: consultCallId is a placeholder. In production, the gateway should initiate
+    // a real call to the target via CallingService.initiateCall() and return the actual callId.
+    // The current `consult-${callId}` value is not a real call record in the database.
     this.logger.log(`Warm transfer initiated: ${transferringUserId} consulting ${targetUserId} on call ${callId}`);
     return { call, consultCallId: `consult-${callId}` };
   }
@@ -97,9 +121,20 @@ export class CallTransferService {
     return call;
   }
 
+  private clearTransferRingingTimeout(callId: string): void {
+    const timer = this.transferRingingTimeouts.get(callId);
+    if (timer) {
+      clearTimeout(timer);
+      this.transferRingingTimeouts.delete(callId);
+    }
+  }
+
   async cancelTransfer(callId: string, transferringUserId: string): Promise<ICall> {
     const call = await this.callModel.findOne({ callId });
     if (!call) throw new NotFoundException('Call not found');
+
+    // Clear ringing timeout if a cold transfer was pending
+    this.clearTransferRingingTimeout(callId);
 
     // Remove the last transfer record if it matches
     if (call.transferHistory.length > 0) {

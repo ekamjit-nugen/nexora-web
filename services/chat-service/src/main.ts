@@ -5,8 +5,11 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   const logger = new Logger('NexoraChatService');
+  // L-008: Use appropriate log levels based on environment
   const app = await NestFactory.create(AppModule, {
-    logger: ['error', 'warn', 'debug'],
+    logger: process.env.NODE_ENV === 'production'
+      ? ['error', 'warn', 'log']
+      : ['error', 'warn', 'log', 'debug'],
   });
 
   // RL-006: Trust first proxy so rate limiting uses real client IP from X-Forwarded-For

@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
+import { Injectable, Logger, Inject, Optional, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { IMeeting } from './schemas/meeting.schema';
@@ -9,14 +9,16 @@ import { IMeeting } from './schemas/meeting.schema';
  * Chat-service subscribes to 'meeting:created' and creates the conversation.
  */
 @Injectable()
-export class MeetingChatService {
+export class MeetingChatService implements OnModuleInit {
   private readonly logger = new Logger(MeetingChatService.name);
   private redisClient: any = null;
 
   constructor(
     @InjectModel('Meeting') private meetingModel: Model<IMeeting>,
-  ) {
-    this.initRedis();
+  ) {}
+
+  async onModuleInit() {
+    await this.initRedis();
   }
 
   private async initRedis() {

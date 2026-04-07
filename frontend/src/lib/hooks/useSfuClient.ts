@@ -81,7 +81,7 @@ export function useSfuClient(): SfuState {
 
       try {
         // Load mediasoup-client Device (dynamic import)
-        const mediasoupClient = await (Function('return import("mediasoup-client")')() as Promise<any>);
+        const mediasoupClient = await import("mediasoup-client");
         const { Device } = mediasoupClient;
         const device = new Device();
         await device.load({ routerRtpCapabilities: data.routerRtpCapabilities });

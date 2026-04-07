@@ -64,12 +64,19 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
       const { createClient } = await import('redis');
       const pubClient = createClient({ url: redisUrl });
       const subClient = pubClient.duplicate();
+
+      // Add error handlers to prevent unhandled rejections and enable reconnect logging
+      pubClient.on('error', (err) => this.logger.warn(`Redis pub client error: ${err.message}`));
+      pubClient.on('reconnecting', () => this.logger.log('Redis pub client reconnecting...'));
+      subClient.on('error', (err) => this.logger.warn(`Redis sub client error: ${err.message}`));
+      subClient.on('reconnecting', () => this.logger.log('Redis sub client reconnecting...'));
+
       await Promise.all([pubClient.connect(), subClient.connect()]);
       server.adapter(createAdapter(pubClient, subClient));
       this.redisPubClient = pubClient;
-      console.log('Calling gateway: Redis adapter connected');
+      this.logger.log('Calling gateway: Redis adapter connected');
     } catch (error: any) {
-      console.warn('Calling gateway: Redis adapter failed, using in-memory:', error.message);
+      this.logger.warn(`Calling gateway: Redis adapter failed, using in-memory: ${error.message}`);
     }
   }
 
@@ -194,6 +201,28 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
 
     try {
       const orgId = client.data?.user?.organizationId || 'default-org';
+
+      // UC-012: Check if recipient already has an active call
+      const recipientHasActiveCall = await this.isUserInActiveCall(data.recipientId);
+      if (recipientHasActiveCall) {
+        client.emit('error', { message: 'User is currently on another call' });
+        return;
+      }
+
+      // UC-011: Check if recipient is on DND — don't ring, mark as missed immediately
+      const recipientDnd = await this.isUserOnDnd(data.recipientId, orgId);
+      if (recipientDnd) {
+        const dndCall = await this.callingService.initiateCall(userId, orgId, data);
+        await this.callingService.missCall(dndCall.callId);
+        client.emit('call:missed', {
+          callId: dndCall.callId,
+          recipientId: data.recipientId,
+          reason: 'User is on Do Not Disturb',
+        });
+        this.logger.log(`Call ${dndCall.callId} to ${data.recipientId} skipped — recipient on DND`);
+        return;
+      }
+
       const call = await this.callingService.initiateCall(userId, orgId, data);
 
       // Join initiator to call room
@@ -636,6 +665,9 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
   ) {
     if (!data?.callId || !data?.metrics) return;
 
+    // Verify sender is actually in this call
+    if (!client.rooms.has(`call:${data.callId}`)) return;
+
     try {
       await this.callingService.updateCallMetrics(data.callId, data.metrics);
     } catch {
@@ -668,8 +700,8 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
       // Join the huddle room for broadcasting
       client.join(`huddle:${data.channelId}`);
 
-      // Broadcast to all channel members (we use the channel room)
-      this.server.emit('huddle:started', huddle);
+      // Broadcast to channel room members only (not all clients)
+      this.server.to(`channel:${data.channelId}`).emit('huddle:started', huddle);
       this.logger.log(`Huddle started in channel ${data.channelId} by ${userId}`);
     } catch (err) {
       client.emit('error', { message: err.message });
@@ -688,7 +720,7 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
       const huddle = this.voiceHuddleService.joinHuddle(data.channelId, userId, data.userName || this.userNames.get(userId) || 'Unknown');
       client.join(`huddle:${data.channelId}`);
 
-      this.server.emit('huddle:joined', {
+      this.server.to(`channel:${data.channelId}`).emit('huddle:joined', {
         channelId: data.channelId,
         userId,
         userName: data.userName || this.userNames.get(userId) || 'Unknown',
@@ -712,19 +744,19 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     client.leave(`huddle:${data.channelId}`);
 
     if (huddle) {
-      this.server.emit('huddle:left', {
+      this.server.to(`channel:${data.channelId}`).emit('huddle:left', {
         channelId: data.channelId,
         userId,
         huddle,
       });
     } else {
       // Huddle ended
-      this.server.emit('huddle:left', {
+      this.server.to(`channel:${data.channelId}`).emit('huddle:left', {
         channelId: data.channelId,
         userId,
         huddle: null,
       });
-      this.server.emit('huddle:ended', { channelId: data.channelId });
+      this.server.to(`channel:${data.channelId}`).emit('huddle:ended', { channelId: data.channelId });
     }
 
     this.logger.log(`User ${userId} left huddle in channel ${data.channelId}`);
@@ -902,5 +934,41 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
         duration: String(voicemailData?.duration || 0),
       },
     });
+  }
+
+  /**
+   * UC-011: Check if a user's presence status is 'dnd' via Redis.
+   * Reads from the `presence:{orgId}` hash set by the chat-service presence module.
+   */
+  private async isUserOnDnd(userId: string, orgId: string): Promise<boolean> {
+    if (!this.redisPubClient) return false;
+    try {
+      const raw = await this.redisPubClient.hGet(`presence:${orgId}`, userId);
+      if (!raw) return false;
+      const data = JSON.parse(raw);
+      return data.status === 'dnd';
+    } catch (err) {
+      this.logger.warn(`DND check failed for ${userId}: ${err.message}`);
+      return false; // Fail open — allow the call if presence lookup fails
+    }
+  }
+
+  /**
+   * UC-012: Check if a user already has an active call (ringing or connected).
+   * Checks both the in-memory callSessions map and the database.
+   */
+  private async isUserInActiveCall(userId: string): Promise<boolean> {
+    // Check in-memory sessions first (fast path)
+    for (const [, sockets] of this.callSessions.entries()) {
+      const usersInCall = this.getDistinctUsersInCall(sockets);
+      if (usersInCall.has(userId)) return true;
+    }
+    // Also check DB for calls in 'initiated' or 'connected' status
+    try {
+      const activeCall = await this.callingService.findActiveCallForUser(userId);
+      return !!activeCall;
+    } catch {
+      return false;
+    }
   }
 }

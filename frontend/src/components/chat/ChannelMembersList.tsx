@@ -1,6 +1,7 @@
 "use client";
 
 import { PresenceIndicator } from "./PresenceIndicator";
+import { getInitials } from "@/lib/utils";
 
 interface Participant {
   userId: string;
@@ -8,19 +9,24 @@ interface Participant {
   joinedAt: string;
 }
 
+interface EmployeeEntry {
+  firstName?: string;
+  lastName?: string;
+  profilePicture?: string;
+  department?: string;
+  designation?: string;
+  email?: string;
+}
+
 interface ChannelMembersListProps {
   participants: Participant[];
-  employeeMap: Record<string, any>;
+  employeeMap: Record<string, EmployeeEntry>;
   onlineUserIds: Set<string>;
   presenceMap: Map<string, { status: string; customText?: string }>;
   onMessage: (userId: string) => void;
   onCall: (userId: string) => void;
   onClose: () => void;
   currentUserId: string;
-}
-
-function getInitials(firstName?: string, lastName?: string): string {
-  return `${(firstName || "")[0] || ""}${(lastName || "")[0] || ""}`.toUpperCase();
 }
 
 const ROLE_LABELS: Record<string, string> = {
@@ -95,7 +101,7 @@ export function ChannelMembersList({
                 )}
               </div>
               {!isMe && (
-                <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                   <button onClick={() => onMessage(p.userId)} className="p-1 rounded hover:bg-slate-200 text-slate-400" title="Message">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                   </button>

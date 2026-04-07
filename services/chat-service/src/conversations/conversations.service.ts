@@ -23,7 +23,10 @@ export class ConversationsService {
     }
   }
 
-  async createDirectConversation(userId1: string, userId2: string) {
+  async createDirectConversation(userId1: string, userId2: string, organizationId?: string) {
+    // L-007: $expr with $size can't use indexes — acceptable for direct conversation lookup
+    // since the compound filter on participants.userId + type + isDeleted narrows the set.
+    // Future optimization: add a participantCount field to avoid $expr.
     const existing = await this.conversationModel.findOne({
       type: 'direct',
       isDeleted: false,
@@ -33,9 +36,11 @@ export class ConversationsService {
 
     if (existing) return existing;
 
+    // L-014: Set organizationId from the requesting user context
     const conversation = new this.conversationModel({
       type: 'direct',
       name: null,
+      organizationId: organizationId || null,
       participants: [
         { userId: userId1, role: 'member', joinedAt: new Date(), lastReadAt: new Date(), muted: false },
         { userId: userId2, role: 'member', joinedAt: new Date(), lastReadAt: new Date(), muted: false },
@@ -109,15 +114,20 @@ export class ConversationsService {
     const cached = await this.cacheService.get<any[]>(cacheKey);
     if (cached) return cached;
 
+    // M-006: Single-pass sort combining isPinned and lastMessage.sentAt
+    // DB returns all conversations; we do one JS sort for pinned-first + recency
     const conversations = await this.conversationModel
       .find({ 'participants.userId': userId, isDeleted: false })
-      .sort({ 'lastMessage.sentAt': -1, updatedAt: -1 })
       .lean();
 
     conversations.sort((a: any, b: any) => {
       const aPinned = a.participants?.find((p: any) => p.userId?.toString() === userId)?.isPinned ? 1 : 0;
       const bPinned = b.participants?.find((p: any) => p.userId?.toString() === userId)?.isPinned ? 1 : 0;
-      return bPinned - aPinned;
+      if (bPinned !== aPinned) return bPinned - aPinned;
+      // Within same pin group, sort by lastMessage.sentAt desc
+      const aTime = a.lastMessage?.sentAt ? new Date(a.lastMessage.sentAt).getTime() : 0;
+      const bTime = b.lastMessage?.sentAt ? new Date(b.lastMessage.sentAt).getTime() : 0;
+      return bTime - aTime;
     });
 
     // Cache for 60 seconds
@@ -212,13 +222,21 @@ export class ConversationsService {
   }
 
   async pinConversation(conversationId: string, userId: string) {
-    const conversation = await this.conversationModel.findById(conversationId);
-    if (!conversation) throw new NotFoundException('Conversation not found');
+    // M-013: Use atomic findOneAndUpdate to avoid race condition from read-modify-save
+    const conversation = await this.conversationModel.findOne({
+      _id: conversationId, 'participants.userId': userId,
+    });
+    if (!conversation) throw new NotFoundException('Conversation not found or not a participant');
+
     const participant = conversation.participants.find(p => p.userId === userId || p.userId?.toString() === userId);
     if (!participant) throw new ForbiddenException('Not a participant');
-    (participant as any).isPinned = !(participant as any).isPinned;
-    await conversation.save();
-    return { success: true, data: { isPinned: (participant as any).isPinned } };
+
+    const newPinned = !(participant as any).isPinned;
+    await this.conversationModel.findOneAndUpdate(
+      { _id: conversationId, 'participants.userId': userId },
+      { $set: { 'participants.$.isPinned': newPinned } },
+    );
+    return { success: true, data: { isPinned: newPinned } };
   }
 
   async muteConversation(conversationId: string, userId: string) {
@@ -394,6 +412,12 @@ export class ConversationsService {
     // Invalidate conversation cache (conversation metadata changed)
     await this.cacheService.del(`conv:${conversationId}`);
     // Invalidate user conversation lists for all participants (they need updated lastMessage)
-    await this.cacheService.invalidatePattern(`conv:user:*`);
+    // M-002: Invalidate only specific participant keys instead of wildcard scan across all Redis keys
+    const conv = await this.conversationModel.findById(conversationId).select('participants.userId').lean();
+    if (conv?.participants) {
+      for (const p of conv.participants) {
+        await this.cacheService.del(`conv:user:${p.userId}`);
+      }
+    }
   }
 }

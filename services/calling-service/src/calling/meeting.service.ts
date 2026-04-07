@@ -133,12 +133,17 @@ export class MeetingService {
     if (meeting.hostId !== userId)
       throw new ForbiddenException('Only the host can update this meeting');
 
-    // Hash new password if provided
-    if (dto.joinPassword) {
-      dto.joinPassword = await hashMeetingPassword(dto.joinPassword);
+    // Whitelist allowed fields to prevent override of hostId, status, etc.
+    const allowed = ['title', 'description', 'scheduledAt', 'durationMinutes', 'timeZone', 'settings', 'joinPassword'] as const;
+    for (const key of allowed) {
+      if (dto[key] !== undefined) {
+        if (key === 'joinPassword') {
+          (meeting as any)[key] = await hashMeetingPassword(dto[key] as string);
+        } else {
+          (meeting as any)[key] = dto[key];
+        }
+      }
     }
-
-    Object.assign(meeting, dto);
     await meeting.save();
 
     // Strip hashed password from response
@@ -198,14 +203,16 @@ export class MeetingService {
     if (meeting.status === 'ended' || meeting.status === 'cancelled')
       throw new BadRequestException(`Meeting is ${meeting.status}`);
 
-    // Check if already in participants
-    const alreadyJoined = meeting.participants.find(
-      (p) => (userId && p.userId === userId) || (!userId && p.displayName === displayName),
-    );
+    // Check if already in participants (for registered users only — match by userId)
+    const alreadyJoined = userId
+      ? meeting.participants.find((p) => p.userId === userId)
+      : null; // Anonymous users always get a new participant entry with a unique temp ID
 
     if (!alreadyJoined) {
+      // Generate a unique temp ID for anonymous users (displayName alone is not unique)
+      const participantUserId = userId || `anon-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
       meeting.participants.push({
-        userId,
+        userId: participantUserId,
         displayName: displayName || 'Unknown',
         isAnonymous,
         joinedAt: new Date(),
@@ -250,16 +257,20 @@ export class MeetingService {
     speakerId: string,
     dto: AddTranscriptDto,
   ) {
-    const meeting = await this.meetingModel.findOne({ meetingId });
-    if (!meeting) return;
-
-    meeting.transcript.push({
-      speakerId,
-      speakerName: dto.speakerName,
-      text: dto.text,
-      timestamp: new Date(),
-    });
-    await meeting.save();
+    // Use $push with findOneAndUpdate to avoid loading the entire transcript array
+    await this.meetingModel.findOneAndUpdate(
+      { meetingId },
+      {
+        $push: {
+          transcript: {
+            speakerId,
+            speakerName: dto.speakerName,
+            text: dto.text,
+            timestamp: new Date(),
+          },
+        },
+      },
+    );
   }
 
   async getTranscript(meetingId: string, userId: string) {

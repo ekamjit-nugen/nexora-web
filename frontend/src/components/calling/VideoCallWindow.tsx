@@ -82,6 +82,18 @@ interface FloatingEmoji {
   startTime: number;
 }
 
+// Module-level constant to avoid re-injecting styles each render
+const FLOAT_UP_STYLES = `
+  @keyframes float-up {
+    0% { transform: translateY(0) scale(1); opacity: 1; }
+    50% { transform: translateY(-200px) scale(1.3); opacity: 0.8; }
+    100% { transform: translateY(-400px) scale(0.8); opacity: 0; }
+  }
+  .animate-float-up {
+    animation: float-up 3s ease-out forwards;
+  }
+`;
+
 export function FloatingEmojiOverlay({ emojis }: { emojis: FloatingEmoji[] }) {
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
@@ -97,16 +109,7 @@ export function FloatingEmojiOverlay({ emojis }: { emojis: FloatingEmoji[] }) {
           {e.emoji}
         </div>
       ))}
-      <style jsx>{`
-        @keyframes float-up {
-          0% { transform: translateY(0) scale(1); opacity: 1; }
-          50% { transform: translateY(-200px) scale(1.3); opacity: 0.8; }
-          100% { transform: translateY(-400px) scale(0.8); opacity: 0; }
-        }
-        .animate-float-up {
-          animation: float-up 3s ease-out forwards;
-        }
-      `}</style>
+      <style jsx>{FLOAT_UP_STYLES}</style>
     </div>
   );
 }

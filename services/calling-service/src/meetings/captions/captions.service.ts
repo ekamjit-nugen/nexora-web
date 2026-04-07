@@ -25,7 +25,7 @@ import { IMeeting } from '../schemas/meeting.schema';
 export class CaptionsService {
   private readonly logger = new Logger(CaptionsService.name);
   private readonly whisperUrl = process.env.WHISPER_API_URL || null;
-  private readonly llmUrl = process.env.LLM_BASE_URL || 'http://host.docker.internal:7/v1/chat/completions';
+  private readonly llmUrl = process.env.LLM_BASE_URL || 'http://host.docker.internal:11434/v1/chat/completions';
   private readonly model = process.env.LLM_MODEL || 'deepseek';
 
   // Track which meetings have live captions enabled

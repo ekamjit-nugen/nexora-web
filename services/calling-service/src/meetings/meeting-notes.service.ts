@@ -11,7 +11,7 @@ import { IMeeting } from './schemas/meeting.schema';
 @Injectable()
 export class MeetingNotesService {
   private readonly logger = new Logger(MeetingNotesService.name);
-  private readonly llmUrl = process.env.LLM_BASE_URL || 'http://host.docker.internal:7/v1/chat/completions';
+  private readonly llmUrl = process.env.LLM_BASE_URL || 'http://host.docker.internal:11434/v1/chat/completions';
   private readonly model = process.env.LLM_MODEL || 'deepseek';
 
   constructor(

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { toast } from "sonner";
 
 interface VoiceRecorderProps {
   onSend: (audioBlob: Blob, duration: number) => void;
@@ -42,6 +43,7 @@ export function VoiceRecorder({ onSend, onCancel }: VoiceRecorderProps) {
       }, 100);
     } catch (err) {
       console.error("Microphone access denied:", err);
+      toast.error("Microphone access denied. Please allow microphone permissions and try again.");
     }
   }, []);
 
@@ -90,7 +92,7 @@ export function VoiceRecorder({ onSend, onCancel }: VoiceRecorderProps) {
         {recording && (
           <span className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
         )}
-        <span className="text-sm font-mono text-red-600">{formatDuration(duration)}</span>
+        <span className="text-sm font-mono text-red-600" aria-live="polite">{formatDuration(duration)}</span>
       </div>
 
       {/* Waveform visualization placeholder */}

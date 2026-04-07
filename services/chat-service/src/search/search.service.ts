@@ -62,6 +62,10 @@ export class SearchService implements ISearchProvider {
     }
 
     // Build query
+    // M-014: Validate that filters.in is a conversation the user belongs to
+    if (filters.in && !conversationIds.includes(filters.in)) {
+      return { results: [], total: 0 };
+    }
     const query: any = {
       conversationId: filters.in ? filters.in : { $in: conversationIds },
       isDeleted: false,

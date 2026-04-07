@@ -8,6 +8,7 @@ import { ForwardingService } from './forwarding.service';
 import { CreateTaskService } from './create-task.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { Roles, RolesGuard } from '../common/guards/roles.guard';
+import { ChannelPermissionGuard } from '../common/guards/channel-permission.guard';
 import { SendMessageDto, EditMessageDto, MessageQueryDto, SearchMessageDto } from './dto/send-message.dto';
 
 @Controller('chat')
@@ -23,6 +24,7 @@ export class MessagesController {
 
   @Post('conversations/:id/messages')
   @Throttle({ default: { ttl: 60000, limit: 60 } })
+  @UseGuards(ChannelPermissionGuard)
   @Roles('member', 'manager', 'admin', 'owner')
   @HttpCode(HttpStatus.CREATED)
   async sendMessage(@Param('id') id: string, @Body() dto: SendMessageDto, @Req() req) {

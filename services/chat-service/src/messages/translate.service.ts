@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { IMessage } from './schemas/message.schema';
@@ -14,11 +14,22 @@ export class TranslateService {
   private readonly llmUrl = process.env.LLM_BASE_URL || 'http://host.docker.internal:7/v1/chat/completions';
   private readonly model = process.env.LLM_MODEL || 'deepseek';
 
+  // M-009: Whitelist of supported target languages
+  private readonly SUPPORTED_LANGS = [
+    'en', 'hi', 'pa', 'ta', 'te', 'bn', 'mr', 'gu', 'kn', 'ml',
+    'es', 'fr', 'de', 'zh', 'ja', 'ko', 'ar', 'pt', 'ru',
+  ];
+
   constructor(
     @InjectModel('Message') private messageModel: Model<IMessage>,
   ) {}
 
   async translateMessage(messageId: string, targetLanguage: string): Promise<{ original: string; translated: string; language: string }> {
+    // M-009: Validate target language against whitelist
+    if (!this.SUPPORTED_LANGS.includes(targetLanguage)) {
+      throw new BadRequestException(`Unsupported language: ${targetLanguage}. Supported: ${this.SUPPORTED_LANGS.join(', ')}`);
+    }
+
     const message = await this.messageModel.findById(messageId);
     if (!message) throw new NotFoundException('Message not found');
 
@@ -43,7 +54,9 @@ export class TranslateService {
 
   private async callTranslateApi(text: string, targetLanguage: string): Promise<string> {
     try {
-      const axios = (await (Function('return import("axios")')())).default;
+      // M-011: Use require instead of dynamic Function() eval
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const axios = require('axios');
       const res = await axios.post(this.llmUrl, {
         model: this.model,
         stream: false,

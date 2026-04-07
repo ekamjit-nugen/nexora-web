@@ -1,4 +1,5 @@
 import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import * as jwt from 'jsonwebtoken';
 
 /**
  * Internal Service Guard for notification-service.
@@ -18,10 +19,9 @@ export class InternalServiceGuard implements CanActivate {
     const authHeader = request.headers.authorization;
     if (authHeader?.startsWith('Bearer ')) {
       try {
-        const jwt = require('jsonwebtoken');
         const secret = process.env.JWT_SECRET;
         if (!secret) throw new Error('JWT_SECRET not set');
-        const payload = jwt.verify(authHeader.split(' ')[1], secret);
+        const payload = jwt.verify(authHeader.split(' ')[1], secret) as any;
         request.user = { userId: payload.sub, organizationId: payload.organizationId };
         return true;
       } catch {

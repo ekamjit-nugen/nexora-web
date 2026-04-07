@@ -27,7 +27,8 @@ export function useMessageDeepLink(
     if (chatId) {
       onNavigateToConversation(chatId);
 
-      // Small delay to let conversation load before scrolling
+      // Best-effort delay to let conversation messages load before scrolling.
+      // A proper fix would use a message-loaded callback instead of a fixed timeout.
       if (messageId || threadId) {
         setTimeout(() => {
           if (threadId && onOpenThread) {

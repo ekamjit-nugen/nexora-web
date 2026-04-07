@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { chatApi, type ChatMessage, type Employee } from "@/lib/api";
 import { MessageContent } from "./MessageContent";
+import { getInitials, formatTime } from "@/lib/utils";
 
 interface ThreadPanelProps {
   rootMessage: ChatMessage;
@@ -10,14 +11,6 @@ interface ThreadPanelProps {
   currentUserId: string;
   onClose: () => void;
   onReply?: (reply: ChatMessage) => void;
-}
-
-function getInitials(firstName?: string, lastName?: string): string {
-  return `${(firstName || "")[0] || ""}${(lastName || "")[0] || ""}`.toUpperCase();
-}
-
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 export function ThreadPanel({ rootMessage, employeeMap, currentUserId, onClose, onReply }: ThreadPanelProps) {

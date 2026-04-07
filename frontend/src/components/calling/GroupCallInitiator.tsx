@@ -2,16 +2,13 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { hrApi, type Employee } from "@/lib/api";
+import { getInitials } from "@/lib/utils";
 
 interface GroupCallInitiatorProps {
   onStartCall: (participantIds: string[], type: "audio" | "video") => void;
   onClose: () => void;
   preselectedIds?: string[];
   currentUserId: string;
-}
-
-function getInitials(firstName?: string, lastName?: string): string {
-  return `${(firstName || "")[0] || ""}${(lastName || "")[0] || ""}`.toUpperCase();
 }
 
 export function GroupCallInitiator({ onStartCall, onClose, preselectedIds = [], currentUserId }: GroupCallInitiatorProps) {

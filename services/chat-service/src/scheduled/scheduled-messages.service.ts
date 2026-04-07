@@ -73,32 +73,69 @@ export class ScheduledMessagesService {
    */
   async publishDueMessages(): Promise<number> {
     const now = new Date();
-    const dueMessages = await this.messageModel.find({
-      isScheduled: true,
-      scheduledAt: { $lte: now },
-      isDeleted: false,
-    });
-
+    const BATCH_SIZE = 100;
     let published = 0;
-    for (const msg of dueMessages) {
-      msg.isScheduled = false;
-      msg.readBy = [{ userId: msg.senderId, readAt: now } as any];
-      await msg.save();
+    let lastId: string | null = null;
 
-      // Update conversation lastMessage
-      await this.conversationModel.findByIdAndUpdate(msg.conversationId, {
-        lastMessage: {
-          _id: msg._id.toString(),
-          content: (msg.content || '').substring(0, 100),
-          senderId: msg.senderId,
-          senderName: msg.senderName || null,
-          type: msg.type,
-          sentAt: now,
-        },
-        $inc: { messageCount: 1 },
-      });
+    // M-012: Process in batches of 100 using cursor-based pagination
+    while (true) {
+      const query: any = {
+        isScheduled: true,
+        scheduledAt: { $lte: now },
+        isDeleted: false,
+      };
+      if (lastId) {
+        query._id = { $gt: lastId };
+      }
 
-      published++;
+      const batch = await this.messageModel
+        .find(query)
+        .sort({ _id: 1 })
+        .limit(BATCH_SIZE);
+
+      if (batch.length === 0) break;
+
+      for (const msg of batch) {
+        // UC-024: Skip messages whose conversation has been deleted
+        const conversation = await this.conversationModel.findOne({
+          _id: msg.conversationId, isDeleted: false,
+        });
+        if (!conversation) {
+          this.logger.warn(`Skipping scheduled message ${msg._id}: conversation ${msg.conversationId} deleted or not found`);
+          msg.isDeleted = true;
+          msg.deletedAt = new Date();
+          await msg.save();
+          lastId = msg._id.toString();
+          continue;
+        }
+
+        msg.isScheduled = false;
+        msg.readBy = [{ userId: msg.senderId, readAt: now } as any];
+        await msg.save();
+
+        // TODO XS-010: Emit the published message via WebSocket so participants see it in
+        // real time. This requires injecting the ChatGateway (or publishing to Redis pub/sub
+        // so the gateway picks it up). Without this, clients only see the message on next
+        // poll or page refresh.
+
+        // Update conversation lastMessage
+        await this.conversationModel.findByIdAndUpdate(msg.conversationId, {
+          lastMessage: {
+            _id: msg._id.toString(),
+            content: (msg.content || '').substring(0, 100),
+            senderId: msg.senderId,
+            senderName: msg.senderName || null,
+            type: msg.type,
+            sentAt: now,
+          },
+          $inc: { messageCount: 1 },
+        });
+
+        published++;
+        lastId = msg._id.toString();
+      }
+
+      if (batch.length < BATCH_SIZE) break;
     }
 
     if (published > 0) {

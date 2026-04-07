@@ -23,8 +23,9 @@ export class ThreadsService {
   }
 
   async replyToThread(rootMessageId: string, senderId: string, content: string, senderName?: string) {
-    const rootMessage = await this.messageModel.findById(rootMessageId);
-    if (!rootMessage) throw new NotFoundException('Root message not found');
+    // UC-010: Ensure root message exists and is not deleted
+    const rootMessage = await this.messageModel.findOne({ _id: rootMessageId, isDeleted: { $ne: true } });
+    if (!rootMessage) throw new NotFoundException('Thread parent message not found or has been deleted');
 
     const conversation = await this.conversationModel.findOne({
       _id: rootMessage.conversationId, 'participants.userId': senderId, isDeleted: false,

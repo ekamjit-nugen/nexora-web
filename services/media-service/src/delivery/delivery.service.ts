@@ -22,7 +22,9 @@ export class DeliveryService {
   async getFilesByConversation(conversationId: string, page: number = 1, limit: number = 50, mimeFilter?: string) {
     const query: any = { conversationId, isDeleted: false };
     if (mimeFilter) {
-      query.mimeType = { $regex: `^${mimeFilter}` };
+      // MS-004: Escape regex metacharacters to prevent ReDoS / injection
+      const escaped = mimeFilter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.mimeType = { $regex: `^${escaped}` };
     }
 
     const skip = (page - 1) * limit;

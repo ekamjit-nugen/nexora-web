@@ -7,6 +7,7 @@ import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { ImageProcessor } from '../processing/image.processor';
 import { VideoProcessor } from '../processing/video.processor';
+import { DocumentProcessor } from '../processing/document.processor';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -57,16 +58,28 @@ export class UploadService {
     @InjectModel('MediaFile') private mediaFileModel: Model<IMediaFile>,
     @Inject(forwardRef(() => ImageProcessor)) private readonly imageProcessor: ImageProcessor,
     @Inject(forwardRef(() => VideoProcessor)) private readonly videoProcessor: VideoProcessor,
+    @Inject(forwardRef(() => DocumentProcessor)) private readonly documentProcessor: DocumentProcessor,
   ) {
-    this.endpoint = process.env.S3_ENDPOINT || 'http://minio:9000';
-    this.bucket = process.env.S3_BUCKET || 'nexora-media';
+    // MS-009: Throw on missing S3 config — consistent with s3-upload.helper.ts
+    const endpoint = process.env.S3_ENDPOINT;
+    const bucket = process.env.S3_BUCKET;
+    const accessKey = process.env.S3_ACCESS_KEY;
+    const secretKey = process.env.S3_SECRET_KEY;
+
+    if (!endpoint) throw new Error('S3_ENDPOINT not configured');
+    if (!bucket) throw new Error('S3_BUCKET not configured');
+    if (!accessKey) throw new Error('S3_ACCESS_KEY not configured');
+    if (!secretKey) throw new Error('S3_SECRET_KEY not configured');
+
+    this.endpoint = endpoint;
+    this.bucket = bucket;
 
     this.s3Client = new S3Client({
       endpoint: this.endpoint,
       region: process.env.S3_REGION || 'us-east-1',
       credentials: {
-        accessKeyId: process.env.S3_ACCESS_KEY || (() => { throw new Error('S3_ACCESS_KEY not configured'); })(),
-        secretAccessKey: process.env.S3_SECRET_KEY || (() => { throw new Error('S3_SECRET_KEY not configured'); })(),
+        accessKeyId: accessKey,
+        secretAccessKey: secretKey,
       },
       forcePathStyle: true, // Required for MinIO
     });
@@ -111,7 +124,7 @@ export class UploadService {
     const sizeLimit = SIZE_LIMITS[category];
 
     // Block dangerous file types
-    const blockedExtensions = ['.exe', '.bat', '.cmd', '.com', '.msi', '.scr', '.pif', '.vbs', '.js', '.wsh', '.ps1'];
+    const blockedExtensions = ['.exe', '.bat', '.cmd', '.com', '.msi', '.scr', '.pif', '.vbs', '.js', '.wsh', '.ps1', '.html', '.htm', '.svg', '.xml'];
     const fileExt = '.' + (file.originalname.split('.').pop() || '').toLowerCase();
     if (blockedExtensions.includes(fileExt)) {
       throw new BadRequestException(`File type ${fileExt} is not allowed`);
@@ -138,7 +151,7 @@ export class UploadService {
         Bucket: this.bucket,
         Key: storageKey,
         Body: file.buffer,
-        ContentType: file.mimetype,
+        ContentType: effectiveMime,
         Metadata: {
           'original-name': file.originalname.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 255),
           'uploaded-by': uploadedBy,
@@ -169,8 +182,11 @@ export class UploadService {
     this.logger.log(`File uploaded: ${file.originalname} (${storageKey}) by ${uploadedBy}`);
 
     // Trigger async processing (non-blocking)
+    // TODO MS-008: If triggerProcessing fails early (e.g. before setting status to 'processing'),
+    // files can get stuck in 'pending' forever. Consider a periodic job that resets or retries
+    // files stuck in 'pending'/'processing' status for more than N minutes.
     this.triggerProcessing(mediaFile._id.toString(), category).catch(err => {
-      this.logger.warn(`Processing trigger failed: ${err.message}`);
+      this.logger.warn(`Processing trigger failed for ${mediaFile._id}: ${err.message}`);
     });
 
     return mediaFile;
@@ -259,6 +275,29 @@ export class UploadService {
             this.logger.warn(`Failed to clean up temp dir: ${tmpDir}`);
           }
         }
+      } else if (category === 'document') {
+        // MS-005: Process documents (PDF page count, preview generation)
+        const getCommand = new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: mediaFile.storageKey,
+        });
+        const response = await this.s3Client.send(getCommand);
+
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexora-doc-'));
+        const ext = mediaFile.originalName.split('.').pop() || 'pdf';
+        const tmpFile = path.join(tmpDir, `input.${ext}`);
+
+        try {
+          const writeStream = fs.createWriteStream(tmpFile);
+          await pipeline(response.Body as any, writeStream);
+          await this.documentProcessor.processDocument(fileId, tmpFile, mediaFile.mimeType, mediaFile.storageKey);
+        } finally {
+          try {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+          } catch {
+            this.logger.warn(`Failed to clean up temp dir: ${tmpDir}`);
+          }
+        }
       } else {
         // No processing needed for other file types — mark as complete
         await this.mediaFileModel.findByIdAndUpdate(fileId, {
@@ -268,7 +307,7 @@ export class UploadService {
       }
 
       // Update scan status for processed files
-      if (category === 'image' || category === 'video') {
+      if (category === 'image' || category === 'video' || category === 'document') {
         const updated = await this.mediaFileModel.findById(fileId);
         if (updated && updated.processing.status === 'complete') {
           await this.mediaFileModel.findByIdAndUpdate(fileId, {

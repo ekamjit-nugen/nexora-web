@@ -54,13 +54,11 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
   private typingTimers = new Map<string, NodeJS.Timeout>();
   // Track disconnect grace period timers: userId -> timeout
   private disconnectGraceTimers = new Map<string, NodeJS.Timeout>();
-  // Redis client for distributed rate limiting (optional)
+  // Redis client for distributed rate limiting and cross-service notification publishing (optional)
+  // L-001: Consolidated — was previously duplicated as redisClient and redisPubClient
   private redisClient: any = null;
   // Interval for cleaning stale rate limit entries
   private rateLimitCleanupInterval: NodeJS.Timeout | null = null;
-
-  // Redis publisher for cross-service notification events
-  private redisPubClient: any = null;
 
   constructor(
     private jwtService: JwtService,
@@ -83,7 +81,6 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
       server.adapter(createAdapter(pubClient, subClient));
       // Keep a reference for distributed rate limiting and notification publishing
       this.redisClient = pubClient;
-      this.redisPubClient = pubClient;
 
       // B-006: Add error handler on pub client to prevent unhandled errors
       pubClient.on('error', (err: any) => {
@@ -586,7 +583,7 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     conversationId: string, senderId: string, message: any,
     content: string, messageType: string, fileName?: string,
   ): Promise<void> {
-    if (!this.redisPubClient) return;
+    if (!this.redisClient) return;
 
     const conversation = await this.conversationModel
       .findOne({ _id: conversationId, isDeleted: false })
@@ -649,7 +646,7 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
       }
 
       try {
-        await this.redisPubClient.publish('notifications', JSON.stringify(payload));
+        await this.redisClient.publish('notifications', JSON.stringify(payload));
       } catch (err) {
         this.logger.warn(`Failed to publish notification for ${participant.userId}: ${err.message}`);
       }
@@ -663,7 +660,7 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     conversationId: string, threadId: string, senderId: string,
     reply: any, content: string,
   ): Promise<void> {
-    if (!this.redisPubClient) return;
+    if (!this.redisClient) return;
 
     // Look up the root message to get thread followers
     const rootMessage = await this.messageModel.findById(threadId).lean();
@@ -704,7 +701,7 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
       };
 
       try {
-        await this.redisPubClient.publish('notifications', JSON.stringify(payload));
+        await this.redisClient.publish('notifications', JSON.stringify(payload));
       } catch (err) {
         this.logger.warn(`Failed to publish thread notification for ${followerId}: ${err.message}`);
       }

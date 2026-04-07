@@ -53,14 +53,15 @@ export class DocumentProcessor {
 
   private async getPdfPageCount(filePath: string): Promise<number | null> {
     try {
-      // Use child_process to call pdfinfo or pdftoppm
-      const { exec } = await import('child_process');
+      // MS-007: Use execFile instead of exec to prevent shell injection.
+      // execFile does not spawn a shell, so filePath cannot break out of the argument.
+      const { execFile } = await import('child_process');
       const { promisify } = await import('util');
-      const execAsync = promisify(exec);
+      const execFileAsync = promisify(execFile);
 
-      const { stdout } = await execAsync(`pdfinfo "${filePath}" 2>/dev/null | grep "Pages:" | awk '{print $2}'`);
-      const count = parseInt(stdout.trim());
-      return isNaN(count) ? null : count;
+      const { stdout } = await execFileAsync('pdfinfo', [filePath]);
+      const match = stdout.match(/Pages:\s+(\d+)/);
+      return match ? parseInt(match[1], 10) : null;
     } catch {
       return null;
     }

@@ -9,6 +9,7 @@ import type { CallLog, Employee } from "@/lib/api";
 import { useGlobalSocket } from "@/lib/socket-context";
 import { toast } from "sonner";
 import { RouteGuard } from "@/components/route-guard";
+import { getInitials } from "@/lib/utils";
 
 // ── Helpers ──
 
@@ -32,10 +33,6 @@ function timeAgo(dateStr: string): string {
   const days = Math.floor(hrs / 24);
   if (days === 1) return "Yesterday";
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
-function getInitials(firstName?: string, lastName?: string): string {
-  return `${(firstName || "")[0] || ""}${(lastName || "")[0] || ""}`.toUpperCase();
 }
 
 const statusColors: Record<string, string> = {

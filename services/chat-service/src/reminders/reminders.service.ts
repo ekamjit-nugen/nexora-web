@@ -1,17 +1,20 @@
-import { Injectable, Logger, NotFoundException, Inject, Optional } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, Inject, Optional, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { IReminder } from './schemas/reminder.schema';
 
 @Injectable()
-export class RemindersService {
+export class RemindersService implements OnModuleInit {
   private readonly logger = new Logger(RemindersService.name);
 
   constructor(
     @InjectModel('Reminder') private reminderModel: Model<IReminder>,
     @Optional() @Inject('BULLMQ_CONNECTION') private readonly connection: any,
-  ) {
-    this.initProcessor();
+  ) {}
+
+  // L-004: Moved async init from constructor to OnModuleInit lifecycle hook
+  async onModuleInit() {
+    await this.initProcessor();
   }
 
   private async initProcessor() {

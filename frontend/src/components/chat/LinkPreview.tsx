@@ -28,7 +28,7 @@ export function LinkPreview({ preview, className = "" }: LinkPreviewProps) {
     <a
       href={preview.url}
       target="_blank"
-      rel="noreferrer"
+      rel="noopener noreferrer"
       className={`block mt-1.5 border border-slate-200 rounded-lg overflow-hidden hover:bg-slate-50 transition-colors max-w-[340px] ${className}`}
     >
       {preview.imageUrl && (

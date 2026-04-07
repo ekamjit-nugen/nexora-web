@@ -40,6 +40,8 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
   private userSockets = new Map<string, Set<string>>();
   // meetingId -> Set<socketId>
   private meetingRooms = new Map<string, Set<string>>();
+  // Transcript rate limit: `${userId}:${meetingId}` -> last timestamp (max 1 per second)
+  private transcriptRateLimit = new Map<string, number>();
 
   constructor(
     private jwtService: JwtService,
@@ -55,9 +57,9 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
       const subClient = pubClient.duplicate();
       await Promise.all([pubClient.connect(), subClient.connect()]);
       server.adapter(createAdapter(pubClient, subClient));
-      console.log('Meeting gateway: Redis adapter connected');
+      this.logger.log('Meeting gateway: Redis adapter connected');
     } catch (error: any) {
-      console.warn('Meeting gateway: Redis adapter failed, using in-memory:', error.message);
+      this.logger.warn(`Meeting gateway: Redis adapter failed, using in-memory: ${error.message}`);
     }
   }
 
@@ -106,6 +108,14 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
           displayName: info.displayName,
         });
         this.meetingService.leaveMeeting(meetingId, info.userId, info.displayName).catch(() => {});
+
+        // UC-015: If the disconnected user was the host, transfer host role
+        if (info.userId && sockets.size > 0) {
+          this.handleHostTransferOnDisconnect(meetingId, info.userId, sockets).catch((err) => {
+            this.logger.error(`Host transfer failed for meeting ${meetingId}: ${err.message}`);
+          });
+        }
+
         if (sockets.size === 0) this.meetingRooms.delete(meetingId);
       }
     }
@@ -237,6 +247,9 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
   }
 
   // ── WebRTC Signaling (mesh topology) ──
+  // TODO: Mesh topology does not scale beyond ~6 participants due to O(n^2) peer connections.
+  // For larger meetings, integrate with the SFU gateway (/sfu namespace) which uses mediasoup
+  // for server-side media routing. See sfu.gateway.ts and sfu.service.ts.
 
   @SubscribeMessage('meeting:offer')
   handleOffer(
@@ -292,6 +305,16 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
       client.emit('error', { message: 'Transcript text must be between 1 and 5000 characters' });
       return;
     }
+
+    // Rate limit: max 1 transcript per second per user per meeting
+    const rateLimitKey = `${info.userId || client.id}:${data.meetingId}`;
+    const now = Date.now();
+    const lastTime = this.transcriptRateLimit.get(rateLimitKey) || 0;
+    if (now - lastTime < 1000) {
+      client.emit('error', { message: 'Transcript rate limit exceeded (max 1 per second)' });
+      return;
+    }
+    this.transcriptRateLimit.set(rateLimitKey, now);
 
     const speakerId = info.userId || client.id;
     const speakerName = data.speakerName || info.displayName || 'Unknown';
@@ -502,5 +525,57 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
 
   emitToRoom(meetingId: string, event: string, data: any) {
     this.server.to(`meeting:${meetingId}`).emit(event, data);
+  }
+
+  /**
+   * UC-015: When the host disconnects, transfer host role to a co-host or
+   * the earliest-joined remaining participant.
+   */
+  private async handleHostTransferOnDisconnect(
+    meetingId: string,
+    disconnectedUserId: string,
+    remainingSockets: Set<string>,
+  ): Promise<void> {
+    const meeting = await this.meetingService.getMeeting(meetingId).catch(() => null);
+    if (!meeting || meeting.hostId !== disconnectedUserId) return;
+
+    // Determine remaining user IDs in the meeting room
+    const remainingUserIds: string[] = [];
+    for (const sid of remainingSockets) {
+      const p = this.socketParticipants.get(sid);
+      if (p?.userId && !remainingUserIds.includes(p.userId)) {
+        remainingUserIds.push(p.userId);
+      }
+    }
+    if (remainingUserIds.length === 0) return;
+
+    // Prefer co-hosts first
+    let newHostId: string | null = null;
+    if (meeting.coHostIds?.length) {
+      newHostId = meeting.coHostIds.find((id: string) => remainingUserIds.includes(id)) || null;
+    }
+
+    // Fall back to earliest-joined remaining participant
+    if (!newHostId) {
+      const joinedParticipants = (meeting.participants || [])
+        .filter((p: any) => p.userId && remainingUserIds.includes(p.userId) && !p.leftAt)
+        .sort((a: any, b: any) => (a.joinedAt?.getTime?.() || 0) - (b.joinedAt?.getTime?.() || 0));
+      newHostId = joinedParticipants[0]?.userId || remainingUserIds[0];
+    }
+
+    if (!newHostId) return;
+
+    // Update host in DB
+    meeting.hostId = newHostId;
+    await meeting.save();
+
+    // Notify all participants
+    this.server.to(`meeting:${meetingId}`).emit('meeting:host-transferred', {
+      meetingId,
+      previousHostId: disconnectedUserId,
+      newHostId,
+    });
+
+    this.logger.log(`Meeting ${meetingId}: host transferred from ${disconnectedUserId} to ${newHostId}`);
   }
 }

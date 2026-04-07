@@ -65,19 +65,40 @@ export class FocusModeService {
     };
   }
 
-  private async getUnreadSnapshot(userId: string, _organizationId: string): Promise<number> {
-    // Count current unread messages
-    return 0; // Simplified — full implementation uses conversation unread aggregation
+  private async getUnreadSnapshot(userId: string, organizationId: string): Promise<number> {
+    // M-018: Scope unread count to organization via conversation lookup
+    const orgConversationIds = await this.presenceModel.db
+      .collection('conversations')
+      .distinct('_id', { organizationId, 'participants.userId': userId, isDeleted: false });
+
+    if (orgConversationIds.length === 0) return 0;
+
+    return this.messageModel.countDocuments({
+      conversationId: { $in: orgConversationIds.map((id: any) => id.toString()) },
+      senderId: { $ne: userId },
+      isDeleted: false,
+    });
   }
 
   private async generateFocusDigest(userId: string, organizationId: string, since: Date) {
+    // M-018: Add org scope filter to digest queries via conversation membership
+    const orgConversationIds = await this.presenceModel.db
+      .collection('conversations')
+      .distinct('_id', { organizationId, 'participants.userId': userId, isDeleted: false });
+
+    const convFilter = orgConversationIds.length > 0
+      ? { conversationId: { $in: orgConversationIds.map((id: any) => id.toString()) } }
+      : { conversationId: { $in: [] as string[] } };
+
     const newMessages = await this.messageModel.countDocuments({
+      ...convFilter,
       senderId: { $ne: userId },
       createdAt: { $gte: since },
       isDeleted: false,
     });
 
     const mentions = await this.messageModel.countDocuments({
+      ...convFilter,
       'mentions.targetId': userId,
       createdAt: { $gte: since },
       isDeleted: false,

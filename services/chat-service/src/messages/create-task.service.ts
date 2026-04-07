@@ -49,6 +49,9 @@ export class CreateTaskService {
     if (!conversation) throw new ForbiddenException('Not a participant');
 
     // Create task via task-service
+    // M-008: Currently forwards user JWT to task-service. This should ideally use
+    // service-to-service auth (e.g., a shared secret or internal JWT) to avoid
+    // coupling the user's token scope to inter-service calls. Acceptable for now.
     let taskId: string | null = null;
     try {
       const res = await fetch(`${this.taskServiceUrl}/api/v1/tasks`, {

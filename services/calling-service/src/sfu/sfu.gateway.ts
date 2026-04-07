@@ -1,5 +1,6 @@
 import {
   WebSocketGateway, WebSocketServer, SubscribeMessage,
+  OnGatewayDisconnect,
   ConnectedSocket, MessageBody,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
@@ -32,7 +33,7 @@ import { SfuService } from './sfu.service';
   transports: ['websocket', 'polling'],
   namespace: '/sfu',
 })
-export class SfuGateway {
+export class SfuGateway implements OnGatewayDisconnect {
   @WebSocketServer() server: Server;
   private logger = new Logger('SfuGateway');
 

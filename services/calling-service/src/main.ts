@@ -6,7 +6,7 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const logger = new Logger('NexoraCallingService');
   const app = await NestFactory.create(AppModule, {
-    logger: ['error', 'warn', 'debug'],
+    logger: ['log', 'error', 'warn', 'debug'],
   });
 
   app.enableCors({

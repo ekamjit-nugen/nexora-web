@@ -21,6 +21,8 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { SkeletonLoader } from "@/components/SkeletonLoader";
 import { toast } from "sonner";
 import { useOfflineCache } from "@/lib/hooks/useOfflineCache";
+import { useConversationDrafts } from "@/lib/hooks/useConversationDrafts";
+import { getInitials, formatTime } from "@/lib/utils";
 
 // ── Upload validation constants ──
 const MAX_UPLOAD_SIZE = 25 * 1024 * 1024; // 25 MB
@@ -75,13 +77,7 @@ function formatDateGroup(dateStr: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-function getInitials(firstName?: string, lastName?: string): string {
-  return `${(firstName || "")[0] || ""}${(lastName || "")[0] || ""}`.toUpperCase();
-}
+// getInitials and formatTime imported from @/lib/utils
 
 // Check if a message contains only emoji characters (no text)
 // Uses RegExp constructor to avoid TS compile-time flag restriction
@@ -308,7 +304,7 @@ export default function MessagesPage() {
   const { onOffer, onAnswerSdp, onIceCandidate, onEnded } = signaling;
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
+    if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
       (window as any).webrtc = webrtc;
     }
   }, [webrtc]);
@@ -369,6 +365,9 @@ export default function MessagesPage() {
 
   // ── Offline Cache ──
   const offlineCache = useOfflineCache();
+
+  // ── Conversation Drafts ──
+  const drafts = useConversationDrafts();
 
   // ── Socket ──
   const { connected, emit, on, onlineUsers: onlineUserIds, presenceMap } = useGlobalSocket();
@@ -521,13 +520,23 @@ export default function MessagesPage() {
     setLoadingMessages(false);
   }, [offlineCache]);
 
+  // Save draft on conversation switch, restore on select
+  const prevActiveIdForDraftRef = useRef<string | null>(null);
   useEffect(() => {
+    // Save draft for previous conversation
+    if (prevActiveIdForDraftRef.current && prevActiveIdForDraftRef.current !== activeId) {
+      drafts.setDraft(prevActiveIdForDraftRef.current, input);
+    }
+    // Restore draft for newly selected conversation
     if (activeId) {
+      const restored = drafts.getDraft(activeId);
+      setInput(restored);
       fetchMessages(activeId);
     } else {
       setMessages([]);
     }
-  }, [activeId, fetchMessages]);
+    prevActiveIdForDraftRef.current = activeId;
+  }, [activeId, fetchMessages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Smart replies: fetch when conversation changes or new messages arrive ──
   useEffect(() => {
@@ -545,7 +554,7 @@ export default function MessagesPage() {
       finally { setSmartRepliesLoading(false); }
     }, 600);
     return () => { if (smartRepliesTimerRef.current) clearTimeout(smartRepliesTimerRef.current); };
-  }, [activeId, messages.length, user?._id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeId, messages[messages.length - 1]?._id, user?._id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Delta sync on reconnect ──
   const prevConnectedRef = useRef(false);
@@ -677,6 +686,7 @@ export default function MessagesPage() {
     handleSelectSchedule(dt);
   };
   useEffect(() => {
+    if (!showSchedulePicker) return;
     const handler = (e: MouseEvent) => {
       if (schedulePickerRef.current && !schedulePickerRef.current.contains(e.target as Node)) {
         setShowSchedulePicker(false);
@@ -685,7 +695,7 @@ export default function MessagesPage() {
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, []);
+  }, [showSchedulePicker]);
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (readReceiptRef.current && !readReceiptRef.current.contains(e.target as Node)) {
@@ -721,6 +731,7 @@ export default function MessagesPage() {
           return [...prev, res.data!];
         });
       }
+      drafts.clearDraft(activeId);
       fetchConversations();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to send message";
@@ -744,6 +755,7 @@ export default function MessagesPage() {
   };
 
   // ── GIF send ──
+  // Intentionally uses socket (not REST) for real-time delivery — GIFs are lightweight URL-only payloads.
   const handleGifSelect = useCallback((gifUrl: string) => {
     if (!activeId) return;
     emit("message:send", {
@@ -755,56 +767,6 @@ export default function MessagesPage() {
     });
     setShowGifPicker(false);
     toast.success("GIF sent");
-  }, [activeId, emit]);
-
-  // ── File upload ──
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !activeId) return;
-    if (file.size > MAX_UPLOAD_SIZE) { toast.error("File must be under 25 MB"); return; }
-    if (!isFileTypeAllowed(file)) { toast.error("File type not allowed"); return; }
-
-    const isImage = file.type.startsWith("image/");
-    const isVideo = file.type.startsWith("video/");
-    const msgType = isImage ? "image" : isVideo ? "video" : "file";
-
-    setIsUploading(true);
-    const spinnerStart = Date.now();
-    try {
-      // Read all files as base64 data URL so they can be downloaded by recipients
-      let content = file.name;
-      let fileUrl: string | undefined;
-      if (file.size < MAX_UPLOAD_SIZE) {
-        fileUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = () => reject(new Error("Failed to read file"));
-          reader.readAsDataURL(file);
-        });
-        content = file.name;
-      }
-
-      // Send via socket for real-time delivery
-      emit("message:send", {
-        conversationId: activeId,
-        content,
-        type: msgType,
-        fileUrl,
-        fileName: file.name,
-        fileSize: file.size,
-        fileMimeType: file.type,
-      });
-      toast.success(`${isImage ? "Image" : isVideo ? "Video" : "File"} sent`);
-    } catch {
-      toast.error("Failed to send file");
-    } finally {
-      // Keep spinner visible for at least 1.2s so user sees it
-      const elapsed = Date.now() - spinnerStart;
-      const remaining = Math.max(0, 1200 - elapsed);
-      setTimeout(() => setIsUploading(false), remaining);
-    }
-    // Reset input so same file can be re-selected
-    if (fileInputRef.current) fileInputRef.current.value = "";
   }, [activeId, emit]);
 
   // ── Typing indicator ──
@@ -885,6 +847,16 @@ export default function MessagesPage() {
       uploadAbortRef.current = null;
     }
   }, [activeId, emit]);
+
+  // ── File upload (input handler) ──
+  // Routes through handleUploadAndSend (XHR with progress) instead of reading as base64 DataURL
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeId) return;
+    await handleUploadAndSend(file);
+    // Reset input so same file can be re-selected
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }, [activeId, handleUploadAndSend]);
 
   const handleCancelUpload = useCallback(() => {
     uploadAbortRef.current?.abort();
@@ -1730,43 +1702,52 @@ export default function MessagesPage() {
     return `${names[0]} and ${names.length - 1} others are typing...`;
   };
 
-  // ── Filter & sort conversations ──
-  const filteredConversations = conversations
-    .filter((c) => {
-      if (tab !== "all" && c.type !== tab) return false;
-      if (searchQuery) {
-        const name = getConversationDisplayName(c).toLowerCase();
-        return name.includes(searchQuery.toLowerCase());
-      }
-      return true;
-    })
-    .sort((a, b) => {
-      if (a.isPinned && !b.isPinned) return -1;
-      if (!a.isPinned && b.isPinned) return 1;
-      const aTime = a.lastMessage?.sentAt || a.createdAt;
-      const bTime = b.lastMessage?.sentAt || b.createdAt;
-      return new Date(bTime).getTime() - new Date(aTime).getTime();
-    });
+  // ── Filter & sort conversations (memoized) ──
+  const filteredConversations = useMemo(() =>
+    conversations
+      .filter((c) => {
+        if (tab !== "all" && c.type !== tab) return false;
+        if (searchQuery) {
+          const name = getConversationDisplayName(c).toLowerCase();
+          return name.includes(searchQuery.toLowerCase());
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        if (a.isPinned && !b.isPinned) return -1;
+        if (!a.isPinned && b.isPinned) return 1;
+        const aTime = a.lastMessage?.sentAt || a.createdAt;
+        const bTime = b.lastMessage?.sentAt || b.createdAt;
+        return new Date(bTime).getTime() - new Date(aTime).getTime();
+      }),
+    [conversations, tab, searchQuery, employeeMap, user?._id], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
-  // ── Group messages by date ──
-  const groupedMessages: { date: string; messages: ChatMessage[] }[] = [];
-  for (const msg of messages) {
-    const dateKey = formatDateGroup(msg.createdAt);
-    const last = groupedMessages[groupedMessages.length - 1];
-    if (last && last.date === dateKey) {
-      last.messages.push(msg);
-    } else {
-      groupedMessages.push({ date: dateKey, messages: [msg] });
+  // ── Group messages by date (memoized) ──
+  const groupedMessages = useMemo(() => {
+    const groups: { date: string; messages: ChatMessage[] }[] = [];
+    for (const msg of messages) {
+      const dateKey = formatDateGroup(msg.createdAt);
+      const last = groups[groups.length - 1];
+      if (last && last.date === dateKey) {
+        last.messages.push(msg);
+      } else {
+        groups.push({ date: dateKey, messages: [msg] });
+      }
     }
-  }
+    return groups;
+  }, [messages]);
 
   // ── Filtered employees for modals ──
-  const filteredEmployees = allEmployees.filter((e) => {
+  const MAX_EMPLOYEE_DISPLAY = 100;
+  const filteredEmployeesAll = allEmployees.filter((e) => {
     if (e.userId === user?._id) return false;
     if (!employeeSearch) return true;
     const name = `${e.firstName} ${e.lastName} ${e.email}`.toLowerCase();
     return name.includes(employeeSearch.toLowerCase());
   });
+  const filteredEmployees = filteredEmployeesAll.slice(0, MAX_EMPLOYEE_DISPLAY);
+  const truncatedEmployeeCount = filteredEmployeesAll.length - filteredEmployees.length;
 
   // ── Check unread ──
   const hasUnread = (convo: Conversation): boolean => {
@@ -1878,10 +1859,12 @@ export default function MessagesPage() {
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-0.5 bg-[#F1F5F9] rounded-lg p-0.5 mb-2.5">
+            <div className="flex gap-0.5 bg-[#F1F5F9] rounded-lg p-0.5 mb-2.5" role="tablist" aria-label="Conversation type filter">
               {(["all", "direct", "group", "channel"] as TabFilter[]).map((t) => (
                 <button
                   key={t}
+                  role="tab"
+                  aria-selected={tab === t}
                   onClick={() => setTab(t)}
                   className={`flex-1 py-1.5 text-[11px] font-medium rounded-md transition-colors capitalize ${
                     tab === t ? "bg-white text-[#0F172A] shadow-sm" : "text-[#64748B] hover:text-[#334155]"
@@ -3042,21 +3025,26 @@ export default function MessagesPage() {
                   <p className="text-[13px] text-[#94A3B8]">No employees found</p>
                 </div>
               ) : (
-                filteredEmployees.map((emp) => (
-                  <button
-                    key={emp._id}
-                    onClick={() => handleStartDirect(emp)}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[#F1F5F9] transition-colors text-left"
-                  >
-                    <div className="w-9 h-9 rounded-full bg-[#2E86C1] flex items-center justify-center text-white text-[11px] font-semibold shrink-0">
-                      {getInitials(emp.firstName, emp.lastName)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[13px] font-medium text-[#0F172A] truncate">{emp.firstName} {emp.lastName}</p>
-                      <p className="text-[11px] text-[#94A3B8] truncate">{emp.email}</p>
-                    </div>
-                  </button>
-                ))
+                <>
+                  {filteredEmployees.map((emp) => (
+                    <button
+                      key={emp._id}
+                      onClick={() => handleStartDirect(emp)}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[#F1F5F9] transition-colors text-left"
+                    >
+                      <div className="w-9 h-9 rounded-full bg-[#2E86C1] flex items-center justify-center text-white text-[11px] font-semibold shrink-0">
+                        {getInitials(emp.firstName, emp.lastName)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[13px] font-medium text-[#0F172A] truncate">{emp.firstName} {emp.lastName}</p>
+                        <p className="text-[11px] text-[#94A3B8] truncate">{emp.email}</p>
+                      </div>
+                    </button>
+                  ))}
+                  {truncatedEmployeeCount > 0 && (
+                    <p className="text-center text-[12px] text-[#94A3B8] py-2">and {truncatedEmployeeCount} more &mdash; refine your search</p>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -3825,6 +3813,7 @@ export default function MessagesPage() {
         <ForwardModal
           messageId={forwardMessageId}
           onClose={() => setForwardMessageId(null)}
+          employeeMap={employeeMap}
         />
       )}
 
