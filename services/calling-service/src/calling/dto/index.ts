@@ -116,6 +116,10 @@ export class ScheduleMeetingDto {
 
   @IsOptional()
   @IsString()
+  joinPassword?: string;
+
+  @IsOptional()
+  @IsString()
   sprintId?: string;
 }
 
@@ -143,6 +147,10 @@ export class UpdateMeetingDto {
   @IsOptional()
   @IsBoolean()
   recordingEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  joinPassword?: string;
 }
 
 export class JoinMeetingAnonymousDto {

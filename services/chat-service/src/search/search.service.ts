@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { IMessage } from '../messages/schemas/message.schema';
 import { IConversation } from '../conversations/schemas/conversation.schema';
+import { ISearchProvider } from './search-provider.interface';
 
 export interface SearchFilters {
   q: string;
@@ -23,13 +24,26 @@ export interface SearchResult {
 }
 
 @Injectable()
-export class SearchService {
+export class SearchService implements ISearchProvider {
   private readonly logger = new Logger(SearchService.name);
 
   constructor(
     @InjectModel('Message') private messageModel: Model<IMessage>,
     @InjectModel('Conversation') private conversationModel: Model<IConversation>,
   ) {}
+
+  /**
+   * ISearchProvider implementation — delegates to globalSearch.
+   */
+  async search(
+    query: SearchFilters,
+    userId: string,
+    orgId: string,
+    page: number = 1,
+    limit: number = 20,
+  ): Promise<{ results: SearchResult[]; total: number }> {
+    return this.globalSearch(userId, query, page, limit);
+  }
 
   /**
    * Global search across all conversations the user has access to.

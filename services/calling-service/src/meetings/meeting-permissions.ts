@@ -1,4 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
+import * as bcrypt from 'bcryptjs';
 
 /**
  * Meeting permission helper functions.
@@ -47,10 +48,26 @@ export function canUpdateMeeting(meeting: any, userId: string): boolean {
 }
 
 /**
- * Verify meeting password if set. Throws ForbiddenException on mismatch.
+ * Hash a plain-text meeting password before storing.
  */
-export function verifyMeetingPassword(meeting: any, password?: string): void {
-  if (meeting.joinPassword && meeting.joinPassword !== password) {
+export async function hashMeetingPassword(plainPassword: string): Promise<string> {
+  return bcrypt.hash(plainPassword, 10);
+}
+
+/**
+ * Verify meeting password if set. Throws ForbiddenException on mismatch.
+ * Uses bcrypt.compare for hashed passwords.
+ */
+export async function verifyMeetingPassword(meeting: any, password?: string): Promise<void> {
+  if (!meeting.joinPassword) return;
+  if (!password) {
+    throw new ForbiddenException({
+      code: 'INVALID_MEETING_PASSWORD',
+      message: 'Incorrect meeting password',
+    });
+  }
+  const matches = await bcrypt.compare(password, meeting.joinPassword);
+  if (!matches) {
     throw new ForbiddenException({
       code: 'INVALID_MEETING_PASSWORD',
       message: 'Incorrect meeting password',

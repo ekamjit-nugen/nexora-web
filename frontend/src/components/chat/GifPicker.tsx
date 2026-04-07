@@ -58,14 +58,15 @@ export function GifPicker({ onSelect }: GifPickerProps) {
   }, [query, fetchGifs]);
 
   return (
-    <div className="w-[340px] max-h-[400px] bg-white border border-[#E2E8F0] rounded-xl shadow-xl z-50 flex flex-col overflow-hidden">
+    <div className="w-[340px] max-h-[400px] bg-white border border-[#E2E8F0] rounded-xl shadow-xl z-50 flex flex-col overflow-hidden" aria-label="GIF picker">
       {/* Search input */}
-      <div className="p-2.5 border-b border-[#E2E8F0] shrink-0">
+      <div className="p-2.5 border-b border-[#E2E8F0] shrink-0" role="search">
         <input
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search GIFs..."
+          aria-label="Search GIFs"
           className="w-full px-3 py-1.5 text-[13px] rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#2E86C1] focus:ring-1 focus:ring-[#2E86C1]/20"
           autoFocus
         />
@@ -93,11 +94,13 @@ export function GifPicker({ onSelect }: GifPickerProps) {
                 <button
                   key={gif.id}
                   onClick={() => onSelect(fullUrl)}
+                  onKeyDown={(e) => { if (e.key === "Enter") onSelect(fullUrl); }}
                   className="rounded-lg overflow-hidden hover:ring-2 hover:ring-[#2E86C1] transition-all focus:outline-none focus:ring-2 focus:ring-[#2E86C1]"
+                  aria-label={query.trim() ? `GIF: ${query.trim()}` : "Trending GIF"}
                 >
                   <img
                     src={thumb}
-                    alt={gif.title || "GIF"}
+                    alt={gif.title || (query.trim() ? `GIF: ${query.trim()}` : "Trending GIF")}
                     className="w-full h-[100px] object-cover"
                     loading="lazy"
                   />

@@ -8,6 +8,7 @@ export class ScheduleMeetingDto {
   @IsOptional() @IsNumber() durationMinutes?: number = 60;
   @IsOptional() @IsArray() @IsString({ each: true }) participantIds?: string[] = [];
   @IsOptional() @IsBoolean() recordingEnabled?: boolean = false;
+  @IsOptional() @IsString() joinPassword?: string;
   @IsOptional() @IsString() sprintId?: string;
   @IsOptional() @IsEnum(['instant', 'scheduled', 'recurring']) type?: string;
   @IsOptional() @IsString() timeZone?: string;
@@ -26,6 +27,7 @@ export class UpdateMeetingDto {
   @IsOptional() @IsNumber() durationMinutes?: number;
   @IsOptional() @IsArray() @IsString({ each: true }) participantIds?: string[];
   @IsOptional() @IsBoolean() recordingEnabled?: boolean;
+  @IsOptional() @IsString() joinPassword?: string;
 }
 
 export class JoinMeetingAnonymousDto {

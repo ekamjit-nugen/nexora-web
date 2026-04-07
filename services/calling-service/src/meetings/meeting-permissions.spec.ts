@@ -1,17 +1,22 @@
 import {
   isHost, isCoHost, canPerformHostAction, canAdmitFromLobby,
   canMuteParticipant, canStartRecording, canEndMeeting, canManageBreakout,
-  verifyMeetingPassword, requireHostAction, requireHost,
+  verifyMeetingPassword, hashMeetingPassword, requireHostAction, requireHost,
 } from './meeting-permissions';
 import { ForbiddenException } from '@nestjs/common';
 
 describe('Meeting Permissions', () => {
-  const meeting = {
-    hostId: 'host-123',
-    coHostIds: ['cohost-456'],
-    settings: { recording: { allowParticipantStart: false } },
-    joinPassword: 'secret123',
-  };
+  let meeting: any;
+
+  beforeAll(async () => {
+    const hashedPassword = await hashMeetingPassword('secret123');
+    meeting = {
+      hostId: 'host-123',
+      coHostIds: ['cohost-456'],
+      settings: { recording: { allowParticipantStart: false } },
+      joinPassword: hashedPassword,
+    };
+  });
 
   describe('isHost', () => {
     it('should return true for host', () => {
@@ -67,14 +72,17 @@ describe('Meeting Permissions', () => {
   });
 
   describe('verifyMeetingPassword', () => {
-    it('should pass with correct password', () => {
-      expect(() => verifyMeetingPassword(meeting, 'secret123')).not.toThrow();
+    it('should pass with correct password', async () => {
+      await expect(verifyMeetingPassword(meeting, 'secret123')).resolves.toBeUndefined();
     });
-    it('should throw with wrong password', () => {
-      expect(() => verifyMeetingPassword(meeting, 'wrong')).toThrow(ForbiddenException);
+    it('should throw with wrong password', async () => {
+      await expect(verifyMeetingPassword(meeting, 'wrong')).rejects.toThrow(ForbiddenException);
     });
-    it('should pass when no password set', () => {
-      expect(() => verifyMeetingPassword({ joinPassword: null }, undefined)).not.toThrow();
+    it('should throw when password required but not provided', async () => {
+      await expect(verifyMeetingPassword(meeting, undefined)).rejects.toThrow(ForbiddenException);
+    });
+    it('should pass when no password set', async () => {
+      await expect(verifyMeetingPassword({ joinPassword: null }, undefined)).resolves.toBeUndefined();
     });
   });
 

@@ -1,8 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import axios from 'axios';
+import { IMessage } from '../messages/schemas/message.schema';
+import { IConversation } from '../conversations/schemas/conversation.schema';
 
 /**
  * E3 7.1: AI Smart Replies.
- * Generates 2-3 short reply suggestions based on incoming message context.
+ * Generates 3 short reply suggestions based on recent conversation context.
  * Only for DMs and small groups (not channels).
  */
 @Injectable()
@@ -11,13 +16,45 @@ export class SmartRepliesService {
   private readonly llmUrl = process.env.LLM_BASE_URL || 'http://host.docker.internal:7/v1/chat/completions';
   private readonly model = process.env.LLM_MODEL || 'deepseek';
 
-  async generateReplies(messageContent: string, conversationType: string): Promise<string[]> {
-    // Only generate for DMs and small groups
-    if (conversationType === 'channel') return [];
-    if (!messageContent?.trim()) return [];
+  constructor(
+    @InjectModel('Message') private messageModel: Model<IMessage>,
+    @InjectModel('Conversation') private conversationModel: Model<IConversation>,
+  ) {}
+
+  /**
+   * Generate smart reply suggestions for a conversation.
+   * Fetches the last 10 messages and asks the LLM for 3 short suggestions.
+   */
+  async generateSmartReplies(conversationId: string, userId: string): Promise<string[]> {
+    // Verify user is a participant
+    const conversation = await this.conversationModel.findOne({
+      _id: conversationId,
+      'participants.userId': userId,
+      isDeleted: false,
+    });
+    if (!conversation) throw new ForbiddenException('Not a participant');
+
+    // Only generate for DMs and small groups, not channels
+    if (conversation.type === 'channel') return [];
+
+    // Fetch last 10 messages
+    const messages = await this.messageModel.find({
+      conversationId,
+      isDeleted: false,
+      type: { $in: ['text', 'forwarded'] },
+    }).sort({ createdAt: -1 }).limit(10).lean();
+
+    if (messages.length === 0) return [];
+
+    // Don't suggest replies if the last message is from the current user
+    if (messages[0].senderId === userId) return [];
+
+    // Build conversation transcript (oldest first)
+    const transcript = messages.reverse().map(m =>
+      `${m.senderName || m.senderId}: ${m.contentPlainText || m.content}`
+    ).join('\n');
 
     try {
-      const axios = (await (Function('return import("axios")')())).default;
       const res = await axios.post(this.llmUrl, {
         model: this.model,
         stream: false,
@@ -25,11 +62,12 @@ export class SmartRepliesService {
           {
             role: 'system',
             content: `You are a smart reply suggestion engine for a workplace chat.
-Given the incoming message, suggest exactly 3 short, professional reply options.
-Return ONLY a JSON array of 3 strings, each under 50 characters.
+Given this conversation, suggest exactly 3 short, professional reply options that the user might want to send.
+Each reply must be under 50 characters.
+Return ONLY a JSON array of 3 strings.
 Example: ["Sure, I'll take a look", "Let me check and get back to you", "Thanks for letting me know"]`,
           },
-          { role: 'user', content: `Message: "${messageContent}"` },
+          { role: 'user', content: `Conversation:\n${transcript}` },
         ],
         temperature: 0.7,
         max_tokens: 200,
@@ -38,7 +76,7 @@ Example: ["Sure, I'll take a look", "Let me check and get back to you", "Thanks 
       const text = res.data?.choices?.[0]?.message?.content?.trim() || '[]';
       const cleaned = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
       const replies = JSON.parse(cleaned);
-      return Array.isArray(replies) ? replies.slice(0, 3) : [];
+      return Array.isArray(replies) ? replies.slice(0, 3).map((r: any) => String(r).slice(0, 50)) : [];
     } catch (err) {
       this.logger.debug(`Smart replies generation failed: ${err.message}`);
       return [];

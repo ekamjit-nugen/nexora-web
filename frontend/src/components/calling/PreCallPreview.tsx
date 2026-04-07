@@ -35,6 +35,8 @@ export function PreCallPreview({
   const [permissionError, setPermissionError] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const startCallRef = useRef<HTMLButtonElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -210,10 +212,59 @@ export function PreCallPreview({
     onCancel();
   }, [onCancel]);
 
+  // Auto-focus the Start Call button when dialog opens
+  useEffect(() => {
+    const timer = setTimeout(() => startCallRef.current?.focus(), 100);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Focus trapping within the dialog
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        handleCancel();
+        return;
+      }
+      if (e.key !== "Tab") return;
+
+      const focusableEls = dialog.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusableEls.length === 0) return;
+
+      const first = focusableEls[0];
+      const last = focusableEls[focusableEls.length - 1];
+
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [handleCancel]);
+
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={handleCancel} />
-      <div className="relative bg-[#1E293B] rounded-2xl shadow-2xl w-full max-w-md border border-[#334155] overflow-hidden">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Pre-call settings"
+        className="relative bg-[#1E293B] rounded-2xl shadow-2xl w-full max-w-md border border-[#334155] overflow-hidden"
+      >
         {/* Header */}
         <div className="px-6 py-4 border-b border-[#334155]">
           <h2 className="text-base font-semibold text-white">Call Preview</h2>
@@ -349,6 +400,7 @@ export function PreCallPreview({
             Cancel
           </button>
           <button
+            ref={startCallRef}
             onClick={handleStartCall}
             className="flex-1 h-10 rounded-lg text-sm font-medium bg-green-600 hover:bg-green-700 text-white transition-colors shadow-lg shadow-green-600/20"
           >

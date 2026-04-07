@@ -9,12 +9,13 @@ import type { Conversation, ChatMessage, Employee, ChatSettings } from "@/lib/ap
 import { useGlobalSocket } from "@/lib/socket-context";
 import { useWebRTC } from "@/lib/hooks/useWebRTC";
 import { useCallContext } from "@/lib/call-context";
-import { CallControls, VideoCallWindow, PreCallPreview } from "@/components/calling";
+import { CallControls, VideoCallWindow, PreCallPreview, CallFeedback } from "@/components/calling";
 import {
   MessageContent, ThreadPanel, PresenceIndicator, StatusSetter,
   GlobalSearch, FileBrowser, PinnedMessages, BookmarksList, AiSummaryPanel, VoiceRecorder, LinkPreview,
   GifPicker,
   VoiceHuddle,
+  ForwardModal,
 } from "@/components/chat";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { SkeletonLoader } from "@/components/SkeletonLoader";
@@ -196,6 +197,14 @@ export default function MessagesPage() {
   const [callStartTime, setCallStartTime] = useState<string | null>(null);
   const [showPreCallPreview, setShowPreCallPreview] = useState(false);
   const [isOnHold, setIsOnHold] = useState(false);
+
+  // Forward message state
+  const [forwardMessageId, setForwardMessageId] = useState<string | null>(null);
+
+  // Call feedback state
+  const [showCallFeedback, setShowCallFeedback] = useState(false);
+  const [feedbackCallId, setFeedbackCallId] = useState<string | null>(null);
+  const [feedbackCallDuration, setFeedbackCallDuration] = useState(0);
   const [preHoldAudioState, setPreHoldAudioState] = useState(true);
   const [preHoldVideoState, setPreHoldVideoState] = useState(false);
   const [showAddParticipantModal, setShowAddParticipantModal] = useState(false);
@@ -245,6 +254,11 @@ export default function MessagesPage() {
   const [showBookmarks, setShowBookmarks] = useState(false);
   const [showAiSummary, setShowAiSummary] = useState(false);
   const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
+
+  // Smart replies
+  const [smartReplies, setSmartReplies] = useState<string[]>([]);
+  const [smartRepliesLoading, setSmartRepliesLoading] = useState(false);
+  const smartRepliesTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Message scheduling
   const [scheduledAt, setScheduledAt] = useState<Date | null>(null);
@@ -514,6 +528,24 @@ export default function MessagesPage() {
       setMessages([]);
     }
   }, [activeId, fetchMessages]);
+
+  // ── Smart replies: fetch when conversation changes or new messages arrive ──
+  useEffect(() => {
+    setSmartReplies([]);
+    if (!activeId || !user) return;
+    if (smartRepliesTimerRef.current) clearTimeout(smartRepliesTimerRef.current);
+    smartRepliesTimerRef.current = setTimeout(async () => {
+      const lastMsg = messages[messages.length - 1];
+      if (!lastMsg || lastMsg.senderId === user._id) { setSmartReplies([]); return; }
+      setSmartRepliesLoading(true);
+      try {
+        const res = await chatApi.getSmartReplies(activeId);
+        setSmartReplies(res.data?.replies || []);
+      } catch { setSmartReplies([]); }
+      finally { setSmartRepliesLoading(false); }
+    }, 600);
+    return () => { if (smartRepliesTimerRef.current) clearTimeout(smartRepliesTimerRef.current); };
+  }, [activeId, messages.length, user?._id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Delta sync on reconnect ──
   const prevConnectedRef = useRef(false);
@@ -1503,6 +1535,9 @@ export default function MessagesPage() {
       // If callDisconnected is already showing, don't close immediately — the timeout handles it
       if (!callDisconnected) {
         setCallDisconnected(true);
+        // Capture call info before clearing state
+        const endedCallId = signaling.call?.callId;
+        const endedDuration = signaling.call?.duration || callDuration;
         setTimeout(() => {
           setShowCallWindow(false);
           setCallDisconnected(false);
@@ -1511,10 +1546,16 @@ export default function MessagesPage() {
           setIsAudioEnabled(true);
           setIsVideoEnabled(false);
           setIsCaller(false);
+          // Show feedback survey for calls > 10 seconds
+          if (status === "ended" && endedDuration > 10 && endedCallId) {
+            setFeedbackCallId(endedCallId);
+            setFeedbackCallDuration(endedDuration);
+            setShowCallFeedback(true);
+          }
         }, 3000);
       }
     }
-  }, [signaling.call?.status, callDisconnected]);
+  }, [signaling.call?.status, callDisconnected, signaling.call?.callId, signaling.call?.duration, callDuration]);
 
   // If peer connection drops, force cleanup (e.g., remote ended without event)
   useEffect(() => {
@@ -2237,6 +2278,62 @@ export default function MessagesPage() {
                                           )}
                                         </div>
                                       </div>
+                                    ) : msg.type === "audio" && msg.fileUrl ? (
+                                      <div className="min-w-[240px]">
+                                        <audio src={msg.fileUrl} controls className="w-full h-8" preload="metadata" />
+                                        {msg.fileName && <p className="text-[10px] opacity-60 mt-1 truncate">{msg.fileName}</p>}
+                                        {/* Voice transcription */}
+                                        {msg.transcription ? (
+                                          <div className="mt-1.5 px-2 py-1.5 bg-black/5 rounded-lg">
+                                            <p className="text-[10px] font-medium opacity-50 mb-0.5">Transcription</p>
+                                            <p className="text-[11px] opacity-80 leading-relaxed">{msg.transcription}</p>
+                                          </div>
+                                        ) : (
+                                          <button
+                                            onClick={async () => {
+                                              try {
+                                                const SpeechRecognitionApi = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+                                                if (!SpeechRecognitionApi) { toast.error("Speech recognition not supported in this browser"); return; }
+                                                toast.info("Transcribing voice message...");
+                                                const audioEl = new Audio(msg.fileUrl);
+                                                audioEl.crossOrigin = "anonymous";
+                                                const audioCtx = new AudioContext();
+                                                const source = audioCtx.createMediaElementSource(audioEl);
+                                                const dest = audioCtx.createMediaStreamDestination();
+                                                source.connect(dest);
+                                                source.connect(audioCtx.destination);
+                                                const recognition = new SpeechRecognitionApi();
+                                                recognition.continuous = true;
+                                                recognition.interimResults = false;
+                                                recognition.lang = "en-US";
+                                                let transcript = "";
+                                                recognition.onresult = (event: any) => {
+                                                  for (let i = event.resultIndex; i < event.results.length; i++) {
+                                                    if (event.results[i].isFinal) transcript += event.results[i][0].transcript + " ";
+                                                  }
+                                                };
+                                                recognition.onend = async () => {
+                                                  audioCtx.close();
+                                                  const text = transcript.trim() || "Unable to transcribe";
+                                                  try {
+                                                    await chatApi.transcribeVoiceMessage(msg._id, text);
+                                                    setMessages(prev => prev.map(m => m._id === msg._id ? { ...m, transcription: text } : m));
+                                                    toast.success("Transcription saved");
+                                                  } catch { toast.error("Failed to save transcription"); }
+                                                };
+                                                recognition.onerror = () => { audioCtx.close(); toast.error("Transcription failed"); };
+                                                audioEl.onended = () => { setTimeout(() => recognition.stop(), 500); };
+                                                recognition.start();
+                                                audioEl.play();
+                                              } catch { toast.error("Transcription failed"); }
+                                            }}
+                                            className="mt-1.5 flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-[#2E86C1] bg-[#EBF5FF] hover:bg-[#D6EBFA] rounded-md transition-colors"
+                                          >
+                                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z" /></svg>
+                                            Transcribe
+                                          </button>
+                                        )}
+                                      </div>
                                     ) : msg.type === "file" ? (
                                       <div className="py-1.5 min-w-[220px]">
                                         <div className="flex items-center gap-3">
@@ -2295,6 +2392,16 @@ export default function MessagesPage() {
                                         title="Reply in thread"
                                       >
                                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                      </button>
+                                    )}
+                                    {/* Forward message action */}
+                                    {!isDeleted && (
+                                      <button
+                                        onClick={() => setForwardMessageId(msg._id)}
+                                        className="opacity-0 group-hover:opacity-100 ml-0.5 p-0.5 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition-all"
+                                        title="Forward"
+                                      >
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
                                       </button>
                                     )}
                                   </div>
@@ -2422,6 +2529,24 @@ export default function MessagesPage() {
                   currentUserId={user._id}
                   currentUserName={`${user.firstName || ""} ${user.lastName || ""}`.trim() || "User"}
                 />
+              )}
+
+              {/* Smart Reply Suggestions */}
+              {smartReplies.length > 0 && (
+                <div className="px-5 pb-1 pt-1 shrink-0">
+                  <div className="flex flex-wrap gap-1.5">
+                    {smartReplies.map((reply, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => { setInput(reply); setSmartReplies([]); textareaRef.current?.focus(); }}
+                        className="px-3 py-1.5 text-[12px] text-[#2E86C1] bg-[#EBF5FF] hover:bg-[#D6EBFA] border border-[#BEE0F7] rounded-full transition-colors font-medium truncate max-w-[200px]"
+                        title={reply}
+                      >
+                        {reply}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
 
               {/* Input Area */}
@@ -3693,6 +3818,23 @@ export default function MessagesPage() {
         <div className="fixed top-0 right-0 h-full z-40 shadow-2xl">
           <AiSummaryPanel conversationId={activeId} onClose={() => setShowAiSummary(false)} />
         </div>
+      )}
+
+      {/* Forward Message Modal */}
+      {forwardMessageId && (
+        <ForwardModal
+          messageId={forwardMessageId}
+          onClose={() => setForwardMessageId(null)}
+        />
+      )}
+
+      {/* Call Quality Feedback */}
+      {showCallFeedback && feedbackCallId && (
+        <CallFeedback
+          callId={feedbackCallId}
+          duration={feedbackCallDuration}
+          onClose={() => { setShowCallFeedback(false); setFeedbackCallId(null); }}
+        />
       )}
 
       {/* Float-up keyframe for emoji animation */}

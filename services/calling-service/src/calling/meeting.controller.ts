@@ -18,6 +18,7 @@ import {
 } from '@nestjs/common';
 import { MeetingService } from './meeting.service';
 import { MeetingGateway } from './meeting.gateway';
+import { CaptionsService } from '../meetings/captions/captions.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Roles, RolesGuard } from './guards/roles.guard';
 import {
@@ -35,6 +36,7 @@ export class MeetingController {
   constructor(
     private meetingService: MeetingService,
     private meetingGateway: MeetingGateway,
+    private captionsService: CaptionsService,
   ) {}
 
   /** Schedule a new meeting */
@@ -217,6 +219,79 @@ export class MeetingController {
     } catch (err) {
       throw new BadRequestException(err.message);
     }
+  }
+
+  /** Toggle captions for a user */
+  @Post(':meetingId/captions/toggle')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async toggleCaptions(
+    @Param('meetingId') meetingId: string,
+    @Body() body: { enabled: boolean },
+    @Req() req: any,
+  ) {
+    const userId = req.user.sub || req.user.userId;
+    if (body.enabled) {
+      this.captionsService.enableCaptions(meetingId, userId);
+    } else {
+      this.captionsService.disableCaptions(meetingId, userId);
+    }
+    return {
+      success: true,
+      data: {
+        enabled: body.enabled,
+        serverTranscriptionAvailable: this.captionsService.isServerTranscriptionAvailable(),
+      },
+    };
+  }
+
+  /** Submit an audio chunk for server-side transcription */
+  @Post(':meetingId/captions/chunk')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async submitCaptionChunk(
+    @Param('meetingId') meetingId: string,
+    @Body() body: { audioData: string; language?: string; speakerName?: string },
+    @Req() req: any,
+  ) {
+    try {
+      const userId = req.user.sub || req.user.userId;
+      const speakerName = body.speakerName || [req.user.firstName, req.user.lastName].filter(Boolean).join(' ') || 'Unknown';
+
+      // Decode base64 audio data
+      const audioBuffer = Buffer.from(body.audioData, 'base64');
+
+      const segment = await this.captionsService.processAudioChunk(
+        meetingId, userId, speakerName, audioBuffer, body.language || 'en',
+      );
+
+      if (segment) {
+        // Broadcast caption to all users in the meeting who have captions enabled
+        const captionUsers = this.captionsService.getCaptionUsers(meetingId);
+        captionUsers.forEach(uid => {
+          this.meetingGateway.notifyUser(uid, 'meeting:caption', segment);
+        });
+      }
+
+      return { success: true, data: segment };
+    } catch (err) {
+      throw new BadRequestException(err.message);
+    }
+  }
+
+  /** Check if server-side captions are available */
+  @Get(':meetingId/captions/status')
+  @UseGuards(JwtAuthGuard)
+  async getCaptionsStatus(@Param('meetingId') meetingId: string, @Req() req: any) {
+    const userId = req.user.sub || req.user.userId;
+    return {
+      success: true,
+      data: {
+        enabled: this.captionsService.isCaptionsEnabled(meetingId, userId),
+        serverTranscriptionAvailable: this.captionsService.isServerTranscriptionAvailable(),
+        captionUsers: this.captionsService.getCaptionUsers(meetingId),
+      },
+    };
   }
 
   /** Item 24: ICS calendar export */

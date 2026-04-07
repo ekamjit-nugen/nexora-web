@@ -12,6 +12,7 @@ import { CallSchema } from './schemas/call.schema';
 import { MeetingSchema } from './schemas/meeting.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CallsModule } from '../calls/calls.module';
+import { MeetingsModule } from '../meetings/meetings.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { CallsModule } from '../calls/calls.module';
       { name: 'Meeting', schema: MeetingSchema },
     ]),
     CallsModule,
+    MeetingsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

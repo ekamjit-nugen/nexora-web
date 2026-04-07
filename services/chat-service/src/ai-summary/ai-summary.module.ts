@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AiSummaryController } from './ai-summary.controller';
 import { AiSummaryService } from './ai-summary.service';
+import { SmartRepliesService } from './smart-replies.service';
 import { MessageSchema } from '../messages/schemas/message.schema';
 import { ConversationSchema } from '../conversations/schemas/conversation.schema';
 
@@ -13,7 +14,7 @@ import { ConversationSchema } from '../conversations/schemas/conversation.schema
     ]),
   ],
   controllers: [AiSummaryController],
-  providers: [AiSummaryService],
-  exports: [AiSummaryService],
+  providers: [AiSummaryService, SmartRepliesService],
+  exports: [AiSummaryService, SmartRepliesService],
 })
 export class AiSummaryModule {}

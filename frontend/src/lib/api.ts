@@ -631,6 +631,7 @@ export interface ChatMessage {
   isEdited: boolean;
   isDeleted: boolean;
   readBy: Array<{ userId: string; readAt: string }>;
+  transcription?: string;
   createdAt: string;
 }
 
@@ -786,6 +787,16 @@ export const chatApi = {
   reviewFlagged: (id: string, data: { status: string }) =>
     request(`/chat/moderation/flagged/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   getModerationStats: () => request("/chat/moderation/stats"),
+
+  // Smart Replies (AI)
+  getSmartReplies: (conversationId: string) =>
+    request<{ replies: string[] }>(`/chat/ai/smart-replies/${conversationId}`),
+
+  // Voice Message Transcription
+  transcribeVoiceMessage: (messageId: string, transcription: string) =>
+    request(`/chat/voice/${messageId}/transcribe`, { method: "POST", body: JSON.stringify({ transcription }) }),
+  getVoiceTranscription: (messageId: string) =>
+    request<{ transcription: string | null }>(`/chat/voice/${messageId}/transcription`),
 };
 
 // ── Media API ──
@@ -1640,6 +1651,21 @@ export const meetingApi = {
 
   getBySprint: (sprintId: string) =>
     request<Meeting[]>(`/meetings/sprint/${sprintId}`),
+
+  // Live Captions
+  toggleCaptions: (meetingId: string, enabled: boolean) =>
+    request<{ enabled: boolean; serverTranscriptionAvailable: boolean }>(
+      `/meetings/${meetingId}/captions/toggle`, { method: "POST", body: JSON.stringify({ enabled }) },
+    ),
+  getCaptionsStatus: (meetingId: string) =>
+    request<{ enabled: boolean; serverTranscriptionAvailable: boolean; captionUsers: string[] }>(
+      `/meetings/${meetingId}/captions/status`,
+    ),
+  submitCaptionChunk: (meetingId: string, audioData: string, language?: string, speakerName?: string) =>
+    request(`/meetings/${meetingId}/captions/chunk`, {
+      method: "POST",
+      body: JSON.stringify({ audioData, language, speakerName }),
+    }),
 };
 
 export const platformApi = {
@@ -1681,4 +1707,74 @@ export const platformApi = {
     request(`/reports/scheduled/${reportId}`, { method: 'DELETE' }),
   executeScheduledReport: (reportId: string) =>
     request<Blob>(`/reports/scheduled/${reportId}/execute`, { method: 'POST' }),
+};
+
+// ── Chat Moderation ──
+
+export const moderationApi = {
+  getFlagged: () => request<any[]>('/chat/moderation/flagged'),
+  reviewFlagged: (id: string, data: { status: string; action?: string }) =>
+    request<any>(`/chat/moderation/flagged/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getStats: () => request<any>('/chat/moderation/stats'),
+};
+
+// ── Chat Compliance ──
+
+export const complianceApi = {
+  // Retention
+  getRetentionPolicies: () => request<any[]>('/chat/compliance/retention'),
+  createRetentionPolicy: (data: any) =>
+    request<any>('/chat/compliance/retention', { method: 'POST', body: JSON.stringify(data) }),
+  updateRetentionPolicy: (id: string, data: any) =>
+    request<any>(`/chat/compliance/retention/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteRetentionPolicy: (id: string) =>
+    request(`/chat/compliance/retention/${id}`, { method: 'DELETE' }),
+
+  // DLP
+  getDlpRules: () => request<any[]>('/chat/compliance/dlp'),
+  createDlpRule: (data: any) =>
+    request<any>('/chat/compliance/dlp', { method: 'POST', body: JSON.stringify(data) }),
+  updateDlpRule: (id: string, data: any) =>
+    request<any>(`/chat/compliance/dlp/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteDlpRule: (id: string) =>
+    request(`/chat/compliance/dlp/${id}`, { method: 'DELETE' }),
+  getBuiltinPatterns: () => request<any[]>('/chat/compliance/dlp/patterns'),
+
+  // eDiscovery
+  searchEdiscovery: (params: { q?: string; from?: string; conversationId?: string; before?: string; after?: string; page?: number }) =>
+    request<any>(`/chat/compliance/ediscovery/search?${new URLSearchParams(Object.entries(params).filter(([_, v]) => v != null).map(([k, v]) => [k, String(v)])).toString()}`),
+  exportEdiscovery: (data: any) =>
+    request<any>('/chat/compliance/ediscovery/export', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Legal Holds
+  getLegalHolds: () => request<any[]>('/chat/compliance/legal-holds'),
+  createLegalHold: (data: any) =>
+    request<any>('/chat/compliance/legal-holds', { method: 'POST', body: JSON.stringify(data) }),
+  releaseLegalHold: (id: string) =>
+    request<any>(`/chat/compliance/legal-holds/${id}/release`, { method: 'POST' }),
+};
+
+// ── Chat Analytics ──
+
+export const chatAnalyticsApi = {
+  getInsights: (from?: string, to?: string) => {
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    return request<any>(`/chat/analytics?${params.toString()}`);
+  },
+};
+
+// ── Chat Webhooks ──
+
+export const webhookApi = {
+  getWebhooks: () => request<any[]>('/chat/webhooks'),
+  createOutgoing: (data: { conversationId: string; name: string; targetUrl: string; events: string[] }) =>
+    request<any>('/chat/webhooks/outgoing', { method: 'POST', body: JSON.stringify(data) }),
+  createIncoming: (data: { conversationId: string; name: string; avatarUrl?: string }) =>
+    request<any>('/chat/webhooks/incoming', { method: 'POST', body: JSON.stringify(data) }),
+  deleteWebhook: (id: string) =>
+    request(`/chat/webhooks/${id}`, { method: 'DELETE' }),
+  toggleWebhook: (id: string) =>
+    request<any>(`/chat/webhooks/${id}/toggle`, { method: 'POST' }),
 };

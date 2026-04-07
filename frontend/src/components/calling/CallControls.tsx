@@ -132,7 +132,7 @@ export function CallControls({
         {formatDuration(typeof duration === "number" ? duration : elapsed)}
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3" role="toolbar" aria-label="Call controls">
       {/* Connection Quality Indicator */}
       {connectionQuality && (
         <div className="flex items-center gap-1.5 mr-1" title={qualityLabel}>
@@ -149,6 +149,8 @@ export function CallControls({
         onClick={() => onToggleAudio(!isAudioEnabled)}
         className={`${btnBase} ${isAudioEnabled ? btnActive : btnOff}`}
         title={isAudioEnabled ? "Mute" : "Unmute"}
+        aria-label="Toggle microphone"
+        aria-pressed={isAudioEnabled}
       >
         {isAudioEnabled ? (
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -167,6 +169,8 @@ export function CallControls({
         onClick={() => onToggleVideo(!isVideoEnabled)}
         className={`${btnBase} ${isVideoEnabled ? btnActive : btnOff}`}
         title={isVideoEnabled ? "Turn off camera" : "Turn on camera"}
+        aria-label="Toggle camera"
+        aria-pressed={isVideoEnabled}
       >
         {isVideoEnabled ? (
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -185,6 +189,8 @@ export function CallControls({
         onClick={onToggleScreenShare}
         className={`${btnBase} ${isScreenSharing ? "bg-[#2563EB] text-white hover:bg-[#1D4ED8]" : btnActive}`}
         title={isScreenSharing ? "Stop sharing" : "Share screen"}
+        aria-label="Share screen"
+        aria-pressed={isScreenSharing}
       >
         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25A2.25 2.25 0 015.25 3h13.5A2.25 2.25 0 0121 5.25z" />
@@ -197,6 +203,8 @@ export function CallControls({
           onClick={onToggleBlur}
           className={`${btnBase} ${isBlurEnabled ? "bg-[#2563EB] text-white hover:bg-[#1D4ED8]" : btnActive}`}
           title={isBlurEnabled ? "Disable blur" : "Enable blur (Privacy Mode)"}
+          aria-label="Toggle background blur"
+          aria-pressed={isBlurEnabled}
         >
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             {isBlurEnabled ? (
@@ -216,6 +224,7 @@ export function CallControls({
         onClick={onToggleRecording}
         className={`${btnBase} ${isRecording ? "bg-red-500 text-white hover:bg-red-600 animate-pulse" : btnActive}`}
         title={isRecording ? "Stop recording" : "Start recording"}
+        aria-label={isRecording ? "Stop recording" : "Start recording"}
       >
         {isRecording ? (
           <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -234,6 +243,7 @@ export function CallControls({
         onClick={onAddParticipant}
         className={`${btnBase} ${btnActive}`}
         title="Add participant"
+        aria-label="Add participant"
       >
         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
@@ -246,6 +256,8 @@ export function CallControls({
           onClick={onToggleHold}
           className={`${btnBase} ${isOnHold ? "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30" : btnActive}`}
           title={isOnHold ? "Resume call" : "Hold call"}
+          aria-label="Toggle hold"
+          aria-pressed={isOnHold}
         >
           {isOnHold ? (
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -265,6 +277,7 @@ export function CallControls({
         onClick={onToggleFullscreen}
         className={`${btnBase} ${isFullscreen ? "bg-[#2563EB] text-white hover:bg-[#1D4ED8]" : btnActive}`}
         title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+        aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
       >
         {isFullscreen ? (
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -283,6 +296,7 @@ export function CallControls({
           onClick={togglePip}
           className={`${btnBase} ${isPipActive ? "bg-[#2563EB] text-white hover:bg-[#1D4ED8]" : btnActive}`}
           title={isPipActive ? "Exit Picture-in-Picture" : "Picture-in-Picture"}
+          aria-label="Picture in Picture"
         >
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <rect x="2" y="3" width="20" height="14" rx="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -296,6 +310,7 @@ export function CallControls({
         onClick={onEndCall}
         className={`${btnBase} bg-red-500 hover:bg-red-600 text-white shadow-[0_8px_20px_rgba(239,68,68,0.3)]`}
         title="End call"
+        aria-label="End call"
       >
         <svg className="w-5 h-5 rotate-[135deg]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />

@@ -24,19 +24,35 @@ const SIZE_CLASSES: Record<string, string> = {
   lg: "w-3 h-3",
 };
 
+const STATUS_LABELS: Record<string, string> = {
+  online: "Online",
+  away: "Away",
+  busy: "Busy",
+  dnd: "Do Not Disturb",
+  in_meeting: "In a Meeting",
+  in_call: "In a Call",
+  presenting: "Presenting",
+  offline: "Offline",
+  ooo: "Out of Office",
+};
+
 export function PresenceIndicator({ status, size = "md", className = "" }: PresenceIndicatorProps) {
   const colorClass = STATUS_COLORS[status] || STATUS_COLORS.offline;
   const sizeClass = SIZE_CLASSES[size];
   const isDnd = status === "dnd";
+  const statusLabel = STATUS_LABELS[status] || status.replace("_", " ");
 
   return (
     <span
       className={`inline-block rounded-full border-2 border-white ${colorClass} ${sizeClass} ${className}`}
-      title={status.replace("_", " ")}
+      title={statusLabel}
+      aria-label={statusLabel}
+      role="status"
     >
       {isDnd && (
-        <span className="block w-full h-0.5 bg-white rounded-full mt-[3px]" />
+        <span className="block w-full h-0.5 bg-white rounded-full mt-[3px]" aria-hidden="true" />
       )}
+      <span className="sr-only">{statusLabel}</span>
     </span>
   );
 }

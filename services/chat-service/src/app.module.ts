@@ -7,6 +7,7 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 
 // Infrastructure
 import { QueueModule } from './common/queue/queue.module';
+import { CacheModule } from './common/cache/cache.module';
 import { EventsModule } from './common/events/events.module';
 
 // Domain modules
@@ -65,6 +66,7 @@ import { HealthModule } from './health/health.module';
 
     // Infrastructure
     QueueModule,
+    CacheModule,
     EventsModule,
 
     // Legacy module (existing routes still work)

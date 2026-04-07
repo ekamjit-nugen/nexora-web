@@ -15,6 +15,7 @@ import {
   AddTranscriptDto,
   MeetingQueryDto,
 } from './dto/index';
+import { hashMeetingPassword } from '../meetings/meeting-permissions';
 
 @Injectable()
 export class MeetingService {
@@ -32,6 +33,12 @@ export class MeetingService {
   ) {
     const meetingId = randomUUID();
 
+    // Hash the join password if provided
+    let hashedPassword: string | null = null;
+    if (dto.joinPassword) {
+      hashedPassword = await hashMeetingPassword(dto.joinPassword);
+    }
+
     const meeting = await this.meetingModel.create({
       organizationId,
       meetingId,
@@ -48,10 +55,15 @@ export class MeetingService {
       isRecording: false,
       transcript: [],
       sprintId: dto.sprintId,
+      joinPassword: hashedPassword,
     });
 
     this.logger.log(`Meeting scheduled: ${meetingId} by ${hostId}`);
-    return meeting;
+
+    // Strip hashed password from response
+    const result = meeting.toObject();
+    delete result.joinPassword;
+    return result;
   }
 
   async getMeeting(meetingId: string) {
@@ -67,7 +79,10 @@ export class MeetingService {
     if (!isParticipant) {
       throw new ForbiddenException('You are not invited to this meeting');
     }
-    return meeting;
+    // Strip hashed password from response
+    const result = meeting.toObject();
+    delete result.joinPassword;
+    return result;
   }
 
   async getPublicMeetingInfo(meetingId: string) {
@@ -100,8 +115,11 @@ export class MeetingService {
       this.meetingModel.countDocuments(filter),
     ]);
 
+    // Strip hashed passwords from response
+    const sanitized = meetings.map(({ joinPassword, ...rest }) => rest);
+
     return {
-      meetings,
+      meetings: sanitized,
       pagination: { total, page, limit, pages: Math.ceil(total / limit) },
     };
   }
@@ -115,9 +133,18 @@ export class MeetingService {
     if (meeting.hostId !== userId)
       throw new ForbiddenException('Only the host can update this meeting');
 
+    // Hash new password if provided
+    if (dto.joinPassword) {
+      dto.joinPassword = await hashMeetingPassword(dto.joinPassword);
+    }
+
     Object.assign(meeting, dto);
     await meeting.save();
-    return meeting;
+
+    // Strip hashed password from response
+    const result = meeting.toObject();
+    delete result.joinPassword;
+    return result;
   }
 
   async startMeeting(meetingId: string, hostId: string) {

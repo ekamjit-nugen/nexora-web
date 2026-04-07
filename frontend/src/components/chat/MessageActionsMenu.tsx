@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { chatApi } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -21,6 +21,7 @@ interface MessageActionsMenuProps {
   onDelete?: () => void;
   anchorPosition: { top: number; left: number };
   onClose: () => void;
+  triggerRef?: React.RefObject<HTMLElement | null>;
 }
 
 const QUICK_REACTIONS = ["👍", "❤️", "😄", "😮", "😢", "🔥"];
@@ -29,7 +30,7 @@ export function MessageActionsMenu({
   messageId, conversationId,
   isOwnMessage, isAdmin, isPinned,
   onReplyInThread, onReact, onPin, onUnpin, onForward, onCopyText, onBookmark,
-  onEdit, onDelete, anchorPosition, onClose,
+  onEdit, onDelete, anchorPosition, onClose, triggerRef,
 }: MessageActionsMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -41,6 +42,43 @@ export function MessageActionsMenu({
     return () => document.removeEventListener("mousedown", handler);
   }, [onClose]);
 
+  // Focus first menu item on mount
+  useEffect(() => {
+    const firstItem = menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]');
+    firstItem?.focus();
+  }, []);
+
+  // Return focus to trigger on close
+  const handleClose = useCallback(() => {
+    triggerRef?.current?.focus();
+    onClose();
+  }, [onClose, triggerRef]);
+
+  // Keyboard navigation: Arrow Up/Down to move, Enter to select, Escape to close
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const items = menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]');
+    if (!items || items.length === 0) return;
+    const currentIndex = Array.from(items).findIndex((el) => el === document.activeElement);
+
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        items[(currentIndex + 1) % items.length]?.focus();
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        items[(currentIndex - 1 + items.length) % items.length]?.focus();
+        break;
+      case "Escape":
+        e.preventDefault();
+        handleClose();
+        break;
+      case "Tab":
+        e.preventDefault(); // Trap focus within menu
+        break;
+    }
+  }, [handleClose]);
+
   // Adjust position to stay on screen
   const top = Math.min(anchorPosition.top, window.innerHeight - 350);
   const left = Math.min(anchorPosition.left, window.innerWidth - 200);
@@ -48,16 +86,21 @@ export function MessageActionsMenu({
   return (
     <div
       ref={menuRef}
+      role="menu"
+      aria-label="Message actions"
       className="fixed z-50 bg-white rounded-xl shadow-2xl border border-slate-200 py-1 w-[200px]"
       style={{ top, left }}
+      onKeyDown={handleKeyDown}
     >
       {/* Quick reactions row */}
-      <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-slate-100">
+      <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-slate-100" role="group" aria-label="Quick reactions">
         {QUICK_REACTIONS.map(emoji => (
           <button
             key={emoji}
-            onClick={() => { onReact(emoji); onClose(); }}
+            role="menuitem"
+            onClick={() => { onReact(emoji); handleClose(); }}
             className="p-1 rounded hover:bg-slate-100 text-base transition-colors"
+            aria-label={`React with ${emoji}`}
           >
             {emoji}
           </button>
@@ -65,26 +108,26 @@ export function MessageActionsMenu({
       </div>
 
       {/* Actions */}
-      <MenuItem icon="💬" label="Reply in thread" onClick={() => { onReplyInThread(); onClose(); }} />
-      <MenuItem icon="➡️" label="Forward" onClick={() => { onForward(); onClose(); }} />
-      <MenuItem icon="📋" label="Copy text" onClick={() => { onCopyText(); onClose(); }} />
-      <MenuItem icon="🔖" label="Save" onClick={() => { onBookmark(); onClose(); }} />
-      <ReminderMenuItem messageId={messageId} conversationId={conversationId} onClose={onClose} />
+      <MenuItem icon="💬" label="Reply in thread" onClick={() => { onReplyInThread(); handleClose(); }} />
+      <MenuItem icon="➡️" label="Forward" onClick={() => { onForward(); handleClose(); }} />
+      <MenuItem icon="📋" label="Copy text" onClick={() => { onCopyText(); handleClose(); }} />
+      <MenuItem icon="🔖" label="Save" onClick={() => { onBookmark(); handleClose(); }} />
+      <ReminderMenuItem messageId={messageId} conversationId={conversationId} onClose={handleClose} />
       <MenuItem
         icon={isPinned ? "📌" : "📌"}
         label={isPinned ? "Unpin" : "Pin"}
-        onClick={() => { isPinned ? onUnpin() : onPin(); onClose(); }}
+        onClick={() => { isPinned ? onUnpin() : onPin(); handleClose(); }}
       />
 
       {isOwnMessage && onEdit && (
         <>
           <div className="h-px bg-slate-100 my-0.5" />
-          <MenuItem icon="✏️" label="Edit" onClick={() => { onEdit(); onClose(); }} />
+          <MenuItem icon="✏️" label="Edit" onClick={() => { onEdit(); handleClose(); }} />
         </>
       )}
 
       {(isOwnMessage || isAdmin) && onDelete && (
-        <MenuItem icon="🗑️" label="Delete" onClick={() => { onDelete(); onClose(); }} danger />
+        <MenuItem icon="🗑️" label="Delete" onClick={() => { onDelete(); handleClose(); }} danger />
       )}
     </div>
   );
@@ -93,12 +136,13 @@ export function MessageActionsMenu({
 function MenuItem({ icon, label, onClick, danger }: { icon: string; label: string; onClick: () => void; danger?: boolean }) {
   return (
     <button
+      role="menuitem"
       onClick={onClick}
       className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-xs transition-colors ${
         danger ? "text-red-600 hover:bg-red-50" : "text-slate-700 hover:bg-slate-50"
       }`}
     >
-      <span className="text-sm">{icon}</span>
+      <span className="text-sm" aria-hidden="true">{icon}</span>
       <span className="font-medium">{label}</span>
     </button>
   );

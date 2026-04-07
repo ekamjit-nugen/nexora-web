@@ -16,3 +16,4 @@ export { UnreadBanner } from "./UnreadBanner";
 export { MessageActionsMenu } from "./MessageActionsMenu";
 export { GifPicker } from "./GifPicker";
 export { VoiceHuddle } from "./VoiceHuddle";
+export { ForwardModal } from "./ForwardModal";

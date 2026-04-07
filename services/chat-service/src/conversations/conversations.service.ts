@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException, ForbiddenException, BadRequestEx
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { IConversation } from './schemas/conversation.schema';
+import { CacheService } from '../common/cache/cache.service';
 
 @Injectable()
 export class ConversationsService {
@@ -9,7 +10,18 @@ export class ConversationsService {
 
   constructor(
     @InjectModel('Conversation') private conversationModel: Model<IConversation>,
+    private cacheService: CacheService,
   ) {}
+
+  /**
+   * Invalidate conversation caches for all participants of a conversation.
+   */
+  private async invalidateConversationCache(conversationId: string, participantUserIds: string[]) {
+    await this.cacheService.del(`conv:${conversationId}`);
+    for (const userId of participantUserIds) {
+      await this.cacheService.del(`conv:user:${userId}`);
+    }
+  }
 
   async createDirectConversation(userId1: string, userId2: string) {
     const existing = await this.conversationModel.findOne({
@@ -32,6 +44,7 @@ export class ConversationsService {
     });
 
     await conversation.save();
+    await this.invalidateConversationCache(conversation._id.toString(), [userId1, userId2]);
     this.logger.log(`Direct conversation created: ${conversation._id}`);
     return conversation;
   }
@@ -55,6 +68,7 @@ export class ConversationsService {
     });
 
     await conversation.save();
+    await this.invalidateConversationCache(conversation._id.toString(), allMemberIds);
     this.logger.log(`Group created: ${conversation._id} - ${name}`);
     return conversation;
   }
@@ -84,11 +98,17 @@ export class ConversationsService {
     });
 
     await conversation.save();
+    await this.invalidateConversationCache(conversation._id.toString(), allMemberIds);
     this.logger.log(`Channel created: ${conversation._id} - ${name} (${channelType})`);
     return conversation;
   }
 
   async getMyConversations(userId: string) {
+    // Check cache first
+    const cacheKey = `conv:user:${userId}`;
+    const cached = await this.cacheService.get<any[]>(cacheKey);
+    if (cached) return cached;
+
     const conversations = await this.conversationModel
       .find({ 'participants.userId': userId, isDeleted: false })
       .sort({ 'lastMessage.sentAt': -1, updatedAt: -1 })
@@ -100,14 +120,31 @@ export class ConversationsService {
       return bPinned - aPinned;
     });
 
+    // Cache for 60 seconds
+    await this.cacheService.set(cacheKey, conversations, 60);
+
     return conversations;
   }
 
   async getConversation(conversationId: string, userId: string) {
+    // Check cache first
+    const cacheKey = `conv:${conversationId}`;
+    const cached = await this.cacheService.get<any>(cacheKey);
+    if (cached) {
+      // Still validate participant access from cached data
+      const isParticipant = cached.participants?.some((p: any) => p.userId === userId);
+      if (!isParticipant) throw new ForbiddenException('You are not a participant of this conversation');
+      return cached;
+    }
+
     const conversation = await this.conversationModel.findOne({ _id: conversationId, isDeleted: false });
     if (!conversation) throw new NotFoundException('Conversation not found');
     const isParticipant = conversation.participants.some((p) => p.userId === userId);
     if (!isParticipant) throw new ForbiddenException('You are not a participant of this conversation');
+
+    // Cache for 120 seconds
+    await this.cacheService.set(cacheKey, conversation.toObject(), 120);
+
     return conversation;
   }
 
@@ -134,11 +171,13 @@ export class ConversationsService {
       muted: false,
     }));
 
-    return this.conversationModel.findByIdAndUpdate(
+    const updated = await this.conversationModel.findByIdAndUpdate(
       conversationId,
       { $push: { participants: { $each: newParticipants } } },
       { new: true },
     );
+    await this.invalidateConversationCache(conversationId, [...existingUserIds, ...newUserIds]);
+    return updated;
   }
 
   async removeParticipant(conversationId: string, userId: string, removedBy: string) {
@@ -152,9 +191,12 @@ export class ConversationsService {
       throw new ForbiddenException('Only owners and admins can remove participants');
     }
 
-    return this.conversationModel.findByIdAndUpdate(
+    const allUserIds = conversation.participants.map((p) => p.userId);
+    const updated = await this.conversationModel.findByIdAndUpdate(
       conversationId, { $pull: { participants: { userId } } }, { new: true },
     );
+    await this.invalidateConversationCache(conversationId, allUserIds);
+    return updated;
   }
 
   async leaveConversation(conversationId: string, userId: string) {
@@ -163,7 +205,9 @@ export class ConversationsService {
     if (!conversation.participants.some((p) => p.userId === userId)) throw new ForbiddenException('Not a participant');
     if (conversation.type === 'direct') throw new ForbiddenException('Cannot leave a direct conversation');
 
+    const allUserIds = conversation.participants.map((p) => p.userId);
     await this.conversationModel.findByIdAndUpdate(conversationId, { $pull: { participants: { userId } } });
+    await this.invalidateConversationCache(conversationId, allUserIds);
     return { message: 'Left conversation successfully' };
   }
 
@@ -346,5 +390,10 @@ export class ConversationsService {
       },
       $inc: { messageCount: 1 },
     });
+
+    // Invalidate conversation cache (conversation metadata changed)
+    await this.cacheService.del(`conv:${conversationId}`);
+    // Invalidate user conversation lists for all participants (they need updated lastMessage)
+    await this.cacheService.invalidatePattern(`conv:user:*`);
   }
 }

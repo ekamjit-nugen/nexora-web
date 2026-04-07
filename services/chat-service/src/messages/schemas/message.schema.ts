@@ -147,6 +147,7 @@ export interface IMessage extends Document {
   isScheduled: boolean;
   isFlagged: boolean;
   flaggedAt?: Date;
+  transcription?: string;
   botId?: string;
   webhookId?: string;
   createdAt: Date;
@@ -289,6 +290,7 @@ export const MessageSchema = new Schema<IMessage>(
     isScheduled: { type: Boolean, default: false },
     isFlagged: { type: Boolean, default: false },
     flaggedAt: { type: Date, default: null },
+    transcription: { type: String, default: null },
     botId: { type: String, default: null },
     webhookId: { type: String, default: null },
   },
