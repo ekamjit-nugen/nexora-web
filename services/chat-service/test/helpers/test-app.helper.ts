@@ -71,7 +71,7 @@ export async function clearCollection(module: TestingModule, modelName: string):
 export async function clearAllCollections(module: TestingModule): Promise<void> {
   const collections = ['Conversation', 'Message', 'ChatSettings', 'FlaggedMessage',
     'ChannelCategory', 'UserPresence', 'Bookmark', 'RetentionPolicy', 'LegalHold',
-    'DlpRule', 'Webhook'];
+    'DlpRule', 'Webhook', 'Reminder'];
   for (const name of collections) {
     await clearCollection(module, name);
   }
