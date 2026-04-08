@@ -11,6 +11,7 @@ interface VideoTileProps {
   isMuted?: boolean;
   isLocal?: boolean;
   muteAudio?: boolean;
+  hasVideo?: boolean;
   className?: string;
 }
 
@@ -20,6 +21,7 @@ export function VideoTile({
   isMuted = false,
   isLocal = false,
   muteAudio = false,
+  hasVideo = true,
   className,
 }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -49,6 +51,17 @@ export function VideoTile({
     }
   }, [stream]);
 
+  // Derive initials from label (e.g. "Varun Sharma" -> "VS")
+  const initials = label
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2) || "?";
+
+  const showVideo = hasVideo && stream;
+
   return (
     <div
       className={cn(
@@ -56,13 +69,34 @@ export function VideoTile({
         className,
       )}
     >
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted={muteAudio || isMuted || isLocal}
-        className="h-full w-full object-cover"
-      />
+      {showVideo ? (
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted={muteAudio || isMuted || isLocal}
+          className="h-full w-full object-cover"
+        />
+      ) : (
+        <>
+          {/* Hidden video element to keep audio playing */}
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted={muteAudio || isMuted || isLocal}
+            className="hidden"
+          />
+          {/* Avatar fallback */}
+          <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#1E293B] to-[#0F172A]">
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-br from-[#2563EB] to-[#0EA5E9] flex items-center justify-center shadow-[0_0_30px_rgba(37,99,235,0.3)]">
+                <span className="text-xl sm:text-2xl font-bold text-white">{initials}</span>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       <div className="absolute bottom-2 left-2 flex items-center gap-2 rounded bg-black/50 px-3 py-1">
         <span className="text-xs font-medium text-white">{label}</span>
@@ -384,6 +418,42 @@ export function AnnotationToolbar({
   );
 }
 
+// ── Remote Pointer Overlay ──
+interface RemotePointer {
+  userId: string;
+  name: string;
+  x: number;
+  y: number;
+  color: string;
+}
+
+export function RemotePointerOverlay({ pointers }: { pointers: RemotePointer[] }) {
+  if (pointers.length === 0) return null;
+  return (
+    <div className="absolute inset-0 pointer-events-none z-25 overflow-hidden">
+      {pointers.map((p) => (
+        <div
+          key={p.userId}
+          className="absolute transition-all duration-100 ease-out"
+          style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }}
+        >
+          {/* Cursor arrow */}
+          <svg width="20" height="24" viewBox="0 0 20 24" fill="none" className="-translate-x-0.5 -translate-y-0.5">
+            <path d="M3 2L17 12L10 13L7 21L3 2Z" fill={p.color} stroke="white" strokeWidth="1.5" />
+          </svg>
+          {/* Name label */}
+          <span
+            className="absolute left-4 top-4 px-1.5 py-0.5 rounded text-[9px] font-medium text-white whitespace-nowrap"
+            style={{ backgroundColor: p.color }}
+          >
+            {p.name}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Main Video Call Window ──
 interface ParticipantStream {
   userId: string;
@@ -399,6 +469,8 @@ interface VideoCallWindowProps {
   localUserName: string;
   remoteUserName: string;
   isAudioMuted: boolean;
+  remoteHasVideo?: boolean;
+  localHasVideo?: boolean;
   screenShareStream?: MediaStream | null;
   isScreenSharing?: boolean;
   isViewerAnnotating?: boolean;
@@ -409,6 +481,9 @@ interface VideoCallWindowProps {
   onAnnotationBrushSizeChange?: (size: number) => void;
   onAnnotationClear?: () => void;
   onAnnotationStroke?: (stroke: AnnotationStroke) => void;
+  remotePointers?: RemotePointer[];
+  onPointerMove?: (x: number, y: number) => void;
+  onPointerLeave?: () => void;
   floatingEmojis?: FloatingEmoji[];
   additionalParticipants?: ParticipantStream[];
   reconnectionState?: ReconnectionState;
@@ -420,6 +495,8 @@ export function VideoCallWindow({
   localUserName,
   remoteUserName,
   isAudioMuted,
+  remoteHasVideo = true,
+  localHasVideo = true,
   screenShareStream,
   isScreenSharing,
   isViewerAnnotating = false,
@@ -430,6 +507,9 @@ export function VideoCallWindow({
   onAnnotationBrushSizeChange,
   onAnnotationClear,
   onAnnotationStroke,
+  remotePointers = [],
+  onPointerMove,
+  onPointerLeave,
   floatingEmojis = [],
   additionalParticipants = [],
   reconnectionState = "stable",
@@ -445,14 +525,27 @@ export function VideoCallWindow({
         <ReconnectingOverlay state={reconnectionState} />
 
         {/* Screen share as main view */}
-        <div className="relative h-full w-full">
+        <div
+          className="relative h-full w-full"
+          onMouseMove={(e) => {
+            if (!onPointerMove) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            onPointerMove(
+              (e.clientX - rect.left) / rect.width,
+              (e.clientY - rect.top) / rect.height,
+            );
+          }}
+          onMouseLeave={() => onPointerLeave?.()}
+        >
           <VideoTile
             stream={screenShareStream}
             label="Screen Share"
             muteAudio
             className="h-full w-full"
           />
-          {/* Annotation overlay for viewers — now with broadcast support */}
+          {/* Remote pointers from other viewers */}
+          <RemotePointerOverlay pointers={remotePointers} />
+          {/* Annotation overlay for viewers — with broadcast support */}
           {onAnnotationToggle && (
             <>
               <AnnotationCanvas
@@ -550,6 +643,7 @@ export function VideoCallWindow({
             stream={remoteStream}
             label={remoteUserName}
             muteAudio
+            hasVideo={remoteHasVideo}
             className="h-full w-full"
           />
         ) : (
@@ -564,13 +658,27 @@ export function VideoCallWindow({
           </div>
         )}
 
+        {/* Annotation canvas overlay for drawing on video */}
+        {isViewerAnnotating && (
+          <AnnotationCanvas
+            isEnabled={isViewerAnnotating}
+            color={annotationColor}
+            brushSize={annotationBrushSize}
+            onStroke={onAnnotationStroke}
+          />
+        )}
+
+        {/* Remote pointers */}
+        <RemotePointerOverlay pointers={remotePointers} />
+
         {localStream && (
-          <div className="absolute bottom-3 right-3 h-20 w-20 sm:h-32 sm:w-32 rounded-lg shadow-lg border-2 border-white/20">
+          <div className="absolute bottom-3 right-3 h-20 w-20 sm:h-32 sm:w-32 rounded-lg shadow-lg border-2 border-white/20 z-10">
             <VideoTile
               stream={localStream}
               label={localUserName}
               isLocal
               isMuted={isAudioMuted}
+              hasVideo={localHasVideo}
               className="h-full w-full"
             />
           </div>
@@ -600,6 +708,15 @@ export function VideoCallWindow({
           />
         ))}
       </div>
+      {isViewerAnnotating && (
+        <AnnotationCanvas
+          isEnabled={isViewerAnnotating}
+          color={annotationColor}
+          brushSize={annotationBrushSize}
+          onStroke={onAnnotationStroke}
+        />
+      )}
+      <RemotePointerOverlay pointers={remotePointers} />
       <FloatingEmojiOverlay emojis={floatingEmojis} />
     </div>
   );

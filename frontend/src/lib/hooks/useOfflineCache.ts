@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
 
 // ── IndexedDB Wrapper (no external dependencies) ──
 
@@ -199,7 +199,7 @@ export function useOfflineCache(): OfflineCacheHook {
     };
   }, []);
 
-  return {
+  return useMemo(() => ({
     isOnline,
     isSupported,
     cacheConversations,
@@ -209,5 +209,5 @@ export function useOfflineCache(): OfflineCacheHook {
     getLastSyncTimestamp,
     setLastSyncTimestamp,
     clearCache,
-  };
+  }), [isOnline, isSupported]);
 }

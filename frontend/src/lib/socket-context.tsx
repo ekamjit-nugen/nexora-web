@@ -25,13 +25,14 @@ interface SocketState {
 const SocketContext = createContext<SocketState | undefined>(undefined);
 
 export function SocketProvider({ children }: { children: ReactNode }) {
-  const [socket, setSocket] = useState<Socket | null>(null);
   const [connected, setConnected] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
   const [presenceMap, setPresenceMap] = useState<Map<string, UserPresenceInfo>>(new Map());
   const [tokenVersion, setTokenVersion] = useState(0);
+  const [socketVersion, setSocketVersion] = useState(0);
   const refreshingRef = useRef(false);
   const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
+  const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem("accessToken");
@@ -39,14 +40,18 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
     const sock = io(`${CHAT_SOCKET_URL}/chat`, {
       auth: { token },
-      transports: ["websocket", "polling"],
+      transports: ["polling", "websocket"],
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 3000,
     });
 
     sock.on("connect", () => setConnected(true));
-    sock.on("disconnect", () => setConnected(false));
+    sock.on("disconnect", () => {
+      setConnected(false);
+      setOnlineUsers(new Set());
+      setPresenceMap(new Map());
+    });
     sock.on("connect_error", async (err) => {
       setConnected(false);
       const refreshToken = localStorage.getItem("refreshToken");
@@ -121,45 +126,55 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       sock.emit("presence:heartbeat", {});
     }, 30000);
 
-    setSocket(sock);
+    socketRef.current = sock;
+    setSocketVersion((v) => v + 1);
 
     return () => {
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
       sock.disconnect();
-      setSocket(null);
+      socketRef.current = null;
       setConnected(false);
     };
   }, [tokenVersion]); // Reconnect when token refreshes
 
-  // Reconnect when token changes (login/logout)
+  // Reconnect when token changes (login/logout) — listen to both cross-tab storage
+  // events AND same-tab custom event dispatched by auth-context after login
   useEffect(() => {
-    const handleStorage = () => {
+    const handleTokenChange = () => {
       const token = localStorage.getItem("accessToken");
-      if (!token && socket) {
-        socket.disconnect();
-        setSocket(null);
+      if (!token && socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
         setConnected(false);
       } else if (token) {
         setTokenVersion((v) => v + 1);
       }
     };
-    window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, [socket]);
+    window.addEventListener("storage", handleTokenChange);
+    window.addEventListener("nexora:token-changed", handleTokenChange);
+    return () => {
+      window.removeEventListener("storage", handleTokenChange);
+      window.removeEventListener("nexora:token-changed", handleTokenChange);
+    };
+  }, []);
 
   const emit = useCallback((event: string, data: any) => {
-    socket?.emit(event, data);
-  }, [socket]);
+    socketRef.current?.emit(event, data);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [socketVersion]);
 
   const on = useCallback((event: string, handler: (...args: any[]) => void) => {
-    socket?.on(event, handler);
-    return () => { socket?.off(event, handler); };
-  }, [socket]);
+    const sock = socketRef.current;
+    sock?.on(event, handler);
+    return () => { sock?.off(event, handler); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [socketVersion]);
 
   const off = useCallback((event: string, handler?: (...args: any[]) => void) => {
-    if (handler) socket?.off(event, handler);
-    else socket?.removeAllListeners(event);
-  }, [socket]);
+    if (handler) socketRef.current?.off(event, handler);
+    else socketRef.current?.removeAllListeners(event);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [socketVersion]);
 
   return (
     <SocketContext.Provider value={{ connected, onlineUsers, presenceMap, emit, on, off }}>

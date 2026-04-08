@@ -56,6 +56,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       );
     }
 
-    return <div key={this.state.errorCount}>{this.props.children}</div>;
+    return <div key={this.state.errorCount} className="flex flex-col flex-1 min-h-0">{this.props.children}</div>;
   }
 }

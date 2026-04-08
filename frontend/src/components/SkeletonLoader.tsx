@@ -9,7 +9,7 @@ interface SkeletonLoaderProps {
 }
 
 function SkeletonItem({ variant, className, width, height }: Omit<SkeletonLoaderProps, "count">) {
-  const base = "animate-pulse bg-gray-200 dark:bg-gray-700 rounded";
+  const base = "animate-pulse rounded" + " " + "bg-[#E2E8F0]";
 
   if (variant === "text") {
     return <div className={`${base} h-4 w-full rounded-md ${className || ""}`} />;

@@ -2,6 +2,7 @@
 
 import React, { useRef, useEffect, useCallback, useState } from "react";
 import { GifPicker } from "@/components/chat";
+import { chatApi } from "@/lib/api";
 import { toast } from "sonner";
 
 // Full emoji set organized by category
@@ -18,6 +19,12 @@ const EMOJI_CATEGORIES: Record<string, string[]> = {
   "Symbols": ["🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "🟤", "⚫", "⚪", "🔶", "🔷", "🔸", "🔹", "❗", "❓", "❕", "❔", "‼️", "⁉️", "✅", "❌", "⭕", "🚫", "💯", "🔥", "⭐", "🌟", "✨", "⚡", "💥", "💫", "🎵", "🎶", "➕", "➖", "➗", "✖️", "♾️", "💲", "🔱", "🔰", "⚜️", "🔘", "🔳", "🔲", "▪️", "▫️", "◾", "◽", "◼️", "◻️", "🟥", "🟧", "🟨", "🟩", "🟦", "🟪", "🟫", "⬛", "⬜"],
   "Flags": ["🏳️", "🏴", "🏁", "🚩", "🏳️‍🌈", "🏳️‍⚧️", "🇺🇸", "🇬🇧", "🇨🇦", "🇦🇺", "🇩🇪", "🇫🇷", "🇪🇸", "🇮🇹", "🇯🇵", "🇰🇷", "🇨🇳", "🇮🇳", "🇧🇷", "🇲🇽", "🇷🇺", "🇿🇦", "🇳🇬", "🇪🇬", "🇸🇦", "🇦🇪", "🇹🇷", "🇮🇩", "🇹🇭", "🇻🇳", "🇵🇭", "🇸🇬", "🇲🇾", "🇳🇿", "🇸🇪", "🇳🇴", "🇩🇰", "🇫🇮", "🇮🇪", "🇵🇹", "🇬🇷", "🇵🇱", "🇨🇭", "🇦🇹", "🇧🇪", "🇳🇱", "🇦🇷", "🇨🇱", "🇨🇴", "🇵🇪"],
 };
+
+export interface MentionMember {
+  userId: string;
+  firstName: string;
+  lastName: string;
+}
 
 export interface ChatInputProps {
   input: string;
@@ -36,6 +43,7 @@ export interface ChatInputProps {
   onSmartReplySelect: (reply: string) => void;
   textareaRef: React.RefObject<HTMLTextAreaElement>;
   fileInputRef: React.RefObject<HTMLInputElement>;
+  members?: MentionMember[];
 }
 
 function ChatInputInner({
@@ -55,9 +63,92 @@ function ChatInputInner({
   onSmartReplySelect,
   textareaRef,
   fileInputRef,
+  members = [],
 }: ChatInputProps) {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
+
+  // ── @mention autocomplete ──
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const mentionStartRef = useRef<number>(-1);
+
+  // ── Slash command autocomplete ──
+  const [showSlashCommands, setShowSlashCommands] = useState(false);
+  const [slashQuery, setSlashQuery] = useState("");
+  const [slashCommandIndex, setSlashCommandIndex] = useState(0);
+  const [cachedCommands, setCachedCommands] = useState<Array<{ name: string; description: string; usage: string }> | null>(null);
+  const slashCommandsRef = useRef<HTMLDivElement>(null);
+
+  const filteredSlashCommands = cachedCommands
+    ? cachedCommands.filter((cmd) => cmd.name.toLowerCase().startsWith("/" + slashQuery.toLowerCase()))
+    : [];
+
+  // Fetch commands on first slash
+  useEffect(() => {
+    if (showSlashCommands && !cachedCommands) {
+      chatApi.getCommands().then((res) => {
+        if (res.data) setCachedCommands(res.data);
+      }).catch(() => {});
+    }
+  }, [showSlashCommands, cachedCommands]);
+
+  // Close slash commands on outside click
+  useEffect(() => {
+    if (!showSlashCommands) return;
+    const handler = (e: MouseEvent) => {
+      if (slashCommandsRef.current && !slashCommandsRef.current.contains(e.target as Node)) {
+        setShowSlashCommands(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showSlashCommands]);
+
+  const insertSlashCommand = useCallback((cmd: { name: string }) => {
+    onInputChange(cmd.name + " ");
+    setShowSlashCommands(false);
+    setTimeout(() => {
+      const ta = textareaRef.current;
+      if (ta) {
+        ta.focus();
+        ta.selectionStart = ta.selectionEnd = cmd.name.length + 1;
+      }
+    }, 0);
+  }, [onInputChange, textareaRef]);
+
+  const filteredMentions = mentionQuery !== null
+    ? members.filter((m) => {
+        const q = mentionQuery.toLowerCase();
+        return `${m.firstName} ${m.lastName}`.toLowerCase().includes(q)
+          || m.firstName.toLowerCase().startsWith(q)
+          || m.lastName.toLowerCase().startsWith(q);
+      }).slice(0, 8)
+    : [];
+
+  const insertMention = useCallback((member: MentionMember) => {
+    const start = mentionStartRef.current;
+    if (start < 0) return;
+    const name = `@${member.firstName} ${member.lastName} `;
+    const before = input.slice(0, start);
+    const cursorPos = textareaRef.current?.selectionStart || input.length;
+    const after = input.slice(cursorPos);
+    onInputChange(before + name + after);
+    setMentionQuery(null);
+    // Restore focus and cursor position
+    setTimeout(() => {
+      const ta = textareaRef.current;
+      if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = before.length + name.length; }
+    }, 0);
+  }, [input, onInputChange, textareaRef]);
+  const [emojiSearch, setEmojiSearch] = useState("");
+  const [emojiCategory, setEmojiCategory] = useState("Smileys");
+  const [recentEmojis, setRecentEmojis] = useState<string[]>(() => {
+    if (typeof window !== "undefined") {
+      try { return JSON.parse(localStorage.getItem("nexora_recent_emojis") || "[]"); } catch { return []; }
+    }
+    return [];
+  });
   const [showSchedulePicker, setShowSchedulePicker] = useState(false);
   const [showCustomSchedule, setShowCustomSchedule] = useState(false);
   const [customDate, setCustomDate] = useState("");
@@ -65,6 +156,8 @@ function ChatInputInner({
 
   const emojiPickerRef = useRef<HTMLDivElement>(null);
   const gifPickerRef = useRef<HTMLDivElement>(null);
+  const gifBtnRef = useRef<HTMLButtonElement>(null);
+  const [gifPickerPos, setGifPickerPos] = useState<{ bottom: number; right: number }>({ bottom: 80, right: 24 });
   const schedulePickerRef = useRef<HTMLDivElement>(null);
 
   // Auto-resize textarea
@@ -84,6 +177,35 @@ function ChatInputInner({
     };
     if (showEmojiPicker) document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showEmojiPicker]);
+
+  const handleEmojiSelect = useCallback((emoji: string) => {
+    onInputChange(input + emoji);
+    // Update recents
+    setRecentEmojis((prev) => {
+      const next = [emoji, ...prev.filter((e) => e !== emoji)].slice(0, 24);
+      localStorage.setItem("nexora_recent_emojis", JSON.stringify(next));
+      return next;
+    });
+  }, [input, onInputChange]);
+
+  const emojiSearchRef = useRef<HTMLInputElement>(null);
+  const emojiBtnRef = useRef<HTMLButtonElement>(null);
+  const [emojiPickerPos, setEmojiPickerPos] = useState<{ bottom: number; right: number }>({ bottom: 80, right: 24 });
+
+  useEffect(() => {
+    if (showEmojiPicker) {
+      setEmojiSearch("");
+      // Position picker above the button, aligned to its right edge
+      if (emojiBtnRef.current) {
+        const rect = emojiBtnRef.current.getBoundingClientRect();
+        setEmojiPickerPos({
+          bottom: window.innerHeight - rect.top + 8,
+          right: window.innerWidth - rect.right,
+        });
+      }
+      setTimeout(() => emojiSearchRef.current?.focus(), 50);
+    }
   }, [showEmojiPicker]);
 
   // Close GIF picker on outside click
@@ -223,21 +345,132 @@ function ChatInputInner({
       )}
 
       {/* Input Area */}
-      <div className="px-5 pb-4 pt-2 bg-gradient-to-t from-[#F1F5F9] to-[#F8FAFC] shrink-0">
+      <div className="px-5 pb-4 pt-2 shrink-0">
         <input ref={fileInputRef} type="file" className="hidden" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.txt,.csv" onChange={onFileSelect} />
-        <div className="bg-white border border-[#E2E8F0] rounded-2xl shadow-sm shadow-[#E2E8F0]/60">
+        <div className="bg-white border border-[#E2E8F0]/80 rounded-2xl shadow-sm hover:shadow-md transition-shadow focus-within:shadow-md focus-within:border-[#2E86C1]/30">
           <div className="flex items-end gap-1 px-3 py-2">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => { onInputChange(e.target.value); onTyping(); }}
-              onKeyDown={handleKeyDown}
-              onPaste={onPaste}
-              placeholder={isUploading ? "Uploading file..." : "Type a message..."}
-              disabled={isUploading}
-              rows={1}
-              className="flex-1 resize-none bg-transparent text-[13px] text-[#334155] placeholder:text-[#94A3B8] focus:outline-none py-1.5 max-h-[120px] disabled:opacity-50"
-            />
+            <div className="flex-1 relative">
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  onInputChange(val);
+                  onTyping();
+                  // Detect slash command at start of input
+                  if (val.startsWith("/") && !val.includes(" ")) {
+                    setShowSlashCommands(true);
+                    setSlashQuery(val.slice(1));
+                    setSlashCommandIndex(0);
+                  } else {
+                    setShowSlashCommands(false);
+                  }
+                  // Detect @mention
+                  const cursorPos = e.target.selectionStart || 0;
+                  const textBeforeCursor = val.slice(0, cursorPos);
+                  const atMatch = textBeforeCursor.match(/@([^\s@]*)$/);
+                  if (atMatch && members.length > 0) {
+                    mentionStartRef.current = cursorPos - atMatch[1].length - 1;
+                    setMentionQuery(atMatch[1]);
+                    setMentionIndex(0);
+                  } else {
+                    setMentionQuery(null);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  // Handle slash command keyboard navigation
+                  if (showSlashCommands && filteredSlashCommands.length > 0) {
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setSlashCommandIndex((prev) => Math.min(prev + 1, filteredSlashCommands.length - 1));
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setSlashCommandIndex((prev) => Math.max(prev - 1, 0));
+                      return;
+                    }
+                    if (e.key === "Enter" || e.key === "Tab") {
+                      e.preventDefault();
+                      insertSlashCommand(filteredSlashCommands[slashCommandIndex]);
+                      return;
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setShowSlashCommands(false);
+                      return;
+                    }
+                  }
+                  // Handle mention keyboard navigation
+                  if (mentionQuery !== null && filteredMentions.length > 0) {
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setMentionIndex((prev) => Math.min(prev + 1, filteredMentions.length - 1));
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setMentionIndex((prev) => Math.max(prev - 1, 0));
+                      return;
+                    }
+                    if (e.key === "Enter" || e.key === "Tab") {
+                      e.preventDefault();
+                      insertMention(filteredMentions[mentionIndex]);
+                      return;
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setMentionQuery(null);
+                      return;
+                    }
+                  }
+                  handleKeyDown(e);
+                }}
+                onPaste={onPaste}
+                placeholder={isUploading ? "Uploading file..." : "Type a message..."}
+                disabled={isUploading}
+                rows={1}
+                className="w-full resize-none bg-transparent text-[13px] text-[#334155] placeholder:text-[#94A3B8] focus:outline-none py-1.5 max-h-[120px] disabled:opacity-50"
+              />
+              {/* Slash command autocomplete popup */}
+              {showSlashCommands && filteredSlashCommands.length > 0 && (
+                <div
+                  ref={slashCommandsRef}
+                  className="absolute bottom-full mb-1 left-0 w-[300px] max-h-64 overflow-y-auto bg-white border border-[#E2E8F0] rounded-lg shadow-lg z-50"
+                >
+                  <div className="px-3 py-1.5 border-b border-[#F1F5F9]">
+                    <p className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider">Commands</p>
+                  </div>
+                  {filteredSlashCommands.map((cmd, i) => (
+                    <button
+                      key={cmd.name}
+                      onClick={() => insertSlashCommand(cmd)}
+                      className={`w-full flex flex-col px-3 py-2 text-left transition-colors ${i === slashCommandIndex ? "bg-[#EBF5FF]" : "hover:bg-[#F8FAFC]"}`}
+                    >
+                      <span className="text-[12px] font-semibold text-[#2E86C1]">{cmd.name}</span>
+                      <span className="text-[11px] text-[#64748B] truncate">{cmd.description}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {/* @mention popup */}
+              {mentionQuery !== null && filteredMentions.length > 0 && (
+                <div className="absolute bottom-full mb-1 left-0 w-[240px] max-h-[200px] overflow-y-auto bg-white border border-[#E2E8F0] rounded-xl shadow-xl z-50">
+                  {filteredMentions.map((m, i) => (
+                    <button
+                      key={m.userId}
+                      onClick={() => insertMention(m)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${i === mentionIndex ? "bg-[#EBF5FF]" : "hover:bg-[#F8FAFC]"}`}
+                    >
+                      <div className="w-7 h-7 rounded-full bg-[#2E86C1] flex items-center justify-center text-white text-[10px] font-semibold shrink-0">
+                        {m.firstName.charAt(0)}{m.lastName.charAt(0)}
+                      </div>
+                      <span className="text-[12px] font-medium text-[#334155] truncate">{m.firstName} {m.lastName}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             {/* Schedule message button */}
             <div className="relative" ref={schedulePickerRef}>
               <button onClick={() => setShowSchedulePicker(!showSchedulePicker)} className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors shrink-0 ${scheduledAt ? "bg-[#F59E0B] hover:bg-[#D97706] text-white" : "text-[#94A3B8] hover:text-[#64748B] hover:bg-[#F1F5F9]"}`} title={scheduledAt ? `Scheduled: ${scheduledAt.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : "Schedule message"}>
@@ -317,7 +550,8 @@ function ChatInputInner({
             {/* Emoji picker button */}
             <div className="relative" ref={emojiPickerRef}>
               <button
-                onClick={() => setShowEmojiPicker((prev) => !prev)}
+                ref={emojiBtnRef}
+                onClick={() => { setShowEmojiPicker((prev) => !prev); setShowGifPicker(false); }}
                 className={`p-1.5 rounded-md transition-colors ${showEmojiPicker ? "text-[#2E86C1] bg-[#EBF5FF]" : "text-[#94A3B8] hover:text-[#64748B] hover:bg-[#F1F5F9]"}`}
                 title="Emoji picker"
               >
@@ -326,24 +560,131 @@ function ChatInputInner({
                 </svg>
               </button>
               {showEmojiPicker && (
-                <div className="absolute bottom-full mb-2 right-0 w-[340px] max-h-[360px] bg-white border border-[#E2E8F0] rounded-xl shadow-xl z-50 flex flex-col overflow-hidden">
-                  <div className="overflow-y-auto flex-1 p-3">
-                    {Object.entries(EMOJI_CATEGORIES).map(([category, emojis]) => (
-                      <div key={category} className="mb-3">
-                        <p className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-1.5">{category}</p>
-                        <div className="flex flex-wrap gap-0.5">
-                          {emojis.map((emoji) => (
-                            <button
-                              key={emoji}
-                              onClick={() => { onInputChange(input + emoji); }}
-                              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-[#F1F5F9] transition-colors text-lg"
-                            >
-                              {emoji}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+                <div className="fixed w-[352px] bg-white border border-[#E2E8F0] rounded-2xl shadow-2xl z-[200] flex flex-col overflow-hidden" style={{ height: 420, bottom: emojiPickerPos.bottom, right: emojiPickerPos.right }}>
+                  {/* Search bar */}
+                  <div className="px-3 pt-3 pb-2 shrink-0">
+                    <div className="relative">
+                      <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#94A3B8]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                      <input
+                        ref={emojiSearchRef}
+                        type="text"
+                        value={emojiSearch}
+                        onChange={(e) => setEmojiSearch(e.target.value)}
+                        placeholder="Search emoji..."
+                        className="w-full h-8 pl-8 pr-3 text-[12px] bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-1 focus:ring-[#2E86C1] text-[#334155] placeholder:text-[#94A3B8]"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Category tabs */}
+                  {!emojiSearch && (
+                    <div className="flex items-center gap-0.5 px-2 pb-1 shrink-0 overflow-x-auto scrollbar-none">
+                      {recentEmojis.length > 0 && (
+                        <button
+                          onClick={() => setEmojiCategory("Recent")}
+                          className={`p-1.5 rounded-lg text-sm transition-colors shrink-0 ${emojiCategory === "Recent" ? "bg-[#EBF5FF] text-[#2E86C1]" : "text-[#94A3B8] hover:bg-[#F1F5F9]"}`}
+                          title="Recent"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        </button>
+                      )}
+                      {Object.keys(EMOJI_CATEGORIES).map((cat) => {
+                        const icons: Record<string, string> = {
+                          Smileys: "😀", Gestures: "👋", Hearts: "❤️", People: "👤",
+                          Nature: "🌿", Food: "🍔", Activities: "⚽", Travel: "✈️",
+                          Objects: "💡", Symbols: "🔣", Flags: "🏳️",
+                        };
+                        return (
+                          <button
+                            key={cat}
+                            onClick={() => setEmojiCategory(cat)}
+                            className={`p-1.5 rounded-lg text-sm transition-colors shrink-0 ${emojiCategory === cat ? "bg-[#EBF5FF]" : "hover:bg-[#F1F5F9]"}`}
+                            title={cat}
+                          >
+                            {icons[cat] || "?"}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Emoji grid */}
+                  <div className="flex-1 overflow-y-auto px-3 pb-2 min-h-0">
+                    {emojiSearch ? (
+                      // Search results — filter all emojis by category name match
+                      (() => {
+                        const q = emojiSearch.toLowerCase();
+                        const results: string[] = [];
+                        for (const [cat, emojis] of Object.entries(EMOJI_CATEGORIES)) {
+                          if (cat.toLowerCase().includes(q)) {
+                            results.push(...emojis);
+                          } else {
+                            results.push(...emojis.filter((e) => e.includes(q)));
+                          }
+                        }
+                        const unique = Array.from(new Set(results)).slice(0, 80);
+                        return unique.length > 0 ? (
+                          <div className="flex flex-wrap gap-0.5 pt-1">
+                            {unique.map((emoji) => (
+                              <button
+                                key={emoji}
+                                onClick={() => handleEmojiSelect(emoji)}
+                                className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-[#F1F5F9] active:scale-90 transition-all text-[22px]"
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center h-full text-[#94A3B8] text-[12px]">
+                            No emojis found
+                          </div>
+                        );
+                      })()
+                    ) : (
+                      <>
+                        {emojiCategory === "Recent" && recentEmojis.length > 0 && (
+                          <div className="mb-2">
+                            <p className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-1.5">Recently Used</p>
+                            <div className="flex flex-wrap gap-0.5">
+                              {recentEmojis.map((emoji, i) => (
+                                <button
+                                  key={`${emoji}-${i}`}
+                                  onClick={() => handleEmojiSelect(emoji)}
+                                  className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-[#F1F5F9] active:scale-90 transition-all text-[22px]"
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {emojiCategory !== "Recent" && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-1.5">{emojiCategory}</p>
+                            <div className="flex flex-wrap gap-0.5">
+                              {(EMOJI_CATEGORIES[emojiCategory] || []).map((emoji) => (
+                                <button
+                                  key={emoji}
+                                  onClick={() => handleEmojiSelect(emoji)}
+                                  className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-[#F1F5F9] active:scale-90 transition-all text-[22px]"
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  {/* Skin tone / footer hint */}
+                  <div className="px-3 py-1.5 border-t border-[#F1F5F9] flex items-center justify-between shrink-0">
+                    <span className="text-[10px] text-[#94A3B8]">{emojiCategory}</span>
+                    <span className="text-[10px] text-[#CBD5E1]">Click to insert</span>
                   </div>
                 </div>
               )}
@@ -351,8 +692,18 @@ function ChatInputInner({
             {/* GIF picker button */}
             <div className="relative" ref={gifPickerRef}>
               <button
+                ref={gifBtnRef}
                 onClick={() => {
-                  setShowGifPicker((prev) => !prev);
+                  setShowGifPicker((prev) => {
+                    if (!prev && gifBtnRef.current) {
+                      const rect = gifBtnRef.current.getBoundingClientRect();
+                      setGifPickerPos({
+                        bottom: window.innerHeight - rect.top + 8,
+                        right: window.innerWidth - rect.right,
+                      });
+                    }
+                    return !prev;
+                  });
                   setShowEmojiPicker(false);
                 }}
                 className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold transition-colors ${
@@ -365,7 +716,10 @@ function ChatInputInner({
                 GIF
               </button>
               {showGifPicker && (
-                <div className="absolute bottom-full mb-2 right-0">
+                <div
+                  className="fixed w-[352px] bg-white border border-[#E2E8F0] rounded-2xl shadow-2xl z-[200] flex flex-col overflow-hidden"
+                  style={{ height: 420, bottom: gifPickerPos.bottom, right: gifPickerPos.right }}
+                >
                   <GifPicker onSelect={handleGifSelectInternal} />
                 </div>
               )}

@@ -80,11 +80,11 @@ function ChatHeaderInner({
   };
 
   return (
-    <div className="h-[60px] flex items-center justify-between px-5 border-b border-[#E2E8F0] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.04)] shrink-0">
+    <div className="h-[56px] flex items-center justify-between px-5 border-b border-[#E2E8F0]/80 bg-white/95 backdrop-blur-sm shrink-0">
       <div className="flex items-center gap-3">
         <div className="relative">
-          <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-[11px] font-semibold shadow-sm ${
-            conversation.type === "direct" ? "bg-[#2E86C1]" : conversation.type === "channel" ? "bg-[#7C3AED]" : "bg-[#0D9488]"
+          <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-white text-[11px] font-semibold shadow-sm ${
+            conversation.type === "direct" ? "bg-gradient-to-br from-[#2E86C1] to-[#1D6FA5]" : conversation.type === "channel" ? "bg-gradient-to-br from-[#7C3AED] to-[#6D28D9]" : "bg-gradient-to-br from-[#0D9488] to-[#0F766E]"
           }`}>
             {conversation.type === "direct" ? getConversationInitials(conversation) : conversation.type === "channel" ? (
               <span className="text-sm font-bold">#</span>
@@ -164,17 +164,20 @@ function ChatHeaderInner({
             </svg>
           </button>
           {showConvoMenu && (
-            <div className="absolute right-0 top-full mt-1 w-40 bg-white rounded-xl shadow-lg border border-[#E2E8F0] py-1 z-50">
-              <button onClick={onPin} className="w-full text-left px-3 py-2 text-[12px] text-[#334155] hover:bg-[#F1F5F9] transition-colors">
+            <div className="absolute right-0 top-full mt-1.5 w-44 bg-white rounded-xl shadow-xl border border-[#E2E8F0]/80 py-1.5 z-50 backdrop-blur-sm">
+              <button onClick={onPin} className="w-full text-left px-3.5 py-2 text-[12px] text-[#334155] hover:bg-[#F8FAFC] rounded-lg mx-0 transition-colors font-medium">
                 {conversation.isPinned ? "Unpin" : "Pin"} conversation
               </button>
-              <button onClick={onMute} className="w-full text-left px-3 py-2 text-[12px] text-[#334155] hover:bg-[#F1F5F9] transition-colors">
+              <button onClick={onMute} className="w-full text-left px-3.5 py-2 text-[12px] text-[#334155] hover:bg-[#F8FAFC] rounded-lg transition-colors font-medium">
                 Mute conversation
               </button>
               {conversation.type !== "direct" && (
-                <button onClick={onLeave} className="w-full text-left px-3 py-2 text-[12px] text-red-500 hover:bg-red-50 transition-colors">
-                  Leave conversation
-                </button>
+                <>
+                  <div className="h-px bg-[#E2E8F0]/60 my-1 mx-3" />
+                  <button onClick={onLeave} className="w-full text-left px-3.5 py-2 text-[12px] text-red-500 hover:bg-red-50 rounded-lg transition-colors font-medium">
+                    Leave conversation
+                  </button>
+                </>
               )}
             </div>
           )}

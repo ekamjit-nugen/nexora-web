@@ -638,6 +638,17 @@ export interface ChatMessage {
   isDeleted: boolean;
   readBy: Array<{ userId: string; readAt: string }>;
   transcription?: string;
+  commandData?: {
+    action?: string;
+    title?: string;
+    assignee?: string;
+    leaveType?: string;
+    start?: string;
+    end?: string;
+    reason?: string;
+    question?: string;
+    options?: string[];
+  };
   createdAt: string;
 }
 
@@ -788,6 +799,9 @@ export const chatApi = {
   getReadStatus: (conversationId: string) =>
     request<Array<{ userId: string; readAt: string }>>(`/chat/conversations/${conversationId}/read-status`),
 
+  // Commands
+  getCommands: () => request<Array<{ name: string; description: string; usage: string }>>("/chat/commands"),
+
   // Moderation
   getFlagged: () => request("/chat/moderation/flagged"),
   reviewFlagged: (id: string, data: { status: string }) =>
@@ -803,6 +817,13 @@ export const chatApi = {
     request(`/chat/voice/${messageId}/transcribe`, { method: "POST", body: JSON.stringify({ transcription }) }),
   getVoiceTranscription: (messageId: string) =>
     request<{ transcription: string | null }>(`/chat/voice/${messageId}/transcription`),
+
+  // Translation
+  translateMessage: (content: string, targetLanguage: string) =>
+    request<{ translatedText: string; targetLanguage: string }>("/chat/ai/translate", {
+      method: "POST",
+      body: JSON.stringify({ content, targetLanguage }),
+    }),
 };
 
 // ── Media API ──

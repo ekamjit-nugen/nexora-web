@@ -70,6 +70,36 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     @InjectModel('Message') private messageModel: Model<IMessage>,
   ) {}
 
+  /** Ensure all online participants' sockets are joined to the conversation room */
+  async ensureParticipantsInRoom(conversationId: string) {
+    if (!this.server) return;
+    try {
+      const conversation = await this.conversationModel.findById(conversationId).lean();
+      if (!conversation?.participants) return;
+      const roomKey = `conv:${conversationId}`;
+      // Fetch all sockets currently in each participant's user room and join them to the conversation room
+      for (const p of conversation.participants) {
+        if (!this.onlineUsers.has(p.userId)) continue;
+        const userSockets = await this.server.in(`user:${p.userId}`).fetchSockets();
+        for (const sock of userSockets) {
+          if (!sock.rooms.has(roomKey)) {
+            sock.join(roomKey);
+          }
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`Failed to ensure participants in room conv:${conversationId}: ${err.message}`);
+    }
+  }
+
+  /** Broadcast an event to all sockets in a conversation room (used by REST controller) */
+  async broadcastToConversation(conversationId: string, event: string, data: any) {
+    if (this.server) {
+      await this.ensureParticipantsInRoom(conversationId);
+      this.server.to(`conv:${conversationId}`).emit(event, data);
+    }
+  }
+
   async afterInit(server: any) {
     const redisUrl = process.env.REDIS_URI || 'redis://redis:6379';
     try {
@@ -255,6 +285,9 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
         data.fileUrl ? { fileUrl: data.fileUrl, fileName: data.fileName, fileSize: data.fileSize, fileMimeType: data.fileMimeType } : undefined,
         data.idempotencyKey,
       );
+
+      // Ensure all participants' sockets are in the conversation room
+      await this.ensureParticipantsInRoom(data.conversationId);
 
       // Emit new message to conversation
       this.server.to(`conv:${data.conversationId}`).emit('message:new', message);
@@ -524,7 +557,8 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
 
   // ── Helpers for REST controllers ──
 
-  emitToConversation(conversationId: string, event: string, data: any) {
+  async emitToConversation(conversationId: string, event: string, data: any) {
+    await this.ensureParticipantsInRoom(conversationId);
     this.server.to(`conv:${conversationId}`).emit(event, data);
   }
 

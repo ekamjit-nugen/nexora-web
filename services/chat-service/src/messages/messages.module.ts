@@ -16,6 +16,7 @@ import { ModerationService } from '../moderation/moderation.service';
 import { MentionsService } from '../mentions/mentions.service';
 import { ConversationsModule } from '../conversations/conversations.module';
 import { ComplianceModule } from '../compliance/compliance.module';
+import { CommandsModule } from '../commands/commands.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { ComplianceModule } from '../compliance/compliance.module';
     }),
     forwardRef(() => ConversationsModule),
     ComplianceModule,
+    CommandsModule,
   ],
   controllers: [MessagesController],
   providers: [MessagesService, MessagesGateway, ModerationService, MentionsService, ForwardingService, CreateTaskService, LinkPreviewService],

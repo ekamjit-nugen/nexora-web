@@ -108,7 +108,8 @@ export class ChatController {
   async sendMessage(@Param('id') id: string, @Body() dto: SendMessageDto, @Req() req) {
     const message = await this.chatService.sendMessage(id, req.user.userId, dto.content, dto.type, dto.replyTo);
     // Broadcast to WebSocket clients in real-time
-    this.chatGateway.emitToConversation(id, 'message:new', message);
+    // First call ensures all participants' sockets are in the room
+    await this.chatGateway.emitToConversation(id, 'message:new', message);
     this.chatGateway.emitToConversation(id, 'conversation:updated', {
       conversationId: id,
       lastMessage: { content: dto.content, senderId: req.user.userId, sentAt: new Date() },

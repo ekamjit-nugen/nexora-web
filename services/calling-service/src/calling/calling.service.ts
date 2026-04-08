@@ -147,6 +147,11 @@ export class CallingService {
     return call;
   }
 
+  async getCallStatus(callId: string): Promise<string | null> {
+    const call = await this.callModel.findOne({ callId }, { status: 1 }).lean();
+    return call?.status || null;
+  }
+
   async endCall(callId: string, userId: string) {
     const call = await this.callModel.findOne({ callId });
     if (!call) {

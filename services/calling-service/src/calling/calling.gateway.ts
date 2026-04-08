@@ -9,7 +9,7 @@ import {
   MessageBody,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger } from '@nestjs/common';
+import { Logger, HttpException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { CallingService } from './calling.service';
 import { VoiceHuddleService } from '../calls/voice-huddle.service';
@@ -567,6 +567,23 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     }
   }
 
+  // ── In-call ephemeral chat ──
+  @SubscribeMessage('call:chat')
+  handleCallChat(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { callId: string; content: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId || !data?.callId || !data?.content) return;
+    // Broadcast to ALL participants in the call (including sender for confirmation)
+    this.server.to(`call:${data.callId}`).emit('call:chat', {
+      id: `${Date.now()}-${userId}`,
+      senderId: userId,
+      content: data.content,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
   // ── Annotation broadcast (screen share drawing) ──
   @SubscribeMessage('call:annotation-stroke')
   handleAnnotationStroke(
@@ -594,6 +611,82 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     client.to(`call:${data.callId}`).emit('call:annotation-clear', {
       from: userId,
     });
+  }
+
+  // ── Remote pointer (screen share) ──
+  @SubscribeMessage('call:pointer')
+  handlePointer(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { callId: string; x: number; y: number },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId || !data?.callId) return;
+    client.to(`call:${data.callId}`).emit('call:pointer', { from: userId, x: data.x, y: data.y });
+  }
+
+  @SubscribeMessage('call:pointer-hide')
+  handlePointerHide(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { callId: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId || !data?.callId) return;
+    client.to(`call:${data.callId}`).emit('call:pointer-hide', { from: userId });
+  }
+
+  // ── Recording consent ──
+
+  @SubscribeMessage('call:recording-start')
+  async handleRecordingStart(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { callId: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId) return;
+
+    // Broadcast recording started to ALL participants in the call
+    this.server.to(`call:${data.callId}`).emit('call:recording-started', {
+      callId: data.callId,
+      startedBy: userId,
+      startedByName: this.userNames.get(userId) || '',
+      startedAt: new Date().toISOString(),
+    });
+
+    this.logger.log(`Recording started on call ${data.callId} by ${userId} — all participants notified`);
+  }
+
+  @SubscribeMessage('call:recording-stop')
+  async handleRecordingStop(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { callId: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId) return;
+
+    this.server.to(`call:${data.callId}`).emit('call:recording-stopped', {
+      callId: data.callId,
+      stoppedBy: userId,
+    });
+
+    this.logger.log(`Recording stopped on call ${data.callId} by ${userId}`);
+  }
+
+  @SubscribeMessage('call:recording-consent')
+  async handleRecordingConsent(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { callId: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId) return;
+
+    // Notify all participants that this user acknowledged recording
+    this.server.to(`call:${data.callId}`).emit('call:recording-consent-ack', {
+      callId: data.callId,
+      userId,
+      consentedAt: new Date().toISOString(),
+    });
+
+    this.logger.log(`User ${userId} acknowledged recording on call ${data.callId}`);
   }
 
   // ── Call Hold/Resume ──
@@ -844,6 +937,7 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     try {
       this.clearRingingTimeout(callId);
 
+      // endCall may return an already-ended call (if REST endpoint ran first)
       const call = await this.callingService.endCall(callId, endedByUserId);
 
       call.participantIds?.forEach(pid => {
@@ -865,11 +959,12 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
         }
       }
 
-      this.logger.log(`Call ended: ${callId} by ${endedByUserId}, reason: ${reason}`);
+      this.logger.log(`Call cleanup done: ${callId} by ${endedByUserId}, reason: ${reason}, duration: ${call.duration}s`);
     } catch (err) {
       this.logger.error(`Error ending call ${callId}: ${err.message}`);
     }
   }
+
 
   /** Per-user rate limit for call initiation */
   private checkCallRateLimit(userId: string): boolean {

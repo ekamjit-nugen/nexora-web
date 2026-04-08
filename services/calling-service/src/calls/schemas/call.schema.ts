@@ -9,6 +9,7 @@ export interface ICallParticipant {
   audioEnabled: boolean;
   videoEnabled: boolean;
   screenSharing?: boolean;
+  recordingConsentAt?: Date;
 }
 
 export interface ITransferEntry {
@@ -95,6 +96,7 @@ export const CallSchema = new Schema<ICall>(
       audioEnabled: { type: Boolean, default: true },
       videoEnabled: { type: Boolean, default: false },
       screenSharing: { type: Boolean, default: false },
+      recordingConsentAt: { type: Date, default: null },
     }],
     transferHistory: [{
       fromUserId: { type: String, required: true },

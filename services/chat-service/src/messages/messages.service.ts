@@ -9,6 +9,7 @@ import { ConversationsService } from '../conversations/conversations.service';
 import { LinkPreviewService } from './link-preview.service';
 import { DlpService } from '../compliance/dlp.service';
 import { LegalHoldService } from '../compliance/legal-hold.service';
+import { CommandsService } from '../commands/commands.service';
 import * as DOMPurify from 'isomorphic-dompurify';
 
 const ALLOWED_TAGS = ['b', 'i', 'u', 's', 'em', 'strong', 'a', 'p', 'br', 'ul', 'ol', 'li', 'code', 'pre', 'blockquote', 'h1', 'h2', 'h3', 'span'];
@@ -41,6 +42,7 @@ export class MessagesService {
     private linkPreviewService: LinkPreviewService,
     private dlpService: DlpService,
     private legalHoldService: LegalHoldService,
+    private commandsService: CommandsService,
   ) {}
 
   async sendMessage(
@@ -49,6 +51,64 @@ export class MessagesService {
     fileData?: { fileUrl?: string; fileName?: string; fileSize?: number; fileMimeType?: string },
     idempotencyKey?: string,
   ) {
+    // ── Slash Command Handling ──
+    if (content && content.startsWith('/')) {
+      const commandResult = await this.commandsService.parseAndExecute(content, senderId, conversationId);
+      if (commandResult && commandResult.handled) {
+        // Validate conversation access before saving command result
+        const convo = await this.conversationModel.findOne({ _id: conversationId, isDeleted: false });
+        if (!convo) throw new NotFoundException('Conversation not found');
+        if (!convo.participants.some((p) => p.userId === senderId)) {
+          throw new ForbiddenException('You are not a participant of this conversation');
+        }
+
+        if (commandResult.type === 'system') {
+          const systemMessage = new this.messageModel({
+            conversationId,
+            senderId,
+            senderName: senderName || null,
+            content: commandResult.response || content,
+            type: 'system',
+            replyTo: replyTo || null,
+            status: 'sent',
+            readBy: [{ userId: senderId, readAt: new Date() }],
+          });
+          await systemMessage.save();
+          await this.conversationModel.findByIdAndUpdate(conversationId, {
+            lastMessage: { content: commandResult.response || content, senderId, sentAt: new Date() },
+          });
+          this.logger.log(`Command system message saved in conversation ${conversationId} by ${senderId}`);
+          const result = systemMessage.toObject();
+          (result as any).commandData = commandResult.data;
+          return result;
+        }
+        if (commandResult.type === 'poll') {
+          const pollMessage = new this.messageModel({
+            conversationId,
+            senderId,
+            senderName: senderName || null,
+            content: commandResult.data?.question || content,
+            type: 'poll',
+            replyTo: replyTo || null,
+            status: 'sent',
+            readBy: [{ userId: senderId, readAt: new Date() }],
+          });
+          await pollMessage.save();
+          await this.conversationModel.findByIdAndUpdate(conversationId, {
+            lastMessage: { content: `Poll: ${commandResult.data?.question}`, senderId, sentAt: new Date() },
+          });
+          this.logger.log(`Poll message saved in conversation ${conversationId} by ${senderId}`);
+          const result = pollMessage.toObject();
+          (result as any).commandData = commandResult.data;
+          return result;
+        }
+        if (commandResult.type === 'text') {
+          // Replace content with command response and proceed through normal flow
+          content = commandResult.response || content;
+        }
+      }
+    }
+
     // Idempotency check: if key provided, return existing message if found
     if (idempotencyKey) {
       const existing = await this.messageModel.findOne({ idempotencyKey });
@@ -113,7 +173,7 @@ export class MessagesService {
       contentPlainText,
       type,
       replyTo: replyTo || null,
-      idempotencyKey: idempotencyKey || null,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
       status: 'sent',
       readBy: [{ userId: senderId, readAt: new Date() }],
       ...(fileData?.fileUrl && { fileUrl: fileData.fileUrl }),

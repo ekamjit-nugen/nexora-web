@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useRef, useEffect } from "react";
+import React, { useMemo, useRef, useEffect, useState, useCallback } from "react";
 import type { Conversation, ChatMessage, Employee, ChatSettings } from "@/lib/api";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { SkeletonLoader } from "@/components/SkeletonLoader";
@@ -96,6 +96,32 @@ function MessageListInner({
     return userId.slice(-6);
   };
 
+  // ── Translation state ──
+  const [translations, setTranslations] = useState<Record<string, { text: string; lang: string }>>({});
+
+  const handleTranslate = useCallback(async (messageId: string, targetLanguage: string) => {
+    const msg = messages.find(m => m._id === messageId);
+    if (!msg) return;
+    const content = msg.content;
+    try {
+      toast.info(`Translating to ${targetLanguage}...`);
+      const res = await chatApi.translateMessage(content, targetLanguage);
+      const data = (res as { data?: { translatedText: string; targetLanguage: string } })?.data ?? (res as { translatedText: string; targetLanguage: string });
+      const translatedText = data.translatedText;
+      setTranslations(prev => ({ ...prev, [messageId]: { text: translatedText, lang: targetLanguage } }));
+    } catch {
+      toast.error("Translation failed");
+    }
+  }, [messages]);
+
+  const dismissTranslation = useCallback((messageId: string) => {
+    setTranslations(prev => {
+      const next = { ...prev };
+      delete next[messageId];
+      return next;
+    });
+  }, []);
+
   // ── Group messages by date (memoized) ──
   const groupedMessages = useMemo(() => {
     const groups: { date: string; messages: ChatMessage[] }[] = [];
@@ -147,52 +173,173 @@ function MessageListInner({
   return (
     <ErrorBoundary>
     <div
-      className="flex-1 overflow-y-auto px-5 py-4"
+      className="flex-1 overflow-y-auto px-6 py-5 min-h-0 scroll-smooth"
       onClick={onCloseConvoMenu}
       style={{ backgroundColor: chatSettings?.appearance?.chatBgColor || "#F8FAFC" }}
     >
-      {loadingMessages ? (
-        <div className="py-4">
-          <SkeletonLoader variant="message" count={5} />
-        </div>
-      ) : messages.length === 0 ? (
+      {messages.length === 0 ? (
         <div className="flex items-center justify-center h-full">
-          <div className="text-center">
-            <div className="w-12 h-12 rounded-full bg-[#EBF5FF] flex items-center justify-center mx-auto mb-3">
-              <svg className="w-6 h-6 text-[#2E86C1]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
+          {loadingMessages ? (
+            <div className="flex flex-col items-center gap-3">
+              <div className="relative w-10 h-10">
+                <div className="absolute inset-0 rounded-full border-2 border-[#E2E8F0]" />
+                <div className="absolute inset-0 rounded-full border-2 border-[#2E86C1] border-t-transparent animate-spin" />
+              </div>
+              <p className="text-[13px] text-[#94A3B8] font-medium">Loading messages...</p>
             </div>
-            <p className="text-[13px] text-[#94A3B8]">Send the first message</p>
-          </div>
+          ) : (
+            <div className="text-center">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#EBF5FF] to-[#DBEAFE] flex items-center justify-center mx-auto mb-4 shadow-sm">
+                <svg className="w-8 h-8 text-[#2E86C1]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+              </div>
+              <p className="text-[14px] font-semibold text-[#334155] mb-1">Start the conversation</p>
+              <p className="text-[12px] text-[#94A3B8]">Send a message to get things going</p>
+            </div>
+          )}
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-1">
           {groupedMessages.map((group) => (
             <div key={group.date}>
-              {/* Date separator */}
-              <div className="flex items-center justify-center my-4">
-                <div className="bg-[#E2E8F0] h-px flex-1" />
-                <span className="px-3 text-[10px] font-medium text-[#94A3B8]">{group.date}</span>
-                <div className="bg-[#E2E8F0] h-px flex-1" />
+              {/* Date separator — sticky pill */}
+              <div className="flex items-center justify-center my-5 sticky top-0 z-10">
+                <div className="px-3 py-1 rounded-full bg-white/80 backdrop-blur-sm border border-[#E2E8F0] shadow-sm">
+                  <span className="text-[10px] font-semibold text-[#64748B] uppercase tracking-wider">{group.date}</span>
+                </div>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-0.5">
                 {group.messages.map((msg) => {
                   const isMe = msg.senderId === user._id;
                   const isSystem = msg.type === "system";
                   const isDeleted = msg.isDeleted;
 
                   if (isSystem) {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const cmdData = (msg as any).commandData;
+
+                    // Task card
+                    if (cmdData?.action === "createTask") {
+                      return (
+                        <div key={msg._id} className="flex justify-center py-2">
+                          <div className="w-[340px] bg-white border border-[#E2E8F0] rounded-xl shadow-sm overflow-hidden">
+                            <div className="flex items-center gap-2 px-4 py-2.5 bg-[#EBF5FF] border-b border-[#DBEAFE]">
+                              <svg className="w-4 h-4 text-[#2E86C1]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                              <span className="text-[12px] font-semibold text-[#2E86C1]">Task Created</span>
+                            </div>
+                            <div className="px-4 py-3 space-y-1.5">
+                              <p className="text-[13px] font-medium text-[#1E293B]">{cmdData.title}</p>
+                              {cmdData.assignee && (
+                                <div className="flex items-center gap-1.5">
+                                  <svg className="w-3.5 h-3.5 text-[#94A3B8]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0" /></svg>
+                                  <span className="text-[11px] text-[#64748B]">@{cmdData.assignee}</span>
+                                </div>
+                              )}
+                              <p className="text-[10px] text-[#94A3B8]">{formatTime(msg.createdAt)}</p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // Leave request card
+                    if (cmdData?.action === "leaveRequest") {
+                      return (
+                        <div key={msg._id} className="flex justify-center py-2">
+                          <div className="w-[340px] bg-white border border-[#E2E8F0] rounded-xl shadow-sm overflow-hidden">
+                            <div className="flex items-center gap-2 px-4 py-2.5 bg-[#FFF7ED] border-b border-[#FFEDD5]">
+                              <svg className="w-4 h-4 text-[#F59E0B]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" /></svg>
+                              <span className="text-[12px] font-semibold text-[#B45309]">Leave Request</span>
+                            </div>
+                            <div className="px-4 py-3 space-y-1.5">
+                              <div className="flex items-center gap-2">
+                                <span className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-[#FEF3C7] text-[#92400E]">{cmdData.leaveType}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 text-[12px] text-[#334155]">
+                                <span>{cmdData.start}</span>
+                                <svg className="w-3 h-3 text-[#94A3B8]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" /></svg>
+                                <span>{cmdData.end}</span>
+                              </div>
+                              {cmdData.reason && <p className="text-[11px] text-[#64748B]">{cmdData.reason}</p>}
+                              <p className="text-[10px] text-[#94A3B8]">{formatTime(msg.createdAt)}</p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // Default system message
                     return (
-                      <div key={msg._id} className="flex justify-center py-1">
-                        <p className="text-[11px] text-[#94A3B8] italic">{msg.content}</p>
+                      <div key={msg._id} className="flex justify-center py-2">
+                        <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-[#F1F5F9]/80 backdrop-blur-sm">
+                          <svg className="w-3 h-3 text-[#94A3B8]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" /></svg>
+                          <p className="text-[11px] text-[#64748B] font-medium">{msg.content}</p>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // Poll message card
+                  if (msg.type === "poll") {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const cmdData = (msg as any).commandData;
+                    const question = cmdData?.question || msg.content;
+                    const options: string[] = cmdData?.options || [];
+                    return (
+                      <div key={msg._id} className="flex justify-center py-2">
+                        <div className="w-[340px] bg-white border border-[#E2E8F0] rounded-xl shadow-sm overflow-hidden">
+                          <div className="flex items-center gap-2 px-4 py-2.5 bg-[#F0FDF4] border-b border-[#DCFCE7]">
+                            <svg className="w-4 h-4 text-[#16A34A]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" /></svg>
+                            <span className="text-[12px] font-semibold text-[#166534]">Poll</span>
+                          </div>
+                          <div className="px-4 py-3 space-y-2">
+                            <p className="text-[13px] font-medium text-[#1E293B]">{question}</p>
+                            {options.map((opt, idx) => (
+                              <div key={idx} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[#E2E8F0] hover:bg-[#F8FAFC] transition-colors cursor-pointer">
+                                <div className="w-4 h-4 rounded-full border-2 border-[#CBD5E1] shrink-0" />
+                                <span className="text-[12px] text-[#334155]">{opt}</span>
+                              </div>
+                            ))}
+                            <p className="text-[10px] text-[#94A3B8]">{formatTime(msg.createdAt)}</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (msg.type === "call") {
+                    const isMissed = msg.content?.toLowerCase().includes("missed");
+                    const isDeclined = msg.content?.toLowerCase().includes("declined");
+                    const isVideo = msg.content?.toLowerCase().includes("video");
+                    return (
+                      <div key={msg._id} className="flex justify-center py-2">
+                        <div className={`flex items-center gap-2.5 px-4 py-2 rounded-xl border ${isMissed || isDeclined ? "bg-red-50 border-red-100" : "bg-[#F0F9FF] border-[#E0F2FE]"}`}>
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isMissed || isDeclined ? "bg-red-100" : "bg-[#DBEAFE]"}`}>
+                            {isVideo ? (
+                              <svg className={`w-4 h-4 ${isMissed || isDeclined ? "text-red-500" : "text-[#2563EB]"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
+                              </svg>
+                            ) : (
+                              <svg className={`w-4 h-4 ${isMissed || isDeclined ? "text-red-500" : "text-[#2563EB]"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 0 1-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 0 0-1.091-.852H4.5A2.25 2.25 0 0 0 2.25 4.5v2.25Z" />
+                              </svg>
+                            )}
+                          </div>
+                          <div>
+                            <p className={`text-[12px] font-medium ${isMissed || isDeclined ? "text-red-600" : "text-[#1E40AF]"}`}>
+                              {msg.content}
+                            </p>
+                            <p className="text-[10px] text-[#94A3B8]">{formatTime(msg.createdAt)}</p>
+                          </div>
+                        </div>
                       </div>
                     );
                   }
 
                   return (
-                    <div key={msg._id} className={`flex ${isMe ? "justify-end" : "justify-start"} ${!isMe && conversation.type !== "direct" ? "items-end gap-2" : ""}`}>
+                    <div key={msg._id} className={`group/msg flex ${isMe ? "justify-end" : "justify-start"} ${!isMe && conversation.type !== "direct" ? "items-end gap-2.5" : ""} py-0.5 px-2 -mx-2 rounded-lg hover:bg-black/[0.02] transition-colors`}>
                       {/* Avatar with hover popup for other users in groups */}
                       {!isMe && conversation.type !== "direct" && (() => {
                         const senderEmp = employeeMap[msg.senderId];
@@ -201,25 +348,32 @@ function MessageListInner({
                         const senderOnline = onlineUserIds.has(msg.senderId);
                         return (
                           <div className="relative group/avatar shrink-0">
-                            <div className="w-7 h-7 rounded-full bg-[#2E86C1] flex items-center justify-center text-white text-[9px] font-semibold">
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#2E86C1] to-[#1D6FA5] flex items-center justify-center text-white text-[10px] font-semibold shadow-sm ring-2 ring-white">
                               {senderInitials}
                             </div>
+                            {senderOnline && <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-[#22C55E] rounded-full ring-2 ring-white" />}
                             {/* Hover popup */}
-                            <div className="absolute top-full left-0 mt-2 hidden group-hover/avatar:block z-50">
-                              <div className="bg-[#0F172A] text-white rounded-lg px-3 py-2 shadow-xl min-w-[180px]">
-                                <p className="text-[12px] font-semibold">{senderName}</p>
-                                {senderEmp?.email && <p className="text-[10px] text-[#94A3B8]">{senderEmp.email}</p>}
-                                {senderEmp?.location && <p className="text-[10px] text-[#94A3B8]">{senderEmp.location}</p>}
-                                <div className="flex items-center gap-1 mt-1">
-                                  <span className={`w-1.5 h-1.5 rounded-full ${senderOnline ? "bg-[#22C55E]" : "bg-[#94A3B8]"}`} />
-                                  <span className="text-[10px] text-[#94A3B8]">{senderOnline ? "Online" : "Offline"}</span>
+                            <div className="absolute top-full left-0 mt-2 hidden group-hover/avatar:block z-50 pb-1">
+                              <div className="bg-[#0F172A] text-white rounded-xl px-4 py-3 shadow-2xl min-w-[200px] border border-white/10">
+                                <div className="flex items-center gap-2.5 mb-2">
+                                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#2E86C1] to-[#1D6FA5] flex items-center justify-center text-white text-[11px] font-semibold">
+                                    {senderInitials}
+                                  </div>
+                                  <div>
+                                    <p className="text-[13px] font-semibold">{senderName}</p>
+                                    <div className="flex items-center gap-1">
+                                      <span className={`w-1.5 h-1.5 rounded-full ${senderOnline ? "bg-[#22C55E]" : "bg-[#64748B]"}`} />
+                                      <span className="text-[10px] text-[#94A3B8]">{senderOnline ? "Online" : "Offline"}</span>
+                                    </div>
+                                  </div>
                                 </div>
+                                {senderEmp?.email && <p className="text-[10px] text-[#94A3B8] truncate">{senderEmp.email}</p>}
                               </div>
                             </div>
                           </div>
                         );
                       })()}
-                      <div className="max-w-[70%]">
+                      <div className="max-w-[70%] relative">
                         {/* Sender name in groups */}
                         {!isMe && conversation.type !== "direct" && (
                           <p className="text-[11px] text-[#64748B] mb-0.5 ml-1">
@@ -227,7 +381,7 @@ function MessageListInner({
                           </p>
                         )}
                         <div
-                          className={`px-4 py-2.5 leading-relaxed whitespace-pre-wrap ${
+                          className={`px-4 py-2.5 leading-relaxed whitespace-pre-wrap transition-shadow ${
                             !isDeleted && msg.type === "text" && isEmojiOnly(msg.content)
                               ? "text-[32px] !bg-transparent !px-1 !py-0"
                               : chatSettings?.appearance?.fontSize === "small" ? "text-[12px]" : chatSettings?.appearance?.fontSize === "large" ? "text-[15px]" : "text-[13px]"
@@ -235,15 +389,15 @@ function MessageListInner({
                             isDeleted
                               ? "bg-[#F1F5F9] text-[#94A3B8] italic rounded-2xl"
                               : isMe
-                                ? "rounded-2xl rounded-br-sm"
-                                : "rounded-2xl rounded-bl-sm"
+                                ? "rounded-2xl rounded-br-md shadow-sm"
+                                : "rounded-2xl rounded-bl-md shadow-sm"
                           }`}
                           style={
                             !isDeleted && msg.type === "text" && isEmojiOnly(msg.content)
                               ? undefined
                               : isDeleted ? undefined : isMe
-                                ? { backgroundColor: chatSettings?.appearance?.myBubbleColor || "#2E86C1", color: chatSettings?.appearance?.myTextColor || "#FFFFFF" }
-                                : { backgroundColor: chatSettings?.appearance?.otherBubbleColor || "#F1F5F9", color: chatSettings?.appearance?.otherTextColor || "#334155" }
+                                ? { backgroundColor: chatSettings?.appearance?.myBubbleColor || "#2563EB", color: chatSettings?.appearance?.myTextColor || "#FFFFFF" }
+                                : { backgroundColor: chatSettings?.appearance?.otherBubbleColor || "#FFFFFF", color: chatSettings?.appearance?.otherTextColor || "#1E293B", border: "1px solid #E2E8F0" }
                           }
                         >
                           {isDeleted ? "This message was deleted" : msg.type === "image" && msg.fileUrl ? (
@@ -365,6 +519,26 @@ function MessageListInner({
                             <span className="text-[10px] opacity-60 ml-1">(edited)</span>
                           )}
                         </div>
+                        {/* Translation display */}
+                        {translations[msg._id] && (
+                          <div className={`mt-1 px-3 py-2 rounded-lg ${isMe ? "bg-blue-50" : "bg-slate-50"} border border-slate-200`}>
+                            <div className="h-px bg-slate-200 mb-1.5" />
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="flex items-center gap-1">
+                                <span className="text-[10px]">{"🌐"}</span>
+                                <span className="text-[10px] font-medium text-slate-500">{translations[msg._id].lang}</span>
+                              </div>
+                              <button
+                                onClick={() => dismissTranslation(msg._id)}
+                                className="text-[10px] text-slate-400 hover:text-slate-600 leading-none px-1"
+                                title="Dismiss translation"
+                              >
+                                {"\u00d7"}
+                              </button>
+                            </div>
+                            <p className="text-[12px] text-slate-600 italic leading-relaxed">{translations[msg._id].text}</p>
+                          </div>
+                        )}
                         {/* Thread reply count */}
                         {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                         {!isDeleted && (msg as any).threadInfo?.replyCount > 0 && (
@@ -377,31 +551,24 @@ function MessageListInner({
                             {(msg as any).threadInfo.replyCount} {(msg as any).threadInfo.replyCount === 1 ? "reply" : "replies"}
                           </button>
                         )}
+                        {/* Floating action bar — appears on hover */}
+                        {!isDeleted && (
+                          <div className={`absolute -top-3 ${isMe ? "right-0" : "left-0"} opacity-0 group-hover/msg:opacity-100 transition-opacity z-10`}>
+                            <div className="flex items-center gap-0.5 bg-white rounded-lg shadow-md border border-[#E2E8F0] px-1 py-0.5">
+                              <button onClick={() => onThreadOpen(msg)} className="p-1.5 rounded-md hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#334155] transition-colors" title="Reply in thread">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                              </button>
+                              <button onClick={() => onForward(msg._id)} className="p-1.5 rounded-md hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#334155] transition-colors" title="Forward">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+                              </button>
+                            </div>
+                          </div>
+                        )}
                         <div className={`flex items-center gap-1 mt-0.5 ${isMe ? "justify-end mr-1" : "ml-1"}`}>
                           <p className="text-[10px] text-[#94A3B8]">
                             {formatTime(msg.createdAt)}
                           </p>
                           {isMe && getTickStatus(msg)}
-                          {/* Reply in thread action */}
-                          {!isDeleted && (
-                            <button
-                              onClick={() => onThreadOpen(msg)}
-                              className="opacity-0 group-hover:opacity-100 ml-1 p-0.5 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition-all"
-                              title="Reply in thread"
-                            >
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                            </button>
-                          )}
-                          {/* Forward message action */}
-                          {!isDeleted && (
-                            <button
-                              onClick={() => onForward(msg._id)}
-                              className="opacity-0 group-hover:opacity-100 ml-0.5 p-0.5 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition-all"
-                              title="Forward"
-                            >
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
-                            </button>
-                          )}
                         </div>
                       </div>
                     </div>
@@ -413,20 +580,20 @@ function MessageListInner({
 
           {/* Typing indicator */}
           {typingText && (
-            <div className="flex items-end gap-2">
-              <div className="w-7 h-7 rounded-full bg-[#94A3B8] flex items-center justify-center text-white text-[9px] font-semibold shrink-0">
+            <div className="flex items-center gap-2.5 py-2 px-2">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#94A3B8] to-[#64748B] flex items-center justify-center text-white text-[10px] font-semibold shrink-0 ring-2 ring-white shadow-sm">
                 {Array.from(typingUsers)[0] ? getInitials(
                   employeeMap[Array.from(typingUsers)[0]]?.firstName || "?",
                   employeeMap[Array.from(typingUsers)[0]]?.lastName || ""
                 ) : "..."}
               </div>
-              <div className="bg-[#F1F5F9] rounded-2xl rounded-bl-sm px-4 py-3">
-                <div className="flex items-center gap-1">
-                  <span className="w-2 h-2 bg-[#94A3B8] rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                  <span className="w-2 h-2 bg-[#94A3B8] rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                  <span className="w-2 h-2 bg-[#94A3B8] rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+              <div className="bg-white border border-[#E2E8F0] rounded-2xl rounded-bl-md px-4 py-3 shadow-sm">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 bg-[#94A3B8] rounded-full animate-bounce" style={{ animationDelay: "0ms", animationDuration: "1s" }} />
+                  <span className="w-1.5 h-1.5 bg-[#94A3B8] rounded-full animate-bounce" style={{ animationDelay: "200ms", animationDuration: "1s" }} />
+                  <span className="w-1.5 h-1.5 bg-[#94A3B8] rounded-full animate-bounce" style={{ animationDelay: "400ms", animationDuration: "1s" }} />
                 </div>
-                <p className="text-[10px] text-[#94A3B8] mt-1">{typingText}</p>
+                <p className="text-[10px] text-[#94A3B8] mt-1 font-medium">{typingText}</p>
               </div>
             </div>
           )}

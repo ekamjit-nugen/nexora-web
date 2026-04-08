@@ -233,7 +233,7 @@ export const MessageSchema = new Schema<IMessage>(
     contentPlainText: { type: String, default: null },
     type: {
       type: String,
-      enum: ['text', 'file', 'image', 'video', 'audio', 'code', 'poll', 'card', 'meeting', 'call', 'forwarded', 'system'],
+      enum: ['text', 'file', 'image', 'video', 'audio', 'code', 'poll', 'card', 'meeting', 'call', 'forwarded', 'system', 'standup'],
       default: 'text',
     },
     fileUrl: { type: String, default: null },
@@ -241,7 +241,7 @@ export const MessageSchema = new Schema<IMessage>(
     fileSize: { type: Number, default: null },
     fileMimeType: { type: String, default: null },
     replyTo: { type: String, default: null },
-    idempotencyKey: { type: String, default: null },
+    idempotencyKey: { type: String },
     status: { type: String, enum: ['sending', 'sent', 'delivered', 'read', 'failed'], default: 'sent' },
     deliveredTo: [{
       userId: { type: String, required: true },

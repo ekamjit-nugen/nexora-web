@@ -20,6 +20,8 @@ interface CallControlsProps {
   onEndCall: () => void;
   isOnHold?: boolean;
   onToggleHold?: () => void;
+  isAnnotating?: boolean;
+  onToggleAnnotation?: () => void;
   duration?: number;
   /** Connection quality indicator */
   connectionQuality?: QualityLevel;
@@ -57,6 +59,8 @@ export function CallControls({
   onEndCall,
   isOnHold = false,
   onToggleHold,
+  isAnnotating = false,
+  onToggleAnnotation,
   duration,
   connectionQuality,
   remoteVideoRef,
@@ -118,7 +122,7 @@ export function CallControls({
       console.error("PIP toggle failed:", err);
     }
   }, [isPipActive, remoteVideoRef]);
-  const btnBase = "w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all duration-200";
+  const btnBase = "w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 shrink-0";
   const btnActive = "bg-white/10 text-white hover:bg-white/20";
   const btnOff = "bg-red-500/20 text-red-400 hover:bg-red-500/30";
 
@@ -126,16 +130,15 @@ export function CallControls({
   const qualityLabel = connectionQuality === "good" ? "Good connection" : connectionQuality === "acceptable" ? "Unstable connection" : connectionQuality === "poor" ? "Poor connection" : "Unknown";
 
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div className="flex items-center gap-1.5 sm:gap-2" role="toolbar" aria-label="Call controls">
       {/* Call Duration Timer */}
-      <div className="text-white text-sm font-mono tracking-wide">
+      <div className="text-white text-xs font-mono tracking-wide bg-white/10 px-3 py-1.5 rounded-full shrink-0">
         {formatDuration(typeof duration === "number" ? duration : elapsed)}
       </div>
 
-      <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3" role="toolbar" aria-label="Call controls">
       {/* Connection Quality Indicator */}
       {connectionQuality && (
-        <div className="flex items-center gap-1.5 mr-1" title={qualityLabel}>
+        <div className="flex items-center gap-1.5" title={qualityLabel}>
           <div className="flex items-end gap-0.5 h-4">
             <div className={`w-1 h-1.5 rounded-sm ${qualityColor}`} />
             <div className={`w-1 h-2.5 rounded-sm ${connectionQuality !== "poor" ? qualityColor : "bg-gray-600"}`} />
@@ -184,6 +187,18 @@ export function CallControls({
         )}
       </button>
 
+      {/* End Call — centered */}
+      <button
+        onClick={onEndCall}
+        className="w-14 h-10 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center transition-all duration-200 shrink-0 shadow-[0_8px_20px_rgba(239,68,68,0.3)] mx-1"
+        title="End call"
+        aria-label="End call"
+      >
+        <svg className="w-5 h-5 rotate-[135deg]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+        </svg>
+      </button>
+
       {/* Screen Share */}
       <button
         onClick={onToggleScreenShare}
@@ -194,6 +209,19 @@ export function CallControls({
       >
         <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25A2.25 2.25 0 015.25 3h13.5A2.25 2.25 0 0121 5.25z" />
+        </svg>
+      </button>
+
+      {/* Draw / Annotate */}
+      <button
+        onClick={onToggleAnnotation}
+        className={`${btnBase} ${isAnnotating ? "bg-[#FF3B30] text-white hover:bg-[#E5342B]" : btnActive}`}
+        title={isAnnotating ? "Stop drawing" : "Draw on screen"}
+        aria-label="Toggle annotation"
+        aria-pressed={isAnnotating}
+      >
+        <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
         </svg>
       </button>
 
@@ -305,18 +333,6 @@ export function CallControls({
         </button>
       )}
 
-      {/* End Call */}
-      <button
-        onClick={onEndCall}
-        className={`${btnBase} bg-red-500 hover:bg-red-600 text-white shadow-[0_8px_20px_rgba(239,68,68,0.3)]`}
-        title="End call"
-        aria-label="End call"
-      >
-        <svg className="w-5 h-5 rotate-[135deg]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-        </svg>
-      </button>
-      </div>
     </div>
   );
 }

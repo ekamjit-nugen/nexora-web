@@ -225,10 +225,11 @@ export class PushService implements OnModuleInit {
 
       await this.webPush.sendNotification(subscription, pushPayload, {
         TTL: payload.type === 'incoming_call' ? 30 : 86400, // Short TTL for calls
-        urgency:
-          payload.priority === 'critical' ? 'very-high' :
+        urgency: (
+          payload.priority === 'critical' ? 'high' :
           payload.priority === 'high' ? 'high' :
-          payload.priority === 'low' ? 'very-low' : 'normal',
+          payload.priority === 'low' ? 'very-low' : 'normal'
+        ) as any,
       });
 
       return true;

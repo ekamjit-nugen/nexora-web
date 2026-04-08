@@ -365,6 +365,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-debug}
       CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100
       REDIS_URI: redis://redis:6379
+      CHAT_SERVICE_URL: http://chat-service:3002
     depends_on:
       mongodb:
         condition: service_healthy
@@ -389,6 +390,7 @@ services:
       - "3005:3005"
     environment:
       GATEWAY_PORT: 3005
+      JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
       AUTH_SERVICE_URL: http://auth-service:3001
       HR_SERVICE_URL: http://hr-service:3010
       ATTENDANCE_SERVICE_URL: http://attendance-service:3011

@@ -8,7 +8,7 @@ export class SendMessageDto {
   content?: string;
 
   @IsOptional()
-  @IsEnum(['text', 'file', 'image', 'video', 'audio', 'code', 'system'])
+  @IsEnum(['text', 'file', 'image', 'video', 'audio', 'code', 'system', 'call', 'meeting', 'poll', 'card', 'forwarded'])
   type?: string;
 
   @IsOptional()

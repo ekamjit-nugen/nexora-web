@@ -80,6 +80,7 @@ export interface IMeetingSettings {
   allowScreenShare: boolean;
   allowChat: boolean;
   allowReactions: boolean;
+  requireRecordingConsent?: boolean;
 }
 
 export interface IMeeting extends Document {
@@ -109,6 +110,10 @@ export interface IMeeting extends Document {
   recurrence?: IRecurrencePattern;
   breakoutRooms: IBreakoutRoom[];
   breakoutSettings?: IBreakoutSettings;
+  externalCalendar?: {
+    google?: { eventId: string };
+    outlook?: { eventId: string };
+  };
   startedAt?: Date;
   endedAt?: Date;
   sprintId?: string;
@@ -165,6 +170,7 @@ export const MeetingSchema = new Schema<IMeeting>(
       allowScreenShare: { type: Boolean, default: true },
       allowChat: { type: Boolean, default: true },
       allowReactions: { type: Boolean, default: true },
+      requireRecordingConsent: { type: Boolean, default: true },
     },
     lobbyQueue: [{
       userId: { type: String, default: null },
@@ -219,6 +225,10 @@ export const MeetingSchema = new Schema<IMeeting>(
       allowReturn: { type: Boolean, default: true },
       timer: { type: Number, default: null },
       hostCanJoinAny: { type: Boolean, default: true },
+    },
+    externalCalendar: {
+      google: { eventId: { type: String, default: null } },
+      outlook: { eventId: { type: String, default: null } },
     },
     startedAt: { type: Date, default: null },
     endedAt: { type: Date, default: null },

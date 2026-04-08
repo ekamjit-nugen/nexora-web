@@ -99,6 +99,17 @@ export class AiSummaryService {
     }
   }
 
+  async translateMessage(content: string, targetLanguage: string): Promise<string> {
+    if (!content || !targetLanguage) {
+      return 'Translation failed: missing content or target language.';
+    }
+
+    return this.callLLM(
+      `You are a professional translator. Translate the following message to ${targetLanguage}. Return ONLY the translation, nothing else.`,
+      content,
+    );
+  }
+
   private async callLLM(systemPrompt: string, userContent: string): Promise<string> {
     try {
       const res = await axios.post(this.llmUrl, {

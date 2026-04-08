@@ -142,6 +142,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Store tokens in localStorage as fallback; httpOnly cookies are set by the server
       localStorage.setItem("accessToken", res.data.accessToken);
       localStorage.setItem("refreshToken", res.data.refreshToken);
+      // Notify socket providers to connect (storage event only fires cross-tab)
+      window.dispatchEvent(new Event("nexora:token-changed"));
 
       const userRes = await authApi.me();
       setUser(userRes.data || null);
@@ -165,6 +167,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (res.data) {
       localStorage.setItem("accessToken", res.data.accessToken);
       localStorage.setItem("refreshToken", res.data.refreshToken);
+      window.dispatchEvent(new Event("nexora:token-changed"));
       const userRes = await authApi.me();
       setUser(userRes.data || null);
       await fetchOrgs();
@@ -199,6 +202,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.setItem("accessToken", res.data.accessToken);
         localStorage.setItem("refreshToken", res.data.refreshToken);
         localStorage.setItem("currentOrgId", orgId);
+        window.dispatchEvent(new Event("nexora:token-changed"));
       }
     } catch {
       localStorage.setItem("currentOrgId", orgId);

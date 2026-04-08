@@ -134,12 +134,12 @@ function ConversationSidebarInner({
   );
 
   return (
-    <div className="w-[300px] border-r border-[#E2E8F0] bg-white flex flex-col h-full shrink-0">
+    <div className="w-[300px] border-r border-[#E2E8F0]/60 bg-[#FAFBFC] flex flex-col h-full shrink-0">
       {/* Header */}
-      <div className="px-4 py-3.5 border-b border-[#E2E8F0] bg-gradient-to-b from-white to-[#FAFBFC] shrink-0">
+      <div className="px-4 py-3.5 border-b border-[#E2E8F0]/60 bg-white shrink-0">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-[#0F172A]">Chat</h2>
+            <h2 className="text-[15px] font-bold text-[#0F172A] tracking-tight">Messages</h2>
             <button
               onClick={onToggleSettings}
               className={`p-1 rounded-lg transition-colors ${showSettingsPanel ? "bg-[#EBF5FF] text-[#2E86C1]" : "text-[#94A3B8] hover:text-[#64748B] hover:bg-[#F1F5F9]"}`}
@@ -250,15 +250,18 @@ function ConversationSidebarInner({
               <button
                 key={convo._id}
                 onClick={() => onSelect(convo._id)}
-                className={`w-full text-left px-3 py-3 transition-colors hover:bg-[#F1F5F9] ${
-                  isActive ? "bg-[#EBF5FF] border-l-2 border-[#2E86C1]" : ""
+                className={`w-full text-left px-2.5 py-2.5 mx-1.5 rounded-xl transition-all ${
+                  isActive
+                    ? "bg-[#2E86C1]/10 shadow-sm"
+                    : "hover:bg-white hover:shadow-sm"
                 }`}
+                style={{ width: "calc(100% - 12px)" }}
               >
                 <div className="flex items-start gap-2.5">
                   {/* Avatar */}
                   <div className="relative shrink-0 group/convo">
-                    <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-[11px] font-semibold ${
-                      convo.type === "direct" ? "bg-[#2E86C1]" : convo.type === "channel" ? "bg-[#7C3AED]" : "bg-[#0D9488]"
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white text-[11px] font-semibold shadow-sm ${
+                      convo.type === "direct" ? "bg-gradient-to-br from-[#2E86C1] to-[#1D6FA5]" : convo.type === "channel" ? "bg-gradient-to-br from-[#7C3AED] to-[#6D28D9]" : "bg-gradient-to-br from-[#0D9488] to-[#0F766E]"
                     }`}>
                       {convo.type === "direct" ? initials : convo.type === "channel" ? (
                         <span className="text-sm font-bold">#</span>
@@ -298,7 +301,7 @@ function ConversationSidebarInner({
                             <path d="M10 2a.75.75 0 01.75.75v.258a33.186 33.186 0 016.668.83.75.75 0 01-.336 1.461 31.28 31.28 0 00-1.103-.232l1.702 7.545a.75.75 0 01-.387.832A4.981 4.981 0 0115 14c-.825 0-1.606-.2-2.294-.556a.75.75 0 01-.387-.832l1.77-7.849a31.743 31.743 0 00-3.339-.254V17.5h2.25a.75.75 0 010 1.5h-6a.75.75 0 010-1.5h2.25V4.509a31.743 31.743 0 00-3.339.254l1.77 7.849a.75.75 0 01-.387.832A4.981 4.981 0 015 14c-.825 0-1.606-.2-2.294-.556a.75.75 0 01-.387-.832l1.702-7.545c-.372.07-.74.148-1.103.232a.75.75 0 01-.336-1.462 33.186 33.186 0 016.668-.829V2.75A.75.75 0 0110 2z" />
                           </svg>
                         )}
-                        <p className={`text-[13px] font-medium truncate ${isActive ? "text-[#2E86C1]" : "text-[#0F172A]"}`}>
+                        <p className={`text-[13px] font-semibold truncate ${isActive ? "text-[#1D6FA5]" : "text-[#0F172A]"}`}>
                           {displayName}
                         </p>
                       </div>

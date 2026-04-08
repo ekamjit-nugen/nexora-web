@@ -50,7 +50,7 @@ export class PreferencesService {
     );
   }
 
-  async unregisterDevice(token: string) {
+  async unregisterDevice(token: string): Promise<{ deletedCount?: number }> {
     return this.deviceTokenModel.deleteOne({ token });
   }
 

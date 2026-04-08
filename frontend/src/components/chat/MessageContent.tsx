@@ -1,6 +1,13 @@
 "use client";
 
-import DOMPurify from "isomorphic-dompurify";
+import { useMemo } from "react";
+
+// Dynamic import to avoid SSR crash — jsdom not available on server
+let DOMPurify: { sanitize: (html: string) => string } | null = null;
+if (typeof window !== "undefined") {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  DOMPurify = require("isomorphic-dompurify").default || require("isomorphic-dompurify");
+}
 
 /**
  * Renders rich message content (HTML from TipTap or plain text).
@@ -36,7 +43,7 @@ export function MessageContent({ content, isHtml, className = "" }: MessageConte
           prose-blockquote:border-l-blue-400 prose-blockquote:bg-blue-50 prose-blockquote:my-1 prose-blockquote:py-1
           prose-a:text-blue-500
           ${className}`}
-        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(highlighted) }}
+        dangerouslySetInnerHTML={{ __html: DOMPurify ? DOMPurify.sanitize(highlighted) : highlighted }}
       />
     );
   }

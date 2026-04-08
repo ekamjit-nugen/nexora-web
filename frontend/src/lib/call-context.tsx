@@ -55,6 +55,12 @@ interface CallContextState {
   onIceCandidate: (handler: (data: any) => void) => () => void;
   onAnnotationStroke: (handler: (data: AnnotationStroke & { from: string }) => void) => () => void;
   onAnnotationClear: (handler: (data: { from: string }) => void) => () => void;
+  sendPointer: (x: number, y: number) => void;
+  sendPointerHide: () => void;
+  onPointer: (handler: (data: { from: string; x: number; y: number }) => void) => () => void;
+  onPointerHide: (handler: (data: { from: string }) => void) => () => void;
+  sendCallChat: (content: string) => void;
+  onCallChat: (handler: (data: { id: string; senderId: string; content: string; createdAt: string }) => void) => () => void;
 }
 
 const CallContext = createContext<CallContextState | undefined>(undefined);
@@ -479,6 +485,28 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const onAnnotationStroke = useCallback((handler: (data: AnnotationStroke & { from: string }) => void) => on("call:annotation-stroke", handler), [on]);
   const onAnnotationClear = useCallback((handler: (data: { from: string }) => void) => on("call:annotation-clear", handler), [on]);
 
+  // ── Remote pointer broadcast ──
+  const sendPointer = useCallback(
+    (x: number, y: number) => {
+      if (!call) return;
+      emit("call:pointer", { callId: call.callId, x, y });
+    },
+    [call, emit],
+  );
+  const sendPointerHide = useCallback(() => {
+    if (!call) return;
+    emit("call:pointer-hide", { callId: call.callId });
+  }, [call, emit]);
+  const onPointer = useCallback((handler: (data: { from: string; x: number; y: number }) => void) => on("call:pointer", handler), [on]);
+  const onPointerHide = useCallback((handler: (data: { from: string }) => void) => on("call:pointer-hide", handler), [on]);
+
+  // ── Ephemeral in-call chat ──
+  const sendCallChat = useCallback((content: string) => {
+    if (!call) return;
+    emit("call:chat", { callId: call.callId, content });
+  }, [call, emit]);
+  const onCallChat = useCallback((handler: (data: { id: string; senderId: string; content: string; createdAt: string }) => void) => on("call:chat", handler), [on]);
+
   return (
     <CallContext.Provider
       value={{
@@ -505,6 +533,12 @@ export function CallProvider({ children }: { children: ReactNode }) {
         onIceCandidate,
         onAnnotationStroke,
         onAnnotationClear,
+        sendPointer,
+        sendPointerHide,
+        onPointer,
+        onPointerHide,
+        sendCallChat,
+        onCallChat,
       }}
     >
       {children}

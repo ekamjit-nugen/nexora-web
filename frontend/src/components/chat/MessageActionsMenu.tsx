@@ -7,6 +7,7 @@ import { toast } from "sonner";
 interface MessageActionsMenuProps {
   messageId: string;
   conversationId: string;
+  messageContent: string;
   isOwnMessage: boolean;
   isAdmin: boolean;
   isPinned: boolean;
@@ -17,6 +18,7 @@ interface MessageActionsMenuProps {
   onForward: () => void;
   onCopyText: () => void;
   onBookmark: () => void;
+  onTranslate?: (messageId: string, targetLanguage: string) => void;
   onEdit?: () => void;
   onDelete?: () => void;
   anchorPosition: { top: number; left: number };
@@ -27,10 +29,10 @@ interface MessageActionsMenuProps {
 const QUICK_REACTIONS = ["👍", "❤️", "😄", "😮", "😢", "🔥"];
 
 export function MessageActionsMenu({
-  messageId, conversationId,
+  messageId, conversationId, messageContent,
   isOwnMessage, isAdmin, isPinned,
   onReplyInThread, onReact, onPin, onUnpin, onForward, onCopyText, onBookmark,
-  onEdit, onDelete, anchorPosition, onClose, triggerRef,
+  onTranslate, onEdit, onDelete, anchorPosition, onClose, triggerRef,
 }: MessageActionsMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -113,6 +115,9 @@ export function MessageActionsMenu({
       <MenuItem icon="📋" label="Copy text" onClick={() => { onCopyText(); handleClose(); }} />
       <MenuItem icon="🔖" label="Save" onClick={() => { onBookmark(); handleClose(); }} />
       <ReminderMenuItem messageId={messageId} conversationId={conversationId} onClose={handleClose} />
+      {onTranslate && (
+        <TranslateMenuItem messageId={messageId} onTranslate={onTranslate} onClose={handleClose} />
+      )}
       <MenuItem
         icon={isPinned ? "📌" : "📌"}
         label={isPinned ? "Unpin" : "Pin"}
@@ -222,6 +227,49 @@ function ReminderMenuItem({ messageId, conversationId, onClose }: { messageId: s
               <button onClick={handleCustomConfirm} className="w-full px-2 py-1 text-[10px] font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors">Set reminder</button>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const TRANSLATE_LANGUAGES = [
+  { code: "English", label: "English" },
+  { code: "Spanish", label: "Spanish" },
+  { code: "French", label: "French" },
+  { code: "German", label: "German" },
+  { code: "Chinese", label: "Chinese" },
+  { code: "Japanese", label: "Japanese" },
+  { code: "Hindi", label: "Hindi" },
+  { code: "Arabic", label: "Arabic" },
+  { code: "Portuguese", label: "Portuguese" },
+  { code: "Korean", label: "Korean" },
+];
+
+function TranslateMenuItem({ messageId, onTranslate, onClose }: { messageId: string; onTranslate: (messageId: string, targetLanguage: string) => void; onClose: () => void }) {
+  const [showSub, setShowSub] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setShowSub(!showSub)}
+        className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 transition-colors"
+      >
+        <span className="text-sm">{"🌐"}</span>
+        <span className="font-medium">Translate</span>
+        <svg className="w-3 h-3 ml-auto text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
+      </button>
+      {showSub && (
+        <div className="absolute left-full top-0 ml-1 w-[160px] bg-white rounded-xl shadow-2xl border border-slate-200 py-1 z-50 max-h-[280px] overflow-y-auto">
+          {TRANSLATE_LANGUAGES.map((lang) => (
+            <button
+              key={lang.code}
+              onClick={() => { onTranslate(messageId, lang.code); onClose(); }}
+              className="w-full flex items-center px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 transition-colors"
+            >
+              <span className="font-medium">{lang.label}</span>
+            </button>
+          ))}
         </div>
       )}
     </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef } from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 import type { Conversation, ChatMessage, Employee } from "@/lib/api";
 import { CallControls, VideoCallWindow, PreCallPreview, CallFeedback } from "@/components/calling";
 import { getInitials } from "@/lib/utils";
@@ -47,10 +47,11 @@ export interface CallOverlayProps {
   // Signaling
   signalingCallStatus: string | undefined;
 
-  // Call chat
+  // Call chat (ephemeral — not persisted to main conversation)
   showCallChat: boolean;
   callChatMsg: string;
-  messages: ChatMessage[];
+  callChatMessages: Array<{ id: string; senderId: string; content: string; createdAt: string }>;
+  callChatUnread: number;
   callStartTime: string | null;
   onCallChatMsgChange: (val: string) => void;
   onCallChatToggle: () => void;
@@ -70,6 +71,10 @@ export interface CallOverlayProps {
   onAnnotationColorChange: (c: string) => void;
   onAnnotationBrushSizeChange: (s: number) => void;
   onAnnotationClear: () => void;
+  onAnnotationStroke: (stroke: { fromX: number; fromY: number; toX: number; toY: number; color: string; brushSize: number }) => void;
+  remotePointers: Array<{ userId: string; name: string; x: number; y: number; color: string }>;
+  onPointerMove: (x: number, y: number) => void;
+  onPointerLeave: () => void;
 
   // Add participant modal
   showAddParticipantModal: boolean;
@@ -101,12 +106,13 @@ function CallOverlayInner(props: CallOverlayProps) {
     screenShareStream, floatingEmojis, remoteHasVideo,
     webrtcLocalStream, webrtcRemoteStream, webrtcError,
     signalingCallStatus,
-    showCallChat, callChatMsg, messages, callStartTime,
+    showCallChat, callChatMsg, callChatMessages, callChatUnread, callStartTime,
     onCallChatMsgChange, onCallChatToggle, onCallChatSend,
     onEndCall, onToggleAudio, onToggleVideo,
     onToggleRecording, onToggleScreenShare, onToggleFullscreen,
     onToggleHold, onAddParticipant, onEmojiReaction,
-    onAnnotationToggle, onAnnotationColorChange, onAnnotationBrushSizeChange, onAnnotationClear,
+    onAnnotationToggle, onAnnotationColorChange, onAnnotationBrushSizeChange, onAnnotationClear, onAnnotationStroke,
+    remotePointers, onPointerMove, onPointerLeave,
     showAddParticipantModal, onCloseAddParticipant,
     filteredEmployees, employeeSearch, onEmployeeSearchChange, onInviteToCall,
     showCallFeedback, feedbackCallId, feedbackCallDuration, onCloseCallFeedback,
@@ -128,6 +134,70 @@ function CallOverlayInner(props: CallOverlayProps) {
 
   const otherUserId = callConversation?.participants.find((p) => p.userId !== user._id)?.userId || "";
 
+  const [isMinimized, setIsMinimized] = useState(false);
+
+  // ── Drag support for minimized PiP ──
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
+  const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const pipRef = useRef<HTMLDivElement>(null);
+
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    // Only drag from the header area, not buttons
+    if ((e.target as HTMLElement).closest("button")) return;
+    e.preventDefault();
+    const el = pipRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: rect.left,
+      origY: rect.top,
+    };
+
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current) return;
+      const dx = ev.clientX - dragRef.current.startX;
+      const dy = ev.clientY - dragRef.current.startY;
+      let newX = dragRef.current.origX + dx;
+      let newY = dragRef.current.origY + dy;
+      // Clamp to viewport
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      newX = Math.max(0, Math.min(window.innerWidth - w, newX));
+      newY = Math.max(0, Math.min(window.innerHeight - h, newY));
+      setDragPos({ x: newX, y: newY });
+    };
+
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, []);
+
+  // Reset drag position when switching between minimized/expanded or call ends
+  useEffect(() => {
+    setDragPos(null);
+  }, [isMinimized, showCallWindow]);
+
+  // Auto-minimize when screen sharing starts
+  useEffect(() => {
+    if (isScreenSharing && !isFullscreen) {
+      setIsMinimized(true);
+    }
+  }, [isScreenSharing, isFullscreen]);
+
+  // Reset minimize when call window hides
+  useEffect(() => {
+    if (!showCallWindow) setIsMinimized(false);
+  }, [showCallWindow]);
+
+  const durationStr = `${Math.floor(callDuration / 60)}:${String(callDuration % 60).padStart(2, "0")}`;
+
   return (
     <>
       {/* Pre-Call Preview Modal */}
@@ -140,15 +210,107 @@ function CallOverlayInner(props: CallOverlayProps) {
         />
       )}
 
-      {/* Active Call Window (Overlay) */}
-      {showCallWindow && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center">
-          <div className="absolute inset-0 bg-gradient-to-br from-[#0B1020]/80 via-[#0B1020]/70 to-[#101827]/80 backdrop-blur-sm" />
+      {/* Active Call Window */}
+      {showCallWindow && isMinimized && !isFullscreen && (
+        /* ── Minimized PiP (draggable) ── */
+        <div
+          ref={pipRef}
+          className="fixed z-[200] w-[280px] bg-[#0F172A] rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.5)] border border-[#1F2A44] overflow-hidden cursor-grab active:cursor-grabbing select-none"
+          style={dragPos ? { left: dragPos.x, top: dragPos.y } : { bottom: 16, left: 16 }}
+          onMouseDown={onDragStart}
+        >
+          <audio ref={remoteAudioRef} autoPlay playsInline />
+          {/* Mini video / avatar */}
+          <div className="h-[120px] bg-gradient-to-br from-[#0B1220] to-[#0F172A] relative flex items-center justify-center">
+            {(isVideoEnabled || remoteHasVideo) && webrtcRemoteStream ? (
+              <VideoCallWindow
+                localStream={webrtcLocalStream}
+                remoteStream={webrtcRemoteStream}
+                localUserName={user ? `${user.firstName} ${user.lastName}` : "You"}
+                remoteUserName={getEmployeeName(otherUserId)}
+                isAudioMuted={!isAudioEnabled}
+                remoteHasVideo={remoteHasVideo}
+                localHasVideo={isVideoEnabled}
+                floatingEmojis={[]}
+              />
+            ) : (
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#2563EB] to-[#0EA5E9] flex items-center justify-center text-white text-lg font-bold">
+                  {getInitials(employeeMap[otherUserId]?.firstName || "", employeeMap[otherUserId]?.lastName || "")}
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-white">{getEmployeeName(otherUserId)}</p>
+                  <p className="text-[10px] text-[#94A3B8]">{durationStr}</p>
+                </div>
+              </div>
+            )}
+            {/* Expand button */}
+            <button
+              onClick={() => setIsMinimized(false)}
+              className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 hover:bg-black/70 text-white flex items-center justify-center transition-colors"
+              title="Expand"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+              </svg>
+            </button>
+          </div>
+          {/* Mini controls */}
+          <div className="flex items-center justify-center gap-2 px-3 py-2 bg-[#0B1220] border-t border-[#1F2A44]">
+            <button
+              onClick={() => onToggleAudio(!isAudioEnabled)}
+              className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${isAudioEnabled ? "bg-white/10 text-white" : "bg-red-500/20 text-red-400"}`}
+              title={isAudioEnabled ? "Mute" : "Unmute"}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+              </svg>
+            </button>
+            <button
+              onClick={() => onToggleVideo(!isVideoEnabled)}
+              className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${isVideoEnabled ? "bg-white/10 text-white" : "bg-red-500/20 text-red-400"}`}
+              title={isVideoEnabled ? "Camera off" : "Camera on"}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+              </svg>
+            </button>
+            <button
+              onClick={onEndCall}
+              className="w-10 h-8 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center transition-colors"
+              title="End call"
+            >
+              <svg className="w-4 h-4 rotate-[135deg]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+              </svg>
+            </button>
+            <button
+              onClick={() => setIsMinimized(false)}
+              className="w-8 h-8 rounded-full bg-white/10 text-white hover:bg-white/20 flex items-center justify-center transition-colors"
+              title="Expand"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showCallWindow && (!isMinimized || isFullscreen) && (
+        <div className={`fixed z-[200] ${isFullscreen ? "inset-0" : "inset-0 flex items-center justify-center"}`}>
+          {/* Backdrop — only in centered mode, click to minimize */}
+          {!isFullscreen && (
+            <div
+              className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
+              onClick={() => setIsMinimized(true)}
+            />
+          )}
           <div ref={callWindowRef} className={`relative bg-[#0F172A] shadow-[0_20px_60px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col border border-[#1F2A44] ${isFullscreen ? "w-full h-full" : "w-[92vw] max-w-5xl h-[88vh] rounded-3xl"}`}>
             {/* Call header */}
-            <div className="h-16 bg-gradient-to-r from-[#0F172A] via-[#0B1220] to-[#0F172A] border-b border-[#1F2A44] flex items-center justify-between px-6">
+            <div className="h-14 bg-gradient-to-r from-[#0F172A] via-[#0B1220] to-[#0F172A] border-b border-[#1F2A44] flex items-center justify-between px-5 shrink-0">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-[#2563EB] flex items-center justify-center text-white font-semibold shadow-[0_0_0_3px_rgba(37,99,235,0.2)]">
+                <div className="w-9 h-9 rounded-full bg-[#2563EB] flex items-center justify-center text-white text-xs font-semibold shadow-[0_0_0_3px_rgba(37,99,235,0.2)]">
                   {getInitials(
                     employeeMap[otherUserId]?.firstName || "",
                     employeeMap[otherUserId]?.lastName || ""
@@ -156,30 +318,36 @@ function CallOverlayInner(props: CallOverlayProps) {
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-white tracking-wide">{getEmployeeName(otherUserId)}</p>
-                  <p className="text-xs text-[#94A3B8]">
-                    {isVideoEnabled ? "Video" : "Audio"} Call {isRecording && <span className="text-red-400 ml-1">&#9679; REC</span>} {isScreenSharing && <span className="text-blue-400 ml-1">Sharing</span>} &#8226; {Math.floor(callDuration / 60)}:{String(callDuration % 60).padStart(2, "0")}
+                  <p className="text-[11px] text-[#94A3B8]">
+                    {isVideoEnabled ? "Video" : "Audio"} Call {isRecording && <span className="text-red-400 ml-1">&#9679; REC</span>} {isScreenSharing && <span className="text-blue-400 ml-1">Sharing</span>} &#8226; {durationStr}
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold tracking-wide uppercase bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-semibold tracking-wide uppercase bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
                   {getCallStatusLabel()}
                 </span>
-                {signalingCallStatus === "connected" && (
-                  <span className="flex items-center gap-1.5 text-[10px] text-[#CBD5F5]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    Encrypted
-                  </span>
+                {/* Minimize button */}
+                {!isFullscreen && (
+                  <button
+                    onClick={() => setIsMinimized(true)}
+                    className="w-8 h-8 rounded-lg text-[#94A3B8] hover:bg-white/10 hover:text-white flex items-center justify-center transition-colors"
+                    title="Minimize"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12h-15" />
+                    </svg>
+                  </button>
                 )}
+                <button
+                  onClick={onEndCall}
+                  className="w-8 h-8 rounded-lg bg-red-500/90 hover:bg-red-500 text-white flex items-center justify-center transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
-              <button
-                onClick={onEndCall}
-                className="w-10 h-10 rounded-full bg-red-500/90 hover:bg-red-500 text-white flex items-center justify-center transition-colors shadow-[0_8px_20px_rgba(239,68,68,0.3)]"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
             </div>
 
             {/* Video/Audio + Chat row */}
@@ -264,6 +432,8 @@ function CallOverlayInner(props: CallOverlayProps) {
                     localUserName={user ? `${user.firstName} ${user.lastName}` : "You"}
                     remoteUserName={getEmployeeName(otherUserId)}
                     isAudioMuted={!isAudioEnabled}
+                    remoteHasVideo={remoteHasVideo}
+                    localHasVideo={isVideoEnabled}
                     screenShareStream={screenShareStream}
                     isScreenSharing={isScreenSharing}
                     isViewerAnnotating={isViewerAnnotating}
@@ -273,6 +443,10 @@ function CallOverlayInner(props: CallOverlayProps) {
                     onAnnotationColorChange={onAnnotationColorChange}
                     onAnnotationBrushSizeChange={onAnnotationBrushSizeChange}
                     onAnnotationClear={onAnnotationClear}
+                    onAnnotationStroke={onAnnotationStroke}
+                    remotePointers={remotePointers}
+                    onPointerMove={onPointerMove}
+                    onPointerLeave={onPointerLeave}
                     floatingEmojis={floatingEmojis}
                   />
                 ) : (
@@ -349,36 +523,26 @@ function CallOverlayInner(props: CallOverlayProps) {
                     </button>
                   </div>
                   <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
-                    {(() => {
-                      const callMessages = callStartTime
-                        ? messages.filter((msg) => new Date(msg.createdAt) >= new Date(callStartTime))
-                        : [];
-                      if (callMessages.length === 0) {
-                        return (
-                          <div className="flex items-center justify-center h-full">
-                            <p className="text-[#64748B] text-xs text-center">No messages during this call yet</p>
-                          </div>
-                        );
-                      }
-                      return callMessages.map((msg) => {
+                    {callChatMessages.length === 0 ? (
+                      <div className="flex items-center justify-center h-full">
+                        <p className="text-[#64748B] text-xs text-center">No messages in this call session</p>
+                      </div>
+                    ) : (
+                      callChatMessages.map((msg) => {
                         const isMe = msg.senderId === user._id;
                         return (
-                          <div key={msg._id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+                          <div key={msg.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
                             <div className={`max-w-[85%] px-3 py-1.5 rounded-xl text-xs ${isMe ? "bg-[#2563EB] text-white" : "bg-[#1E293B] text-[#E2E8F0]"}`}>
                               {!isMe && <p className="text-[10px] text-[#60A5FA] font-medium mb-0.5">{getEmployeeName(msg.senderId)}</p>}
-                              {msg.type === "file" && msg.fileUrl ? (
-                                <a href={msg.fileUrl} target="_blank" rel="noreferrer" className="underline break-all">{msg.fileName || msg.content}</a>
-                              ) : (
-                                <p className="break-words whitespace-pre-wrap">{msg.content}</p>
-                              )}
+                              <p className="break-words whitespace-pre-wrap">{msg.content}</p>
                               <p className={`text-[9px] mt-0.5 ${isMe ? "text-blue-200" : "text-[#64748B]"}`}>
                                 {new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                               </p>
                             </div>
                           </div>
                         );
-                      });
-                    })()}
+                      })
+                    )}
                   </div>
                   <div className="p-2 border-t border-[#1F2A44] shrink-0">
                     <form onSubmit={(e) => {
@@ -403,7 +567,7 @@ function CallOverlayInner(props: CallOverlayProps) {
             </div>
 
             {/* Controls bar */}
-            <div className="h-20 bg-[#0B1220] border-t border-[#1F2A44] flex items-center justify-center gap-3 px-5">
+            <div className="shrink-0 bg-[#0B1220] border-t border-[#1F2A44] flex items-center justify-center gap-2 px-5 py-3">
               <CallControls
                 isAudioEnabled={isAudioEnabled}
                 isVideoEnabled={isVideoEnabled}
@@ -419,41 +583,53 @@ function CallOverlayInner(props: CallOverlayProps) {
                 onEndCall={onEndCall}
                 isOnHold={isOnHold}
                 onToggleHold={onToggleHold}
+                isAnnotating={isViewerAnnotating}
+                onToggleAnnotation={onAnnotationToggle}
               />
 
               {/* Emoji reactions */}
-              <div className="relative group/emoji">
+              <div className="relative group/emoji shrink-0">
                 <button
-                  className="w-12 h-12 rounded-full bg-white/10 text-white/70 hover:bg-white/20 hover:text-white flex items-center justify-center transition-colors text-lg"
+                  className="w-10 h-10 rounded-full bg-white/10 text-white/70 hover:bg-white/20 hover:text-white flex items-center justify-center transition-colors text-lg"
                   title="React"
                 >
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.182 15.182a4.5 4.5 0 01-6.364 0M21 12a9 9 0 11-18 0 9 9 0 0118 0zM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75zm-.375 0h.008v.015h-.008V9.75zm5.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75zm-.375 0h.008v.015h-.008V9.75z" />
                   </svg>
                 </button>
-                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 hidden group-hover/emoji:flex items-center gap-1 bg-[#1E293B] rounded-full px-3 py-2 shadow-xl border border-[#334155]">
-                  {["\uD83D\uDC4D", "\u2764\uFE0F", "\uD83D\uDE02", "\uD83D\uDE2E", "\uD83C\uDF89", "\uD83D\uDC4F", "\uD83D\uDD25", "\uD83D\uDE22"].map((emoji) => (
-                    <button
-                      key={emoji}
-                      onClick={() => onEmojiReaction(emoji)}
-                      className="w-9 h-9 rounded-full hover:bg-white/10 flex items-center justify-center text-xl transition-all hover:scale-125"
-                    >
-                      {emoji}
-                    </button>
-                  ))}
+                {/* pb-3 bridges the gap so hover stays active when moving to the popup */}
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 hidden group-hover/emoji:block pb-3">
+                  <div className="flex items-center gap-1 bg-[#1E293B] rounded-full px-3 py-2 shadow-xl border border-[#334155]">
+                    {["\uD83D\uDC4D", "\u2764\uFE0F", "\uD83D\uDE02", "\uD83D\uDE2E", "\uD83C\uDF89", "\uD83D\uDC4F", "\uD83D\uDD25", "\uD83D\uDE22"].map((emoji) => (
+                      <button
+                        key={emoji}
+                        onClick={() => onEmojiReaction(emoji)}
+                        className="w-9 h-9 rounded-full hover:bg-white/10 flex items-center justify-center text-xl transition-all hover:scale-125"
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
               {/* Chat toggle */}
-              <button
-                onClick={onCallChatToggle}
-                className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${showCallChat ? "bg-[#2563EB] text-white" : "bg-white/10 text-white/70 hover:bg-white/20 hover:text-white"}`}
-                title="Chat"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
-                </svg>
-              </button>
+              <div className="relative shrink-0">
+                <button
+                  onClick={onCallChatToggle}
+                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${showCallChat ? "bg-[#2563EB] text-white" : "bg-white/10 text-white/70 hover:bg-white/20 hover:text-white"}`}
+                  title="Chat"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
+                  </svg>
+                </button>
+                {callChatUnread > 0 && !showCallChat && (
+                  <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center animate-bounce" style={{ animationIterationCount: 3 }}>
+                    {callChatUnread > 9 ? "9+" : callChatUnread}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 

@@ -96,10 +96,61 @@ export class CallingController {
   @HttpCode(HttpStatus.OK)
   async endCall(@Param('callId') callId: string, @Req() req: any) {
     try {
+      const statusBefore = await this.callingService.getCallStatus(callId);
       const call = await this.callingService.endCall(callId, req.user.sub || req.user.userId);
+
+      // Only create call log on the first end request (when status actually changed)
+      if (call.conversationId && statusBefore !== 'ended' && statusBefore !== 'missed' && statusBefore !== 'declined') {
+        this.createCallLogMessage(call, req.headers.authorization).catch(err =>
+          this.logger.warn(`Failed to create call log: ${err.message}`)
+        );
+      }
+
       return { success: true, message: 'Call ended', data: call };
     } catch (err) {
       throw new BadRequestException(err.message);
+    }
+  }
+
+  /** Create a call log message in the chat service */
+  private async createCallLogMessage(call: any, authHeader?: string) {
+    const chatServiceUrl = process.env.CHAT_SERVICE_URL || 'http://chat-service:3002';
+    const token = authHeader?.replace('Bearer ', '') || '';
+    if (!token) return;
+
+    const duration = call.duration || 0;
+    const mins = Math.floor(duration / 60);
+    const secs = duration % 60;
+    const durationStr = duration > 0 ? `${mins}:${String(secs).padStart(2, '0')}` : '';
+    const callType = call.type === 'video' ? 'Video' : 'Audio';
+    const callStatus = call.status;
+
+    let content: string;
+    if (callStatus === 'missed') {
+      content = `Missed ${callType.toLowerCase()} call`;
+    } else if (callStatus === 'declined') {
+      content = `${callType} call declined`;
+    } else {
+      content = `${callType} call${durationStr ? ` - ${durationStr}` : ''}`;
+    }
+
+    try {
+      const res = await fetch(
+        `${chatServiceUrl}/api/v1/chat/conversations/${call.conversationId}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ content, type: 'call' }),
+        },
+      );
+      if (!res.ok) {
+        this.logger.warn(`Call log HTTP ${res.status}: ${await res.text()}`);
+      }
+    } catch (err) {
+      this.logger.warn(`Call log fetch error: ${err.message}`);
     }
   }
 

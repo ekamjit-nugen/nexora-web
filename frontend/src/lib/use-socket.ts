@@ -28,7 +28,7 @@ export function useSocket(options?: UseSocketOptions) {
 
     const socket = io(`${socketBaseUrl}${namespace}`, {
       auth: { token },
-      transports: ["websocket", "polling"],
+      transports: ["polling", "websocket"],
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 2000,
@@ -78,7 +78,23 @@ export function useSocket(options?: UseSocketOptions) {
       socketRef.current = null;
       setConnected(false);
     };
-  }, [namespace, enabled, tokenVersion]);
+  }, [namespace, enabled, tokenVersion, socketBaseUrl]);
+
+  // Reconnect when token changes (same-tab login or cross-tab storage event)
+  useEffect(() => {
+    const handleTokenChange = () => {
+      const token = localStorage.getItem("accessToken");
+      if (token) {
+        setTokenVersion((v) => v + 1);
+      }
+    };
+    window.addEventListener("storage", handleTokenChange);
+    window.addEventListener("nexora:token-changed", handleTokenChange);
+    return () => {
+      window.removeEventListener("storage", handleTokenChange);
+      window.removeEventListener("nexora:token-changed", handleTokenChange);
+    };
+  }, []);
 
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const emit = useCallback((event: string, data: any) => {

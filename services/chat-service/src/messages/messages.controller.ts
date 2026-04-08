@@ -4,8 +4,10 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { MessagesService } from './messages.service';
+import { MessagesGateway } from './messages.gateway';
 import { ForwardingService } from './forwarding.service';
 import { CreateTaskService } from './create-task.service';
+import { CommandsService } from '../commands/commands.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { Roles, RolesGuard } from '../common/guards/roles.guard';
 import { ChannelPermissionGuard } from '../common/guards/channel-permission.guard';
@@ -18,9 +20,16 @@ export class MessagesController {
 
   constructor(
     private messagesService: MessagesService,
+    private messagesGateway: MessagesGateway,
     private forwardingService: ForwardingService,
     private createTaskService: CreateTaskService,
+    private commandsService: CommandsService,
   ) {}
+
+  @Get('commands')
+  getAvailableCommands() {
+    return { success: true, data: this.commandsService.getAvailableCommands() };
+  }
 
   @Post('conversations/:id/messages')
   @Throttle({ default: { ttl: 60000, limit: 60 } })
@@ -30,6 +39,15 @@ export class MessagesController {
   async sendMessage(@Param('id') id: string, @Body() dto: SendMessageDto, @Req() req) {
     const senderName = [req.user.firstName, req.user.lastName].filter(Boolean).join(' ') || null;
     const message = await this.messagesService.sendMessage(id, req.user.userId, dto.content, dto.type, dto.replyTo, senderName);
+
+    // Broadcast to all participants in the conversation via WebSocket
+    // ensureParticipantsInRoom is called once inside the first broadcast
+    await this.messagesGateway.broadcastToConversation(id, 'message:new', message);
+    this.messagesGateway.broadcastToConversation(id, 'conversation:updated', {
+      conversationId: id,
+      lastMessage: { content: dto.content, senderId: req.user.userId, sentAt: new Date() },
+    });
+
     return { success: true, message: 'Message sent', data: message };
   }
 

@@ -96,6 +96,8 @@ export default function MessagesPage() {
   const [callDisconnected, setCallDisconnected] = useState(false);
   const [showCallChat, setShowCallChat] = useState(false);
   const [callChatMsg, setCallChatMsg] = useState("");
+  const [callChatMessages, setCallChatMessages] = useState<Array<{ id: string; senderId: string; content: string; createdAt: string }>>([]);
+  const [callChatUnread, setCallChatUnread] = useState(0);
   const [callDuration, setCallDuration] = useState(0);
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
   const [isVideoEnabled, setIsVideoEnabled] = useState(false);
@@ -108,6 +110,7 @@ export default function MessagesPage() {
   const [annotationColor, setAnnotationColor] = useState("#FF3B30");
   const [annotationBrushSize, setAnnotationBrushSize] = useState(3);
   const [floatingEmojis, setFloatingEmojis] = useState<Array<{ id: string; emoji: string; x: number; startTime: number }>>([]);
+  const [remotePointers, setRemotePointers] = useState<Array<{ userId: string; name: string; x: number; y: number; color: string }>>([]);
   const [callStartTime, setCallStartTime] = useState<string | null>(null);
   const [showPreCallPreview, setShowPreCallPreview] = useState(false);
   const [isOnHold, setIsOnHold] = useState(false);
@@ -275,10 +278,14 @@ export default function MessagesPage() {
   }, []);
 
   // ── Fetch conversations (with offline cache) ──
+  const offlineCacheRef = useRef(offlineCache);
+  offlineCacheRef.current = offlineCache;
+
   const fetchConversations = useCallback(async () => {
-    if (offlineCache.isSupported) {
+    const cache = offlineCacheRef.current;
+    if (cache.isSupported) {
       try {
-        const cached = await offlineCache.getCachedConversations();
+        const cached = await cache.getCachedConversations();
         if (cached.length > 0) { setConversations(cached as Conversation[]); setLoadingConvos(false); }
       } catch { /* IndexedDB read failed */ }
     }
@@ -287,23 +294,24 @@ export default function MessagesPage() {
         const res = await chatApi.getConversations();
         const data = res.data || [];
         setConversations(data);
-        if (offlineCache.isSupported && data.length > 0) {
-          offlineCache.cacheConversations(data).catch(() => {});
-          offlineCache.setLastSyncTimestamp(new Date().toISOString()).catch(() => {});
+        if (cache.isSupported && data.length > 0) {
+          cache.cacheConversations(data).catch(() => {});
+          cache.setLastSyncTimestamp(new Date().toISOString()).catch(() => {});
         }
       } catch { /* silent */ }
     }
     setLoadingConvos(false);
-  }, [offlineCache]);
+  }, []);
 
   useEffect(() => { if (user) fetchConversations(); }, [user, fetchConversations]);
 
   // ── Fetch messages ──
   const fetchMessages = useCallback(async (convoId: string) => {
+    const cache = offlineCacheRef.current;
     setLoadingMessages(true);
-    if (offlineCache.isSupported) {
+    if (cache.isSupported) {
       try {
-        const cached = await offlineCache.getCachedMessages(convoId, 100);
+        const cached = await cache.getCachedMessages(convoId, 100);
         if (cached.length > 0) { setMessages(cached as ChatMessage[]); setLoadingMessages(false); }
       } catch { /* IndexedDB read failed */ }
     }
@@ -313,11 +321,11 @@ export default function MessagesPage() {
         const data = res.data || [];
         setMessages(data);
         chatApi.markAsRead(convoId).catch(() => {});
-        if (offlineCache.isSupported && data.length > 0) offlineCache.cacheMessages(convoId, data).catch(() => {});
-      } catch { if (!offlineCache.isSupported) setMessages([]); }
+        if (cache.isSupported && data.length > 0) cache.cacheMessages(convoId, data).catch(() => {});
+      } catch { if (!cache.isSupported) setMessages([]); }
     }
     setLoadingMessages(false);
-  }, [offlineCache]);
+  }, []);
 
   // Save/restore drafts on conversation switch
   const prevActiveIdForDraftRef = useRef<string | null>(null);
@@ -363,9 +371,17 @@ export default function MessagesPage() {
       if (msg.conversationId === activeId) {
         setMessages((prev) => prev.some((m) => m._id === msg._id) ? prev : [...prev, msg]);
       }
-      setConversations((prev) => prev.map((c) =>
-        c._id === msg.conversationId ? { ...c, lastMessage: { content: msg.content, senderId: msg.senderId, sentAt: msg.createdAt } } : c
-      ));
+      setConversations((prev) => {
+        const exists = prev.some((c) => c._id === msg.conversationId);
+        if (!exists) {
+          // New conversation not in list yet — refetch
+          fetchConversations();
+          return prev;
+        }
+        return prev.map((c) =>
+          c._id === msg.conversationId ? { ...c, lastMessage: { content: msg.content, senderId: msg.senderId, sentAt: msg.createdAt } } : c
+        );
+      });
       if (offlineCache.isSupported) offlineCache.cacheMessages(msg.conversationId, [msg]).catch(() => {});
     });
     const cleanup2 = on("message:edited", (msg: ChatMessage) => { setMessages((prev) => prev.map((m) => (m._id === msg._id ? msg : m))); });
@@ -375,8 +391,10 @@ export default function MessagesPage() {
         setTypingUsers((prev) => { const next = new Set(prev); if (typing) next.add(userId); else next.delete(userId); return next; });
       }
     });
-    return () => { cleanup1(); cleanup2(); cleanup3(); cleanup4(); };
-  }, [connected, on, activeId]);
+    // When a new conversation is created by another user, refetch conversation list
+    const cleanup5 = on("conversation:new", () => { fetchConversations(); });
+    return () => { cleanup1(); cleanup2(); cleanup3(); cleanup4(); cleanup5(); };
+  }, [connected, on, activeId, fetchConversations]);
 
   useEffect(() => { if (activeId && connected) emit("message:read", { conversationId: activeId }); }, [activeId, connected, emit]);
 
@@ -675,12 +693,85 @@ export default function MessagesPage() {
     setTimeout(() => setFloatingEmojis((prev) => prev.filter((e) => e.id !== id)), 3000);
   }, []);
 
-  // ── Annotation clear ──
+  // ── Annotation broadcast & receive ──
+  const handleAnnotationStroke = useCallback((stroke: { fromX: number; fromY: number; toX: number; toY: number; color: string; brushSize: number }) => {
+    signaling.sendAnnotationStroke(stroke);
+  }, [signaling]);
+
   const handleAnnotationClear = useCallback(() => {
     const canvas = document.querySelector("canvas") as HTMLCanvasElement | null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if (canvas && (canvas as any).__clearCanvas) (canvas as any).__clearCanvas();
-  }, []);
+    signaling.sendAnnotationClear();
+  }, [signaling]);
+
+  // Listen for remote annotation strokes and clears
+  useEffect(() => {
+    const cleanupStroke = signaling.onAnnotationStroke((data) => {
+      const canvas = document.querySelector("canvas") as HTMLCanvasElement | null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (canvas && (canvas as any).__drawRemoteStroke) {
+        (canvas as any).__drawRemoteStroke(data);
+      }
+    });
+    const cleanupClear = signaling.onAnnotationClear(() => {
+      const canvas = document.querySelector("canvas") as HTMLCanvasElement | null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (canvas && (canvas as any).__clearCanvas) (canvas as any).__clearCanvas();
+    });
+    return () => { cleanupStroke(); cleanupClear(); };
+  }, [signaling]);
+
+  // ── Remote pointer handling ──
+  const handlePointerMove = useCallback((x: number, y: number) => {
+    signaling.sendPointer(x, y);
+  }, [signaling]);
+
+  const handlePointerLeave = useCallback(() => {
+    signaling.sendPointerHide();
+  }, [signaling]);
+
+  // Listen for remote pointers
+  useEffect(() => {
+    const cleanupPointer = signaling.onPointer((data) => {
+      const emp = employeeMap[data.from];
+      const name = emp ? `${emp.firstName} ${emp.lastName}` : data.from.slice(-6);
+      const colors = ["#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6"];
+      const color = colors[data.from.charCodeAt(0) % colors.length];
+      setRemotePointers((prev) => {
+        const filtered = prev.filter((p) => p.userId !== data.from);
+        return [...filtered, { userId: data.from, name, x: data.x, y: data.y, color }];
+      });
+    });
+    const cleanupHide = signaling.onPointerHide((data) => {
+      setRemotePointers((prev) => prev.filter((p) => p.userId !== data.from));
+    });
+    return () => { cleanupPointer(); cleanupHide(); };
+  }, [signaling, employeeMap]);
+
+  // ── Ephemeral in-call chat ──
+  const showCallChatRef = useRef(showCallChat);
+  showCallChatRef.current = showCallChat;
+
+  useEffect(() => {
+    const cleanup = signaling.onCallChat((msg) => {
+      setCallChatMessages((prev) => prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]);
+      // Increment unread if panel is closed and message is from someone else
+      if (!showCallChatRef.current && msg.senderId !== user?._id) {
+        setCallChatUnread((prev) => prev + 1);
+      }
+    });
+    return cleanup;
+  }, [signaling, user?._id]);
+
+  // Clear call chat when call ends
+  useEffect(() => {
+    if (!showCallWindow) {
+      setCallChatMessages([]);
+      setCallChatUnread(0);
+      setShowCallChat(false);
+    }
+  }, [showCallWindow]);
 
   // ── Call duration timer ──
   useEffect(() => {
@@ -832,17 +923,17 @@ export default function MessagesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC]">
+    <div className="h-screen overflow-hidden bg-[#F8FAFC] flex flex-col">
       <Sidebar user={user} onLogout={logout} />
 
       {/* Offline banner */}
       {!offlineCache.isOnline && (
-        <div className="ml-[260px] bg-amber-500 text-white text-center text-sm py-1.5 px-4 font-medium">
+        <div className="ml-[260px] bg-amber-500 text-white text-center text-sm py-1.5 px-4 font-medium shrink-0">
           You&apos;re offline — showing cached messages
         </div>
       )}
 
-      <main className="ml-[260px] h-screen flex">
+      <main className="ml-[260px] flex-1 flex min-h-0 h-full">
         {/* ── Left Panel: Conversation List ── */}
         <ConversationSidebar
           conversations={conversations}
@@ -865,7 +956,7 @@ export default function MessagesPage() {
 
         {/* ── Middle Panel: Active Conversation ── */}
         <div
-          className="flex-1 flex flex-col h-full bg-[#F8FAFC] min-w-0 relative"
+          className="flex-1 flex flex-col bg-[#F8FAFC] min-w-0 min-h-0 overflow-hidden relative"
           onDragEnter={handleDragEnter}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
@@ -889,7 +980,7 @@ export default function MessagesPage() {
           )}
 
           {activeConvo ? (
-            <>
+            <div className="flex flex-col flex-1 min-h-0 h-full">
               <ChatHeader
                 conversation={activeConvo}
                 user={user}
@@ -967,8 +1058,16 @@ export default function MessagesPage() {
                 onSmartReplySelect={(reply) => { setInput(reply); setSmartReplies([]); textareaRef.current?.focus(); }}
                 textareaRef={textareaRef}
                 fileInputRef={fileInputRef}
+                members={(activeConvo?.participants || [])
+                  .filter((p) => p.userId !== user?._id)
+                  .map((p) => {
+                    const emp = employeeMap[p.userId];
+                    return { userId: p.userId, firstName: emp?.firstName || "", lastName: emp?.lastName || "" };
+                  })
+                  .filter((m) => m.firstName || m.lastName)
+                }
               />
-            </>
+            </div>
           ) : (
             /* ── Speed Dial / Recommended Contacts ── */
             <div className="flex-1 flex items-center justify-center p-8">
@@ -1185,11 +1284,12 @@ export default function MessagesPage() {
         signalingCallStatus={signaling.call?.status}
         showCallChat={showCallChat}
         callChatMsg={callChatMsg}
-        messages={messages}
+        callChatMessages={callChatMessages}
         callStartTime={callStartTime}
         onCallChatMsgChange={setCallChatMsg}
-        onCallChatToggle={() => setShowCallChat(!showCallChat)}
-        onCallChatSend={(msg) => { if (callConversation) emit("message:send", { conversationId: callConversation._id, content: msg, type: "text" }); }}
+        callChatUnread={callChatUnread}
+        onCallChatToggle={() => { setShowCallChat(!showCallChat); if (!showCallChat) setCallChatUnread(0); }}
+        onCallChatSend={(msg) => { signaling.sendCallChat(msg); }}
         onEndCall={handleEndCall}
         onToggleAudio={(enabled) => { setIsAudioEnabled(enabled); webrtc.toggleAudio(enabled); }}
         onToggleVideo={(enabled) => { setIsVideoEnabled(enabled); webrtc.toggleVideo(enabled); }}
@@ -1203,6 +1303,10 @@ export default function MessagesPage() {
         onAnnotationColorChange={setAnnotationColor}
         onAnnotationBrushSizeChange={setAnnotationBrushSize}
         onAnnotationClear={handleAnnotationClear}
+        onAnnotationStroke={handleAnnotationStroke}
+        remotePointers={remotePointers}
+        onPointerMove={handlePointerMove}
+        onPointerLeave={handlePointerLeave}
         showAddParticipantModal={showAddParticipantModal}
         onCloseAddParticipant={() => setShowAddParticipantModal(false)}
         filteredEmployees={filteredEmployees}

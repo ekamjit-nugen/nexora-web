@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, UseGuards, Req, BadRequestException } from '@nestjs/common';
 import { AiSummaryService } from './ai-summary.service';
 import { SmartRepliesService } from './smart-replies.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -33,5 +33,14 @@ export class AiSummaryController {
   async getSmartReplies(@Param('conversationId') conversationId: string, @Req() req) {
     const replies = await this.smartRepliesService.generateSmartReplies(conversationId, req.user.userId);
     return { success: true, data: { replies } };
+  }
+
+  @Post('translate')
+  async translateMessage(@Body() body: { content: string; targetLanguage: string }, @Req() req) {
+    if (!body.content || !body.targetLanguage) {
+      throw new BadRequestException('content and targetLanguage are required');
+    }
+    const translatedText = await this.aiSummaryService.translateMessage(body.content, body.targetLanguage);
+    return { success: true, data: { translatedText, targetLanguage: body.targetLanguage } };
   }
 }

@@ -516,6 +516,65 @@ export class MeetingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     this.notifyUser(data.userId, 'meeting:muted-by-host', { meetingId: data.meetingId });
   }
 
+  // ── Recording consent ──
+
+  @SubscribeMessage('meeting:recording-start')
+  async handleRecordingStart(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { meetingId: string },
+  ) {
+    const meeting = await this.requireHostOrCoHost(client, data.meetingId);
+    if (!meeting) return;
+
+    const info = this.socketParticipants.get(client.id);
+
+    // Broadcast recording started to ALL participants
+    this.server.to(`meeting:${data.meetingId}`).emit('meeting:recording-started', {
+      meetingId: data.meetingId,
+      startedBy: info?.userId,
+      startedByName: info?.displayName || '',
+      startedAt: new Date().toISOString(),
+      requireConsent: meeting.settings?.requireRecordingConsent ?? true,
+    });
+
+    this.logger.log(`Recording started in meeting ${data.meetingId} — all participants notified`);
+  }
+
+  @SubscribeMessage('meeting:recording-stop')
+  async handleRecordingStop(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { meetingId: string },
+  ) {
+    const meeting = await this.requireHostOrCoHost(client, data.meetingId);
+    if (!meeting) return;
+
+    const info = this.socketParticipants.get(client.id);
+    this.server.to(`meeting:${data.meetingId}`).emit('meeting:recording-stopped', {
+      meetingId: data.meetingId,
+      stoppedBy: info?.userId,
+    });
+
+    this.logger.log(`Recording stopped in meeting ${data.meetingId}`);
+  }
+
+  @SubscribeMessage('meeting:recording-consent')
+  async handleRecordingConsent(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { meetingId: string },
+  ) {
+    const info = this.socketParticipants.get(client.id);
+    if (!info) return;
+
+    this.server.to(`meeting:${data.meetingId}`).emit('meeting:recording-consent-ack', {
+      meetingId: data.meetingId,
+      userId: info.userId,
+      displayName: info.displayName,
+      consentedAt: new Date().toISOString(),
+    });
+
+    this.logger.log(`${info.displayName} acknowledged recording in meeting ${data.meetingId}`);
+  }
+
   // ── Utility ──
 
   notifyUser(userId: string, event: string, data: any) {

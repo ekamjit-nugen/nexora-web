@@ -202,6 +202,7 @@ export default function LoginPage() {
       const refreshToken = data?.refreshToken || data?.tokens?.refreshToken;
       if (accessToken) localStorage.setItem("accessToken", accessToken);
       if (refreshToken) localStorage.setItem("refreshToken", refreshToken);
+      if (accessToken) window.dispatchEvent(new Event("nexora:token-changed"));
 
       // Platform admin — skip org flow entirely
       const tokenPayload = accessToken ? JSON.parse(atob(accessToken.split('.')[1])) : null;
