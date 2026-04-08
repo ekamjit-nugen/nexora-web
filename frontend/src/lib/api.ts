@@ -677,6 +677,14 @@ export const chatApi = {
   reviewFlagged: (id: string, data: { status: string }) =>
     request(`/chat/moderation/flagged/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   getModerationStats: () => request("/chat/moderation/stats"),
+
+  // Analytics
+  getAnalytics: async (from?: string, to?: string) => {
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    return request<any>(`/chat/analytics?${params.toString()}`);
+  },
 };
 
 // ── Types: Organization ──
