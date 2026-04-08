@@ -1357,17 +1357,21 @@ export interface Project {
   team: Array<{ userId: string; role: string; name?: string; email?: string; avatar?: string; allocation?: number }>;
   milestones?: Array<{ _id?: string; name: string; targetDate: string; completedDate?: string; status: string; description?: string; phase?: string; deliverables?: string[]; ownerId?: string; linkedTaskIds?: string[]; order?: number }>;
   releases?: Array<{ _id?: string; name: string; description?: string; releaseDate?: string; status: 'planned' | 'in_progress' | 'released' | 'archived'; startDate?: string; releasedDate?: string; releaseNotes?: string; issues?: string[] }>;
-  budget?: { amount?: number; currency?: string; billingType?: string; spent?: number };
+  visibility?: 'public' | 'private' | 'restricted';
+  budget?: { amount?: number; currency?: string; billingType?: string; hourlyRate?: number; spent?: number; retainerAmount?: number };
   settings?: {
     boardType?: 'scrum' | 'kanban' | 'custom';
+    clientPortalEnabled?: boolean;
     sprintDuration?: number;
     estimationUnit?: 'hours' | 'story_points';
+    defaultView?: 'board' | 'list' | 'timeline' | 'calendar';
     enableTimeTracking?: boolean;
     enableSubtasks?: boolean;
     enableEpics?: boolean;
     enableSprints?: boolean;
     enableReleases?: boolean;
   };
+  isDeleted?: boolean;
   healthScore?: number;
   progressPercentage?: number;
   createdBy?: string;
