@@ -174,6 +174,15 @@ export default function MessagesPage() {
   // Emoji picker
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
+  const [emojiTab, setEmojiTab] = useState<"custom" | "standard">("standard");
+  const [customEmojis, setCustomEmojis] = useState<Array<{ _id: string; name: string; url: string; uploadedBy: string }>>([]);
+  const [customEmojiLoaded, setCustomEmojiLoaded] = useState(false);
+  const [showEmojiUploadModal, setShowEmojiUploadModal] = useState(false);
+  const [newEmojiName, setNewEmojiName] = useState("");
+  const [newEmojiFile, setNewEmojiFile] = useState<File | null>(null);
+  const [newEmojiPreview, setNewEmojiPreview] = useState<string | null>(null);
+  const [uploadingEmoji, setUploadingEmoji] = useState(false);
+  const emojiFileInputRef = useRef<HTMLInputElement>(null);
 
   // File upload spinner
   const [isUploading, setIsUploading] = useState(false);
@@ -229,6 +238,76 @@ export default function MessagesPage() {
     if (showEmojiPicker) document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showEmojiPicker]);
+
+  // Load custom emoji when emoji picker opens for the first time
+  useEffect(() => {
+    if (showEmojiPicker && !customEmojiLoaded) {
+      chatApi.getCustomEmoji().then((res) => {
+        if (res.data) setCustomEmojis(res.data as any);
+        setCustomEmojiLoaded(true);
+      }).catch(() => setCustomEmojiLoaded(true));
+    }
+  }, [showEmojiPicker, customEmojiLoaded]);
+
+  // Build a map of custom emoji name -> url for message rendering
+  const customEmojiMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const e of customEmojis) {
+      map[e.name] = e.url;
+    }
+    return map;
+  }, [customEmojis]);
+
+  // Custom emoji upload handler
+  const handleEmojiUpload = async () => {
+    if (!newEmojiName || !newEmojiFile) return;
+    setUploadingEmoji(true);
+    try {
+      // Read file as data URL (same pattern as file uploads in this codebase)
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("Failed to read file"));
+        reader.readAsDataURL(newEmojiFile);
+      });
+      const res = await chatApi.uploadCustomEmoji(newEmojiName.toLowerCase(), dataUrl);
+      if (res.data) {
+        setCustomEmojis((prev) => [res.data as any, ...prev]);
+      }
+      toast.success(`Custom emoji :${newEmojiName.toLowerCase()}: added`);
+      setShowEmojiUploadModal(false);
+      setNewEmojiName("");
+      setNewEmojiFile(null);
+      setNewEmojiPreview(null);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to upload emoji");
+    } finally {
+      setUploadingEmoji(false);
+    }
+  };
+
+  const handleDeleteCustomEmoji = async (emojiId: string, emojiName: string) => {
+    try {
+      await chatApi.deleteCustomEmoji(emojiId);
+      setCustomEmojis((prev) => prev.filter((e) => e._id !== emojiId));
+      toast.success(`Emoji :${emojiName}: deleted`);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to delete emoji");
+    }
+  };
+
+  // Helper: render text with custom emoji replaced by images
+  const renderWithCustomEmoji = (text: string) => {
+    if (!text || Object.keys(customEmojiMap).length === 0) return text;
+    const parts = text.split(/:([a-zA-Z0-9-]{2,32}):/g);
+    if (parts.length === 1) return text;
+    return parts.map((part, i) => {
+      if (i % 2 === 1 && customEmojiMap[part]) {
+        return <img key={i} src={customEmojiMap[part]} alt={`:${part}:`} title={`:${part}:`} className="inline-block w-5 h-5 align-text-bottom" />;
+      }
+      return part || null;
+    });
+  };
 
   // Sync call type for incoming calls
   useEffect(() => {
@@ -1765,13 +1844,13 @@ export default function MessagesPage() {
                                         ) : null}
                                       </div>
                                     ) : (() => {
-                                      // Auto-link URLs in text messages
+                                      // Auto-link URLs in text messages, then render custom emoji
                                       const urlRegex = /(https?:\/\/[^\s<]+)/g;
                                       const parts = msg.content.split(urlRegex);
                                       return parts.map((part, i) =>
                                         urlRegex.test(part) ? (
                                           <a key={i} href={part} target="_blank" rel="noreferrer" className="underline break-all hover:opacity-80">{part}</a>
-                                        ) : <span key={i}>{part}</span>
+                                        ) : <span key={i}>{renderWithCustomEmoji(part)}</span>
                                       );
                                     })()}
                                     {msg.isEdited && !isDeleted && (
@@ -1894,24 +1973,154 @@ export default function MessagesPage() {
                         </svg>
                       </button>
                       {showEmojiPicker && (
-                        <div className="absolute bottom-full mb-2 right-0 w-[340px] max-h-[360px] bg-white border border-[#E2E8F0] rounded-xl shadow-xl z-50 flex flex-col overflow-hidden">
+                        <div className="absolute bottom-full mb-2 right-0 w-[340px] max-h-[400px] bg-white border border-[#E2E8F0] rounded-xl shadow-xl z-50 flex flex-col overflow-hidden">
+                          {/* Tabs: Custom / Standard */}
+                          <div className="flex border-b border-[#E2E8F0] px-3 pt-2 gap-1 shrink-0">
+                            <button
+                              onClick={() => setEmojiTab("custom")}
+                              className={`px-3 py-1.5 text-[11px] font-medium rounded-t-lg transition-colors ${emojiTab === "custom" ? "text-[#2E86C1] bg-[#EBF5FF] border-b-2 border-[#2E86C1]" : "text-[#94A3B8] hover:text-[#64748B]"}`}
+                            >
+                              Custom
+                            </button>
+                            <button
+                              onClick={() => setEmojiTab("standard")}
+                              className={`px-3 py-1.5 text-[11px] font-medium rounded-t-lg transition-colors ${emojiTab === "standard" ? "text-[#2E86C1] bg-[#EBF5FF] border-b-2 border-[#2E86C1]" : "text-[#94A3B8] hover:text-[#64748B]"}`}
+                            >
+                              Standard
+                            </button>
+                          </div>
                           <div className="overflow-y-auto flex-1 p-3">
-                            {Object.entries(EMOJI_CATEGORIES).map(([category, emojis]) => (
-                              <div key={category} className="mb-3">
-                                <p className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-1.5">{category}</p>
-                                <div className="flex flex-wrap gap-0.5">
-                                  {emojis.map((emoji) => (
-                                    <button
-                                      key={emoji}
-                                      onClick={() => { setInput((prev) => prev + emoji); }}
-                                      className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-[#F1F5F9] transition-colors text-lg"
-                                    >
-                                      {emoji}
-                                    </button>
+                            {emojiTab === "custom" ? (
+                              <div>
+                                {customEmojis.length === 0 && customEmojiLoaded && (
+                                  <p className="text-[12px] text-[#94A3B8] text-center py-6">No custom emoji yet</p>
+                                )}
+                                {!customEmojiLoaded && (
+                                  <p className="text-[12px] text-[#94A3B8] text-center py-6">Loading...</p>
+                                )}
+                                <div className="flex flex-wrap gap-1">
+                                  {customEmojis.map((ce) => (
+                                    <div key={ce._id} className="relative group">
+                                      <button
+                                        onClick={() => { setInput((prev) => prev + `:${ce.name}:`); }}
+                                        className="w-9 h-9 flex items-center justify-center rounded-md hover:bg-[#F1F5F9] transition-colors"
+                                        title={`:${ce.name}:`}
+                                      >
+                                        <img src={ce.url} alt={ce.name} className="w-7 h-7 object-contain" />
+                                      </button>
+                                      {(ce.uploadedBy === user?._id || (user?.roles && (user.roles.includes("admin") || user.roles.includes("super_admin") || user.roles.includes("hr")))) && (
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); handleDeleteCustomEmoji(ce._id, ce.name); }}
+                                          className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full text-[8px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                                          title="Delete emoji"
+                                        >
+                                          x
+                                        </button>
+                                      )}
+                                    </div>
                                   ))}
+                                  {/* Upload button - visible to admin/owner users */}
+                                  {user?.roles && (user.roles.includes("admin") || user.roles.includes("super_admin") || user.roles.includes("hr")) && (
+                                    <button
+                                      onClick={() => setShowEmojiUploadModal(true)}
+                                      className="w-9 h-9 flex items-center justify-center rounded-md border border-dashed border-[#CBD5E1] hover:border-[#2E86C1] hover:bg-[#EBF5FF] transition-colors text-[#94A3B8] hover:text-[#2E86C1]"
+                                      title="Upload custom emoji"
+                                    >
+                                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                                      </svg>
+                                    </button>
+                                  )}
                                 </div>
                               </div>
-                            ))}
+                            ) : (
+                              <>
+                                {Object.entries(EMOJI_CATEGORIES).map(([category, emojis]) => (
+                                  <div key={category} className="mb-3">
+                                    <p className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-1.5">{category}</p>
+                                    <div className="flex flex-wrap gap-0.5">
+                                      {emojis.map((emoji) => (
+                                        <button
+                                          key={emoji}
+                                          onClick={() => { setInput((prev) => prev + emoji); }}
+                                          className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-[#F1F5F9] transition-colors text-lg"
+                                        >
+                                          {emoji}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ))}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {/* Custom Emoji Upload Modal */}
+                      {showEmojiUploadModal && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40" onClick={() => { setShowEmojiUploadModal(false); setNewEmojiName(""); setNewEmojiFile(null); setNewEmojiPreview(null); }}>
+                          <div className="bg-white rounded-xl shadow-2xl w-[360px] p-5" onClick={(e) => e.stopPropagation()}>
+                            <h3 className="text-[15px] font-semibold text-[#0F172A] mb-4">Upload Custom Emoji</h3>
+                            <div className="space-y-3">
+                              <div>
+                                <label className="text-[12px] font-medium text-[#64748B] mb-1 block">Emoji Name</label>
+                                <input
+                                  type="text"
+                                  value={newEmojiName}
+                                  onChange={(e) => setNewEmojiName(e.target.value.replace(/[^a-zA-Z0-9-]/g, "").toLowerCase())}
+                                  placeholder="e.g. ship-it"
+                                  maxLength={32}
+                                  className="w-full px-3 py-2 border border-[#E2E8F0] rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-[#2E86C1]/30 focus:border-[#2E86C1]"
+                                />
+                                <p className="text-[10px] text-[#94A3B8] mt-0.5">2-32 chars, letters, numbers, and hyphens</p>
+                              </div>
+                              <div>
+                                <label className="text-[12px] font-medium text-[#64748B] mb-1 block">Image</label>
+                                <input
+                                  ref={emojiFileInputRef}
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const f = e.target.files?.[0];
+                                    if (f) {
+                                      if (f.size > 256 * 1024) { toast.error("Emoji image must be under 256 KB"); return; }
+                                      setNewEmojiFile(f);
+                                      const reader = new FileReader();
+                                      reader.onload = () => setNewEmojiPreview(reader.result as string);
+                                      reader.readAsDataURL(f);
+                                    }
+                                  }}
+                                />
+                                <div className="flex items-center gap-3">
+                                  <button
+                                    onClick={() => emojiFileInputRef.current?.click()}
+                                    className="px-3 py-2 border border-dashed border-[#CBD5E1] rounded-lg text-[12px] text-[#64748B] hover:border-[#2E86C1] hover:text-[#2E86C1] transition-colors"
+                                  >
+                                    Choose Image
+                                  </button>
+                                  {newEmojiPreview && (
+                                    <img src={newEmojiPreview} alt="Preview" className="w-8 h-8 object-contain rounded border border-[#E2E8F0]" />
+                                  )}
+                                  {newEmojiFile && <span className="text-[11px] text-[#94A3B8] truncate">{newEmojiFile.name}</span>}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex justify-end gap-2 mt-5">
+                              <button
+                                onClick={() => { setShowEmojiUploadModal(false); setNewEmojiName(""); setNewEmojiFile(null); setNewEmojiPreview(null); }}
+                                className="px-4 py-2 text-[12px] text-[#64748B] hover:text-[#0F172A] transition-colors"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={handleEmojiUpload}
+                                disabled={!newEmojiName || newEmojiName.length < 2 || !newEmojiFile || uploadingEmoji}
+                                className="px-4 py-2 text-[12px] font-medium text-white bg-[#2E86C1] hover:bg-[#2471A3] disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
+                              >
+                                {uploadingEmoji ? "Uploading..." : "Upload"}
+                              </button>
+                            </div>
                           </div>
                         </div>
                       )}
@@ -2781,7 +2990,7 @@ export default function MessagesPage() {
                               {msg.type === "file" && msg.fileUrl ? (
                                 <a href={msg.fileUrl} target="_blank" rel="noreferrer" className="underline break-all">{msg.fileName || msg.content}</a>
                               ) : (
-                                <p className="break-words whitespace-pre-wrap">{msg.content}</p>
+                                <p className="break-words whitespace-pre-wrap">{renderWithCustomEmoji(msg.content)}</p>
                               )}
                               <p className={`text-[9px] mt-0.5 ${isMe ? "text-blue-200" : "text-[#64748B]"}`}>
                                 {new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}

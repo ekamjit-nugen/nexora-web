@@ -677,6 +677,17 @@ export const chatApi = {
   reviewFlagged: (id: string, data: { status: string }) =>
     request(`/chat/moderation/flagged/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   getModerationStats: () => request("/chat/moderation/stats"),
+
+  // Custom Emoji
+  getCustomEmoji: () =>
+    request<Array<{ _id: string; name: string; url: string; uploadedBy: string; organizationId: string }>>("/chat/emoji"),
+  uploadCustomEmoji: (name: string, url: string) =>
+    request<{ _id: string; name: string; url: string; uploadedBy: string; organizationId: string }>("/chat/emoji", {
+      method: "POST",
+      body: JSON.stringify({ name, url }),
+    }),
+  deleteCustomEmoji: (id: string) =>
+    request(`/chat/emoji/${id}`, { method: "DELETE" }),
 };
 
 // ── Types: Organization ──
