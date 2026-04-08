@@ -157,7 +157,6 @@ export class CommandsService {
         return { handled: true, response: `Do Not Disturb enabled for ${durationMinutes} minutes`, type: 'system', data: { action: 'setDnd', durationMinutes } };
       },
     });
-  }
 
     // ── Cross-Service Commands ──
 
@@ -171,6 +170,7 @@ export class CommandsService {
           return { handled: true, response: 'Usage: `/task Fix login bug @john`', type: 'system' };
         }
 
+        // Extract @assignee if present
         const assigneeMatch = trimmed.match(/@(\S+)\s*$/);
         const assignee = assigneeMatch ? assigneeMatch[1] : undefined;
         const title = assignee ? trimmed.replace(/@\S+\s*$/, '').trim() : trimmed;
@@ -216,6 +216,7 @@ export class CommandsService {
         const end = parts[2];
         const reason = parts.slice(3).join(' ') || undefined;
 
+        // Basic date validation
         const startDate = new Date(start);
         const endDate = new Date(end);
         if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {

@@ -727,7 +727,6 @@ export const chatApi = {
   updateSettings: (data: Partial<ChatSettings>) =>
     request<ChatSettings>("/chat/settings", { method: "PUT", body: JSON.stringify(data) }),
 
-<<<<<<< HEAD
   // Threads
   getThreadReplies: (messageId: string, params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";

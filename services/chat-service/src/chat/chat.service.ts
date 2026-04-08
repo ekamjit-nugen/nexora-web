@@ -6,6 +6,7 @@ import { IMessage } from './schemas/message.schema';
 import { IChatSettings } from './schemas/chat-settings.schema';
 import { IFlaggedMessage } from './schemas/flagged-message.schema';
 import { ModerationService } from './moderation.service';
+import { CommandsService } from '../commands/commands.service';
 
 @Injectable()
 export class ChatService {
@@ -17,6 +18,7 @@ export class ChatService {
     @InjectModel('ChatSettings') private chatSettingsModel: Model<IChatSettings>,
     @InjectModel('FlaggedMessage') private flaggedMessageModel: Model<IFlaggedMessage>,
     private moderationService: ModerationService,
+    private commandsService: CommandsService,
   ) {}
 
   // ── Conversations ──
@@ -242,6 +244,56 @@ export class ChatService {
 
     const isParticipant = conversation.participants.some((p) => p.userId === senderId);
     if (!isParticipant) throw new ForbiddenException('You are not a participant of this conversation');
+
+    // ── Slash Command Handling ──
+    if (content && content.startsWith('/')) {
+      const commandResult = await this.commandsService.parseAndExecute(content, senderId, conversationId);
+      if (commandResult && commandResult.handled) {
+        if (commandResult.type === 'system') {
+          // Save as a system message with command result data
+          const systemMessage = new this.messageModel({
+            conversationId,
+            senderId,
+            content: commandResult.response || content,
+            type: 'system',
+            replyTo: replyTo || null,
+            readBy: [{ userId: senderId, readAt: new Date() }],
+          });
+          await systemMessage.save();
+          await this.conversationModel.findByIdAndUpdate(conversationId, {
+            lastMessage: { content: commandResult.response || content, senderId, sentAt: new Date() },
+          });
+          this.logger.log(`Command system message saved in conversation ${conversationId} by ${senderId}`);
+          // Attach data for the frontend to render cards
+          const result = systemMessage.toObject();
+          (result as any).commandData = commandResult.data;
+          return result;
+        }
+        if (commandResult.type === 'poll') {
+          // Save a poll-type message
+          const pollMessage = new this.messageModel({
+            conversationId,
+            senderId,
+            content: commandResult.data?.question || content,
+            type: 'poll',
+            replyTo: replyTo || null,
+            readBy: [{ userId: senderId, readAt: new Date() }],
+          });
+          await pollMessage.save();
+          await this.conversationModel.findByIdAndUpdate(conversationId, {
+            lastMessage: { content: `Poll: ${commandResult.data?.question}`, senderId, sentAt: new Date() },
+          });
+          this.logger.log(`Poll message saved in conversation ${conversationId} by ${senderId}`);
+          const result = pollMessage.toObject();
+          (result as any).commandData = commandResult.data;
+          return result;
+        }
+        if (commandResult.type === 'text') {
+          // Replace message content with command response and proceed to save as text
+          content = commandResult.response || content;
+        }
+      }
+    }
 
     const message = new this.messageModel({
       conversationId,
