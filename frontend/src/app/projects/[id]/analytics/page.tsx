@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { useProjectPermissions } from "@/lib/hooks/useProjectPermissions";
 import {
   projectApi, reportingApi, sprintApi, hrApi,
   Project, Sprint, Employee,
@@ -58,7 +57,7 @@ function StatSkeleton() {
 // ── Main Page ──
 
 export default function ProjectAnalyticsPage() {
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading, logout, hasOrgRole, isProjectRole } = useAuth();
   const router = useRouter();
   const params = useParams();
   const projectId = params.id as string;
@@ -83,10 +82,14 @@ export default function ProjectAnalyticsPage() {
   const [toDate, setToDate] = useState(defaults.to);
   const [selectedSprintId, setSelectedSprintId] = useState<string>("");
 
-  // Role check — uses both org role and project-level role
-  const userId = user?._id || (user as any)?.userId;
-  const perms = useProjectPermissions(project, userId);
-  const isAuthorized = perms.canViewAnalytics;
+  // Role check — allow project members (including viewers) OR org-level managers+
+  const projectTeam = (project?.team as Array<{ userId: string; role: string }>) || [];
+  const isProjectMember = isProjectRole(projectTeam, 'viewer');
+  const isOrgManager = hasOrgRole('manager');
+  const isAuthorized = user && (isProjectMember || isOrgManager);
+
+  // Viewer = read-only analytics (no export/configure actions)
+  const isReadOnly = isAuthorized && !isOrgManager && !isProjectRole(projectTeam, 'developer');
 
   const getEmployeeName = useCallback((userId: string) => {
     const emp = employees.find((e) => e.userId === userId || e._id === userId);
@@ -195,7 +198,7 @@ export default function ProjectAnalyticsPage() {
               </svg>
             </div>
             <h2 className="text-lg font-semibold text-[#0F172A] mb-1">Access Denied</h2>
-            <p className="text-sm text-[#64748B]">You need org manager/admin role or project lead/admin role to view analytics.</p>
+            <p className="text-sm text-[#64748B]">You need to be a project member or have manager role to view analytics.</p>
           </div>
         </main>
       </div>
