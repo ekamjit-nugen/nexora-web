@@ -11,12 +11,16 @@ export interface ITimesheetEntry {
   category: string;
 }
 
-export interface ITimesheet extends Document {
-  organizationId?: string;
-  employeeId: string;
-  period: string;
+export interface ITimesheetPeriod {
   startDate: Date;
   endDate: Date;
+  type: string;
+}
+
+export interface ITimesheet extends Document {
+  userId: string;
+  organizationId?: string;
+  period: ITimesheetPeriod;
   entries: ITimesheetEntry[];
   totalHours: number;
   expectedHours: number;
@@ -26,7 +30,6 @@ export interface ITimesheet extends Document {
   reviewedAt?: Date;
   reviewComment?: string;
   isDeleted: boolean;
-  createdBy: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -49,17 +52,24 @@ const TimesheetEntrySchema = new Schema(
   { _id: false },
 );
 
-export const TimesheetSchema = new Schema<ITimesheet>(
+const TimesheetPeriodSchema = new Schema(
   {
-    organizationId: { type: String, default: null, index: true },
-    employeeId: { type: String, required: true, index: true },
-    period: {
-      type: String,
-      required: true,
-      enum: ['daily', 'weekly', 'monthly'],
-    },
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
+    type: {
+      type: String,
+      enum: ['daily', 'weekly', 'monthly'],
+      default: 'weekly',
+    },
+  },
+  { _id: false },
+);
+
+export const TimesheetSchema = new Schema<ITimesheet>(
+  {
+    userId: { type: String, required: true, index: true },
+    organizationId: { type: String, default: null, index: true },
+    period: { type: TimesheetPeriodSchema, required: true },
     entries: { type: [TimesheetEntrySchema], default: [] },
     totalHours: { type: Number, default: 0 },
     expectedHours: { type: Number, default: 40 },
@@ -73,11 +83,11 @@ export const TimesheetSchema = new Schema<ITimesheet>(
     reviewedAt: { type: Date, default: null },
     reviewComment: { type: String, default: '' },
     isDeleted: { type: Boolean, default: false },
-    createdBy: { type: String, required: true },
   },
   { timestamps: true },
 );
 
-TimesheetSchema.index({ employeeId: 1, startDate: 1, endDate: 1 });
+TimesheetSchema.index({ userId: 1, organizationId: 1, 'period.startDate': 1 }, { unique: true });
 TimesheetSchema.index({ status: 1 });
+TimesheetSchema.index({ organizationId: 1 });
 TimesheetSchema.index({ isDeleted: 1 });

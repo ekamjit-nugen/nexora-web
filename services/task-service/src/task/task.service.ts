@@ -494,11 +494,12 @@ export class TaskService {
   // ── Timesheet Methods ──
 
   async createTimesheet(dto: CreateTimesheetDto, userId: string, authToken?: string, orgId?: string) {
-    const start = new Date(dto.startDate);
-    const end = new Date(dto.endDate);
+    const periodType = dto.period.type || 'weekly';
+    const startDate = new Date(dto.period.startDate);
+    const endDate = new Date(dto.period.endDate);
 
     // Auto-populate entries from task time logs + attendance
-    const autoEntries = await this.autoPopulateTimesheet(userId, dto.startDate, dto.endDate, authToken, orgId);
+    const autoEntries = await this.autoPopulateTimesheet(userId, dto.period.startDate, dto.period.endDate, authToken, orgId);
     const entries = autoEntries.length > 0 ? autoEntries : (dto.entries || []);
 
     const totalHours = entries.reduce((sum, e) => sum + e.hours, 0);
@@ -508,9 +509,9 @@ export class TaskService {
 
     // Calculate expected hours based on period type
     let expectedHours: number;
-    if (dto.period === 'daily') {
+    if (periodType === 'daily') {
       expectedHours = maxHoursPerWeek / 5;
-    } else if (dto.period === 'weekly') {
+    } else if (periodType === 'weekly') {
       expectedHours = maxHoursPerWeek;
     } else {
       // monthly: average weeks per month
@@ -519,14 +520,11 @@ export class TaskService {
     expectedHours = parseFloat(expectedHours.toFixed(2));
 
     const timesheet = new this.timesheetModel({
-      employeeId: userId,
-      period: dto.period,
-      startDate: start,
-      endDate: end,
+      userId,
+      period: { startDate, endDate, type: periodType },
       entries,
       totalHours,
       expectedHours,
-      createdBy: userId,
       ...(orgId && { organizationId: orgId }),
     });
     await timesheet.save();
@@ -535,30 +533,28 @@ export class TaskService {
   }
 
   async getMyTimesheets(userId: string, query: TimesheetQueryDto, orgId?: string) {
-    const { status, period, page = 1, limit = 20 } = query;
-    const filter: any = { employeeId: userId, isDeleted: false };
+    const { status, page = 1, limit = 20 } = query;
+    const filter: any = { userId, isDeleted: false };
     if (orgId) filter.organizationId = orgId;
     if (status) filter.status = status;
-    if (period) filter.period = period;
 
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([
-      this.timesheetModel.find(filter).sort({ startDate: -1 }).skip(skip).limit(limit),
+      this.timesheetModel.find(filter).sort({ 'period.startDate': -1 }).skip(skip).limit(limit),
       this.timesheetModel.countDocuments(filter),
     ]);
     return { data, pagination: { page, limit, total, pages: Math.ceil(total / limit) } };
   }
 
   async getAllTimesheets(query: TimesheetQueryDto, orgId?: string) {
-    const { status, period, page = 1, limit = 20 } = query;
+    const { status, page = 1, limit = 20 } = query;
     const filter: any = { isDeleted: false };
     if (orgId) filter.organizationId = orgId;
     if (status) filter.status = status;
-    if (period) filter.period = period;
 
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([
-      this.timesheetModel.find(filter).sort({ startDate: -1 }).skip(skip).limit(limit),
+      this.timesheetModel.find(filter).sort({ 'period.startDate': -1 }).skip(skip).limit(limit),
       this.timesheetModel.countDocuments(filter),
     ]);
     return { data, pagination: { page, limit, total, pages: Math.ceil(total / limit) } };
@@ -578,7 +574,7 @@ export class TaskService {
     const ts = await this.timesheetModel.findOne(filter);
     if (!ts) throw new NotFoundException('Timesheet not found');
     if (!['draft', 'revision_requested'].includes(ts.status)) {
-      throw new NotFoundException('Can only edit draft or revision-requested timesheets');
+      throw new ForbiddenException('Can only edit draft or revision-requested timesheets');
     }
 
     if (dto.entries) {
@@ -592,7 +588,7 @@ export class TaskService {
   }
 
   async deleteTimesheet(id: string, userId: string, orgId?: string) {
-    const filter: any = { _id: id, employeeId: userId, isDeleted: false, status: { $in: ['draft', 'revision_requested'] } };
+    const filter: any = { _id: id, userId, isDeleted: false, status: { $in: ['draft', 'revision_requested'] } };
     if (orgId) filter.organizationId = orgId;
     const ts = await this.timesheetModel.findOneAndUpdate(
       filter,
@@ -605,7 +601,7 @@ export class TaskService {
   }
 
   async submitTimesheet(id: string, userId: string, orgId?: string) {
-    const filter: any = { _id: id, employeeId: userId, isDeleted: false, status: { $in: ['draft', 'revision_requested'] } };
+    const filter: any = { _id: id, userId, isDeleted: false, status: { $in: ['draft', 'revision_requested'] } };
     if (orgId) filter.organizationId = orgId;
     const ts = await this.timesheetModel.findOneAndUpdate(
       filter,
@@ -734,7 +730,7 @@ export class TaskService {
   async getTimesheetStats(userId?: string, orgId?: string) {
     const filter: any = { isDeleted: false };
     if (orgId) filter.organizationId = orgId;
-    if (userId) filter.employeeId = userId;
+    if (userId) filter.userId = userId;
 
     const [total, byStatus] = await Promise.all([
       this.timesheetModel.countDocuments(filter),

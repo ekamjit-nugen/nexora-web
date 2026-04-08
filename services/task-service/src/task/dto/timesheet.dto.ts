@@ -1,6 +1,6 @@
 import {
   IsString, IsOptional, IsNumber, IsArray,
-  IsDateString, IsEnum, IsIn, ValidateNested, Min, Max,
+  IsDateString, IsIn, ValidateNested, Min, Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -39,16 +39,23 @@ export class TimesheetEntryDto {
   category?: string;
 }
 
-export class CreateTimesheetDto {
-  @IsString()
-  @IsEnum(['daily', 'weekly', 'monthly'])
-  period: string;
-
+export class TimesheetPeriodDto {
   @IsDateString()
   startDate: string;
 
   @IsDateString()
   endDate: string;
+
+  @IsString()
+  @IsOptional()
+  @IsIn(['daily', 'weekly', 'monthly'])
+  type?: string;
+}
+
+export class CreateTimesheetDto {
+  @ValidateNested()
+  @Type(() => TimesheetPeriodDto)
+  period: TimesheetPeriodDto;
 
   @IsArray()
   @ValidateNested({ each: true })
@@ -83,10 +90,6 @@ export class TimesheetQueryDto {
   @IsString()
   @IsOptional()
   status?: string;
-
-  @IsString()
-  @IsOptional()
-  period?: string;
 
   @IsString()
   @IsOptional()
