@@ -119,6 +119,15 @@ export default function NewItemPage() {
   const [parentTaskId, setParentTaskId] = useState("");
   const [showTemplates, setShowTemplates] = useState(false);
 
+  // Recurrence
+  const [recurringEnabled, setRecurringEnabled] = useState(false);
+  const [recurFrequency, setRecurFrequency] = useState<string>("weekly");
+  const [recurInterval, setRecurInterval] = useState(1);
+  const [recurDaysOfWeek, setRecurDaysOfWeek] = useState<number[]>([1]); // Monday
+  const [recurDayOfMonth, setRecurDayOfMonth] = useState(1);
+  const [recurEndDate, setRecurEndDate] = useState("");
+  const [recurMaxOccurrences, setRecurMaxOccurrences] = useState<string>("");
+
   // Comments (local before creation)
   const [comments, setComments] = useState<{ text: string; user: string; time: string }[]>([]);
 
@@ -171,6 +180,20 @@ export default function NewItemPage() {
         for (const c of comments) {
           try { await taskApi.addComment(res.data._id, c.text); } catch {}
         }
+      }
+
+      // Set recurrence if enabled
+      if (res.data?._id && recurringEnabled) {
+        try {
+          await taskApi.setRecurrence(res.data._id, {
+            frequency: recurFrequency,
+            interval: recurInterval,
+            daysOfWeek: ["weekly", "biweekly"].includes(recurFrequency) ? recurDaysOfWeek : undefined,
+            dayOfMonth: recurFrequency === "monthly" ? recurDayOfMonth : undefined,
+            endDate: recurEndDate || undefined,
+            maxOccurrences: recurMaxOccurrences ? Number(recurMaxOccurrences) : undefined,
+          });
+        } catch {}
       }
 
       toast.success("Item created!");
@@ -432,6 +455,127 @@ export default function NewItemPage() {
 
                 <div className="border-t border-[#F1F5F9]" />
 
+                {/* Recurrence */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-[11px] font-semibold text-[#475569] flex items-center gap-1.5">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                      Recurring Task
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setRecurringEnabled(!recurringEnabled)}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${recurringEnabled ? "bg-[#2E86C1]" : "bg-gray-200"}`}
+                    >
+                      <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${recurringEnabled ? "translate-x-4" : "translate-x-0"}`} />
+                    </button>
+                  </div>
+                  {recurringEnabled && (
+                    <div className="space-y-3 mt-3 p-3 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0]">
+                      {/* Frequency */}
+                      <div>
+                        <label className="text-[10px] font-semibold text-[#94A3B8] uppercase mb-1 block">Frequency</label>
+                        <select
+                          value={recurFrequency}
+                          onChange={(e) => setRecurFrequency(e.target.value)}
+                          className="w-full h-9 rounded-lg border border-[#E2E8F0] bg-white px-2.5 text-[12px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[#2E86C1]"
+                        >
+                          <option value="daily">Daily</option>
+                          <option value="weekly">Weekly</option>
+                          <option value="biweekly">Biweekly</option>
+                          <option value="monthly">Monthly</option>
+                          <option value="quarterly">Quarterly</option>
+                        </select>
+                      </div>
+
+                      {/* Interval */}
+                      <div>
+                        <label className="text-[10px] font-semibold text-[#94A3B8] uppercase mb-1 block">
+                          Every {recurInterval > 1 ? `${recurInterval} ` : ""}{recurFrequency === "daily" ? "day(s)" : recurFrequency === "weekly" ? "week(s)" : recurFrequency === "biweekly" ? "2 weeks" : recurFrequency === "monthly" ? "month(s)" : "quarter(s)"}
+                        </label>
+                        {recurFrequency !== "biweekly" && (
+                          <Input
+                            type="number"
+                            min={1}
+                            max={52}
+                            value={recurInterval}
+                            onChange={(e) => setRecurInterval(Math.max(1, Number(e.target.value)))}
+                            className="h-9 text-[12px] bg-white border-[#E2E8F0]"
+                          />
+                        )}
+                      </div>
+
+                      {/* Day of week picker for weekly/biweekly */}
+                      {["weekly", "biweekly"].includes(recurFrequency) && (
+                        <div>
+                          <label className="text-[10px] font-semibold text-[#94A3B8] uppercase mb-1.5 block">Days</label>
+                          <div className="flex gap-1">
+                            {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((day, i) => (
+                              <button
+                                key={i}
+                                type="button"
+                                onClick={() => {
+                                  setRecurDaysOfWeek((prev) =>
+                                    prev.includes(i) ? prev.filter((d) => d !== i) : [...prev, i]
+                                  );
+                                }}
+                                className={`w-8 h-8 rounded-lg text-[10px] font-bold transition-all ${
+                                  recurDaysOfWeek.includes(i)
+                                    ? "bg-[#2E86C1] text-white"
+                                    : "bg-white border border-[#E2E8F0] text-[#64748B] hover:bg-[#F1F5F9]"
+                                }`}
+                              >
+                                {day}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Day of month for monthly */}
+                      {recurFrequency === "monthly" && (
+                        <div>
+                          <label className="text-[10px] font-semibold text-[#94A3B8] uppercase mb-1 block">Day of Month</label>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={31}
+                            value={recurDayOfMonth}
+                            onChange={(e) => setRecurDayOfMonth(Math.min(31, Math.max(1, Number(e.target.value))))}
+                            className="h-9 text-[12px] bg-white border-[#E2E8F0]"
+                          />
+                        </div>
+                      )}
+
+                      {/* End date */}
+                      <div>
+                        <label className="text-[10px] font-semibold text-[#94A3B8] uppercase mb-1 block">End Date (optional)</label>
+                        <Input
+                          type="date"
+                          value={recurEndDate}
+                          onChange={(e) => setRecurEndDate(e.target.value)}
+                          className="h-9 text-[12px] bg-white border-[#E2E8F0]"
+                        />
+                      </div>
+
+                      {/* Max occurrences */}
+                      <div>
+                        <label className="text-[10px] font-semibold text-[#94A3B8] uppercase mb-1 block">Max Occurrences (optional)</label>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={recurMaxOccurrences}
+                          onChange={(e) => setRecurMaxOccurrences(e.target.value)}
+                          placeholder="Unlimited"
+                          className="h-9 text-[12px] bg-white border-[#E2E8F0]"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-[#F1F5F9]" />
+
                 {/* Summary */}
                 <div className="space-y-2 text-[11px] text-[#94A3B8]">
                   <p className="font-bold uppercase tracking-wider mb-1">Summary</p>
@@ -439,6 +583,7 @@ export default function NewItemPage() {
                   <div className="flex justify-between"><span>Priority</span><span className="text-[#0F172A] font-medium capitalize">{priority}</span></div>
                   {storyPoints && <div className="flex justify-between"><span>Points</span><span className="text-[#0F172A] font-medium">{storyPoints}</span></div>}
                   {estimatedHours && <div className="flex justify-between"><span>Est. Hours</span><span className="text-[#0F172A] font-medium">{estimatedHours}h</span></div>}
+                  {recurringEnabled && <div className="flex justify-between"><span>Recurrence</span><span className="text-[#0F172A] font-medium capitalize">{recurFrequency}</span></div>}
                   {comments.length > 0 && <div className="flex justify-between"><span>Comments</span><span className="text-[#0F172A] font-medium">{comments.length}</span></div>}
                 </div>
               </div>

@@ -93,6 +93,16 @@ export default function ItemDetailPage() {
   const [logCategory, setLogCategory] = useState("development");
   const [loggingTime, setLoggingTime] = useState(false);
 
+  // Recurrence
+  const [showRecurrenceModal, setShowRecurrenceModal] = useState(false);
+  const [recurFrequency, setRecurFrequency] = useState<string>("weekly");
+  const [recurInterval, setRecurInterval] = useState(1);
+  const [recurDaysOfWeek, setRecurDaysOfWeek] = useState<number[]>([1]);
+  const [recurDayOfMonth, setRecurDayOfMonth] = useState(1);
+  const [recurEndDate, setRecurEndDate] = useState("");
+  const [recurMaxOccurrences, setRecurMaxOccurrences] = useState<string>("");
+  const [savingRecurrence, setSavingRecurrence] = useState(false);
+
   useEffect(() => {
     if (!authLoading && !user) router.push("/login");
   }, [user, authLoading, router]);
@@ -339,11 +349,19 @@ export default function ItemDetailPage() {
           {/* Left — Main */}
           <div className="flex-1 p-8 lg:p-10 overflow-y-auto space-y-6">
             {/* Title */}
-            <input
-              value={title}
-              onChange={(e) => { setTitle(e.target.value); markDirty(); }}
-              className="w-full text-[28px] font-bold text-[#0F172A] placeholder:text-[#CBD5E1] bg-transparent border-0 outline-none p-0"
-            />
+            <div className="flex items-center gap-2">
+              <input
+                value={title}
+                onChange={(e) => { setTitle(e.target.value); markDirty(); }}
+                className="flex-1 text-[28px] font-bold text-[#0F172A] placeholder:text-[#CBD5E1] bg-transparent border-0 outline-none p-0"
+              />
+              {(task.recurrence?.enabled || task.isRecurringInstance) && (
+                <span title={task.isRecurringInstance ? "Recurring instance" : "Recurring task template"} className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-full bg-blue-50 border border-blue-200">
+                  <svg className="w-3.5 h-3.5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                  <span className="text-[10px] font-semibold text-blue-600">{task.isRecurringInstance ? "Instance" : "Recurring"}</span>
+                </span>
+              )}
+            </div>
 
             {/* Type pills */}
             <div className="flex flex-wrap gap-2">
@@ -726,6 +744,148 @@ export default function ItemDetailPage() {
             <div>
               <label className="text-[11px] font-semibold text-[#475569] mb-2 block">Due Date</label>
               <Input type="date" value={dueDate} onChange={(e) => { setDueDate(e.target.value); markDirty(); }} className="h-11 text-sm bg-[#F8FAFC] border-[#E2E8F0]" />
+            </div>
+
+            <div className="border-t border-[#F1F5F9]" />
+
+            {/* Recurrence Info / Controls */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-[11px] font-semibold text-[#475569] flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                  Recurrence
+                </label>
+              </div>
+
+              {/* Show recurrence info if this is a recurring instance */}
+              {task.isRecurringInstance && task.recurringParentId && (
+                <div className="p-2.5 rounded-lg bg-blue-50 border border-blue-200 mb-2">
+                  <p className="text-[11px] text-blue-700 font-medium flex items-center gap-1">
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                    Auto-generated recurring instance
+                  </p>
+                  <button
+                    onClick={() => router.push(`/projects/${projectId}/items/${task.recurringParentId}`)}
+                    className="text-[10px] text-blue-600 hover:underline mt-1"
+                  >
+                    View parent template
+                  </button>
+                </div>
+              )}
+
+              {/* Show recurrence settings if this task has recurrence enabled */}
+              {task.recurrence?.enabled && (
+                <div className="p-2.5 rounded-lg bg-[#F0FDF4] border border-emerald-200 mb-2">
+                  <p className="text-[11px] text-emerald-700 font-semibold capitalize">
+                    {task.recurrence.frequency} recurrence
+                  </p>
+                  <p className="text-[10px] text-emerald-600 mt-0.5">
+                    {task.recurrence.occurrenceCount || 0} instances generated
+                    {task.recurrence.maxOccurrences ? ` / ${task.recurrence.maxOccurrences} max` : ""}
+                  </p>
+                  {task.recurrence.endDate && (
+                    <p className="text-[10px] text-emerald-600">
+                      Ends {new Date(task.recurrence.endDate).toLocaleDateString()}
+                    </p>
+                  )}
+                  <button
+                    onClick={async () => {
+                      if (!confirm("Stop this recurring schedule?")) return;
+                      try {
+                        const res = await taskApi.stopRecurrence(itemId);
+                        if (res.data) setTask(res.data);
+                        toast.success("Recurrence stopped");
+                      } catch { toast.error("Failed to stop recurrence"); }
+                    }}
+                    className="text-[10px] text-red-500 hover:text-red-700 font-medium mt-1.5"
+                  >
+                    Stop recurrence
+                  </button>
+                </div>
+              )}
+
+              {/* Button to set recurrence if not already set and not an instance */}
+              {!task.recurrence?.enabled && !task.isRecurringInstance && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowRecurrenceModal(!showRecurrenceModal)}
+                    className="w-full h-9 text-[12px] border-[#E2E8F0] text-[#64748B] hover:border-[#2E86C1] hover:text-[#2E86C1]"
+                  >
+                    Make Recurring
+                  </Button>
+                  {showRecurrenceModal && (
+                    <div className="space-y-3 mt-3 p-3 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0]">
+                      <div>
+                        <label className="text-[10px] font-semibold text-[#94A3B8] uppercase mb-1 block">Frequency</label>
+                        <select value={recurFrequency} onChange={(e) => setRecurFrequency(e.target.value)} className="w-full h-9 rounded-lg border border-[#E2E8F0] bg-white px-2.5 text-[12px] text-[#0F172A]">
+                          <option value="daily">Daily</option>
+                          <option value="weekly">Weekly</option>
+                          <option value="biweekly">Biweekly</option>
+                          <option value="monthly">Monthly</option>
+                          <option value="quarterly">Quarterly</option>
+                        </select>
+                      </div>
+                      {recurFrequency !== "biweekly" && (
+                        <div>
+                          <label className="text-[10px] font-semibold text-[#94A3B8] uppercase mb-1 block">Interval</label>
+                          <Input type="number" min={1} max={52} value={recurInterval} onChange={(e) => setRecurInterval(Math.max(1, Number(e.target.value)))} className="h-9 text-[12px] bg-white border-[#E2E8F0]" />
+                        </div>
+                      )}
+                      {["weekly", "biweekly"].includes(recurFrequency) && (
+                        <div>
+                          <label className="text-[10px] font-semibold text-[#94A3B8] uppercase mb-1.5 block">Days</label>
+                          <div className="flex gap-1">
+                            {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((day, i) => (
+                              <button key={i} type="button" onClick={() => setRecurDaysOfWeek((prev) => prev.includes(i) ? prev.filter((d) => d !== i) : [...prev, i])}
+                                className={`w-7 h-7 rounded-lg text-[9px] font-bold transition-all ${recurDaysOfWeek.includes(i) ? "bg-[#2E86C1] text-white" : "bg-white border border-[#E2E8F0] text-[#64748B]"}`}>{day}</button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {recurFrequency === "monthly" && (
+                        <div>
+                          <label className="text-[10px] font-semibold text-[#94A3B8] uppercase mb-1 block">Day of Month</label>
+                          <Input type="number" min={1} max={31} value={recurDayOfMonth} onChange={(e) => setRecurDayOfMonth(Math.min(31, Math.max(1, Number(e.target.value))))} className="h-9 text-[12px] bg-white border-[#E2E8F0]" />
+                        </div>
+                      )}
+                      <div>
+                        <label className="text-[10px] font-semibold text-[#94A3B8] uppercase mb-1 block">End Date (optional)</label>
+                        <Input type="date" value={recurEndDate} onChange={(e) => setRecurEndDate(e.target.value)} className="h-9 text-[12px] bg-white border-[#E2E8F0]" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-semibold text-[#94A3B8] uppercase mb-1 block">Max Occurrences (optional)</label>
+                        <Input type="number" min={1} value={recurMaxOccurrences} onChange={(e) => setRecurMaxOccurrences(e.target.value)} placeholder="Unlimited" className="h-9 text-[12px] bg-white border-[#E2E8F0]" />
+                      </div>
+                      <Button
+                        size="sm"
+                        disabled={savingRecurrence}
+                        onClick={async () => {
+                          setSavingRecurrence(true);
+                          try {
+                            const res = await taskApi.setRecurrence(itemId, {
+                              frequency: recurFrequency,
+                              interval: recurInterval,
+                              daysOfWeek: ["weekly", "biweekly"].includes(recurFrequency) ? recurDaysOfWeek : undefined,
+                              dayOfMonth: recurFrequency === "monthly" ? recurDayOfMonth : undefined,
+                              endDate: recurEndDate || undefined,
+                              maxOccurrences: recurMaxOccurrences ? Number(recurMaxOccurrences) : undefined,
+                            });
+                            if (res.data) setTask(res.data);
+                            setShowRecurrenceModal(false);
+                            toast.success("Recurrence enabled");
+                          } catch { toast.error("Failed to set recurrence"); }
+                          finally { setSavingRecurrence(false); }
+                        }}
+                        className="w-full bg-[#2E86C1] hover:bg-[#2471A3] h-9 text-[12px]"
+                      >
+                        {savingRecurrence ? "Saving..." : "Enable Recurrence"}
+                      </Button>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
             <div className="border-t border-[#F1F5F9]" />

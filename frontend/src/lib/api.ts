@@ -1487,6 +1487,20 @@ export interface Task {
   environment?: string;
   originalEstimate?: number;
   remainingEstimate?: number;
+  recurrence?: {
+    enabled: boolean;
+    rule?: string;
+    frequency?: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'custom';
+    interval?: number;
+    daysOfWeek?: number[];
+    dayOfMonth?: number;
+    endDate?: string;
+    maxOccurrences?: number;
+    occurrenceCount?: number;
+    lastGeneratedAt?: string;
+  };
+  isRecurringInstance?: boolean;
+  recurringParentId?: string;
   organizationId?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -1539,6 +1553,23 @@ export const taskApi = {
     request<Task>(`/tasks/${id}/vote`, { method: "POST" }),
   duplicate: (id: string) =>
     request<Task>(`/tasks/${id}/duplicate`, { method: "POST" }),
+  setRecurrence: (id: string, data: {
+    frequency: string;
+    interval?: number;
+    daysOfWeek?: number[];
+    dayOfMonth?: number;
+    endDate?: string;
+    maxOccurrences?: number;
+    rule?: string;
+  }) => request<Task>(`/tasks/${id}/recurrence`, { method: "POST", body: JSON.stringify(data) }),
+  stopRecurrence: (id: string) =>
+    request<Task>(`/tasks/${id}/recurrence`, { method: "DELETE" }),
+  getRecurringTasks: (projectId?: string) => {
+    const qs = projectId ? `?projectId=${projectId}` : "";
+    return request<Task[]>(`/tasks/recurring${qs}`);
+  },
+  getRecurringInstances: (id: string) =>
+    request<Task[]>(`/tasks/${id}/recurrence/instances`),
 };
 
 // ── Timesheet Types & API ──

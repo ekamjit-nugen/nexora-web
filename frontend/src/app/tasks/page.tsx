@@ -337,8 +337,13 @@ export default function TasksPage() {
                           <svg className={`w-4 h-4 shrink-0 ${tc.color}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d={tc.icon} /></svg>
 
                           {/* Title */}
-                          <div className="flex-1 min-w-0">
+                          <div className="flex-1 min-w-0 flex items-center gap-1.5">
                             <p className="text-[13px] font-medium text-[#0F172A] truncate">{task.title}</p>
+                            {(task.recurrence?.enabled || task.isRecurringInstance) && (
+                              <span title={task.isRecurringInstance ? "Recurring instance" : "Recurring task"} className="shrink-0">
+                                <svg className="w-3.5 h-3.5 text-[#2E86C1]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                              </span>
+                            )}
                           </div>
 
                           {/* Project */}

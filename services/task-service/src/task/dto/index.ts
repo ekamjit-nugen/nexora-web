@@ -232,6 +232,29 @@ export class TaskQueryDto {
   labels?: string;
 }
 
+export class SetRecurrenceDto {
+  @IsEnum(['daily', 'weekly', 'biweekly', 'monthly', 'quarterly', 'custom'])
+  frequency: string;
+
+  @IsOptional() @IsNumber()
+  interval?: number;
+
+  @IsOptional() @IsArray() @IsNumber({}, { each: true })
+  daysOfWeek?: number[];
+
+  @IsOptional() @IsNumber()
+  dayOfMonth?: number;
+
+  @IsOptional() @IsDateString()
+  endDate?: string;
+
+  @IsOptional() @IsNumber()
+  maxOccurrences?: number;
+
+  @IsOptional() @IsString()
+  rule?: string;
+}
+
 export class BulkUpdateDto {
   @IsArray()
   @IsString({ each: true })
