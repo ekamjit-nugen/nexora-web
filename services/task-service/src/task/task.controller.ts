@@ -15,6 +15,7 @@ import {
 import {
   CreateTimesheetDto, UpdateTimesheetDto,
   ReviewTimesheetDto, TimesheetQueryDto,
+  CreateDelegationDto,
 } from './dto/timesheet.dto';
 
 @Controller('tasks')
@@ -278,7 +279,7 @@ export class TimesheetController {
 
   @Get('pending')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('manager', 'admin', 'owner')
+  @Roles('member', 'manager', 'admin', 'owner')
   async getPending(@Query() query: TimesheetQueryDto, @Req() req) {
     const result = await this.taskService.getPendingTimesheets(query, req.user?.organizationId);
     return { success: true, message: 'Pending timesheets retrieved', data: result.data, pagination: result.pagination };
@@ -298,6 +299,48 @@ export class TimesheetController {
     const token = req.headers.authorization?.replace('Bearer ', '') || '';
     const entries = await this.taskService.autoPopulateTimesheet(req.user.userId, body.startDate, body.endDate, token, req.user?.organizationId);
     return { success: true, message: 'Time entries populated', data: entries };
+  }
+
+  // ── Delegation Endpoints ──
+
+  @Post('delegations')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
+  @HttpCode(HttpStatus.CREATED)
+  async createDelegation(@Body() dto: CreateDelegationDto, @Req() req) {
+    const delegation = await this.taskService.createDelegation(dto, req.user.userId, req.user?.organizationId);
+    return { success: true, message: 'Delegation created', data: delegation };
+  }
+
+  @Get('delegations/my')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
+  async getMyDelegations(@Req() req) {
+    const delegations = await this.taskService.getMyDelegations(req.user.userId, req.user?.organizationId);
+    return { success: true, message: 'Delegations retrieved', data: delegations };
+  }
+
+  @Get('delegations/to-me')
+  @UseGuards(JwtAuthGuard)
+  async getDelegatedToMe(@Req() req) {
+    const delegations = await this.taskService.getDelegatedToMe(req.user.userId, req.user?.organizationId);
+    return { success: true, message: 'Delegations retrieved', data: delegations };
+  }
+
+  @Get('delegations/auto-rules')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
+  async getAutoRules(@Req() req) {
+    const rules = await this.taskService.getAutoDelegationRules(req.user?.organizationId);
+    return { success: true, message: 'Auto-delegation rules retrieved', data: rules };
+  }
+
+  @Delete('delegations/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
+  async revokeDelegation(@Param('id') id: string, @Req() req) {
+    const delegation = await this.taskService.revokeDelegation(id, req.user.userId);
+    return { success: true, message: 'Delegation revoked', data: delegation };
   }
 
   @Get(':id')
@@ -332,9 +375,9 @@ export class TimesheetController {
 
   @Put(':id/review')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('manager', 'admin', 'owner')
+  @Roles('member', 'manager', 'admin', 'owner')
   async review(@Param('id') id: string, @Body() dto: ReviewTimesheetDto, @Req() req) {
-    const ts = await this.taskService.reviewTimesheet(id, dto, req.user.userId, req.user?.organizationId);
+    const ts = await this.taskService.reviewTimesheet(id, dto, req.user.userId, req.user?.organizationId, req.user?.orgRole);
     return { success: true, message: 'Timesheet reviewed', data: ts };
   }
 

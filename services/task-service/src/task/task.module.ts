@@ -22,6 +22,7 @@ import { TaskCronService } from './task-cron.service';
 import { TaskSchema } from './schemas/task.schema';
 import { CounterSchema } from './schemas/counter.schema';
 import { TimesheetSchema } from './schemas/timesheet.schema';
+import { ApprovalDelegationSchema } from './schemas/approval-delegation.schema';
 import { BoardSchema } from './schemas/board.schema';
 import { SprintSchema } from './schemas/sprint.schema';
 import { ActivitySchema } from './schemas/activity.schema';
@@ -37,6 +38,7 @@ import { RolesGuard } from './guards/roles.guard';
       { name: 'Task', schema: TaskSchema },
       { name: 'Counter', schema: CounterSchema },
       { name: 'Timesheet', schema: TimesheetSchema },
+      { name: 'ApprovalDelegation', schema: ApprovalDelegationSchema },
       { name: 'Board', schema: BoardSchema },
       { name: 'Sprint', schema: SprintSchema },
       { name: 'Activity', schema: ActivitySchema },

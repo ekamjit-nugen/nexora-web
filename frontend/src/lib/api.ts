@@ -1802,7 +1802,25 @@ export interface Timesheet {
   reviewedBy?: string;
   reviewedAt?: string;
   reviewComment?: string;
+  approvedByDelegateId?: string;
+  delegatorId?: string;
   submittedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApprovalDelegation {
+  _id: string;
+  delegatorId: string;
+  delegateId: string;
+  organizationId: string;
+  type: 'temporary' | 'permanent' | 'project_specific';
+  projectId?: string;
+  reason: string;
+  startDate: string;
+  endDate?: string;
+  isActive: boolean;
+  autoExpire: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -1834,6 +1852,19 @@ export const timesheetApi = {
   review: (id: string, data: { status: string; reviewComment?: string }) =>
     request<Timesheet>(`/timesheets/${id}/review`, { method: "PUT", body: JSON.stringify(data) }),
   getStats: () => request<any>("/timesheets/stats"),
+  createDelegation: (data: {
+    delegateId: string;
+    type: string;
+    projectId?: string;
+    reason?: string;
+    startDate: string;
+    endDate?: string;
+    autoExpire?: boolean;
+  }) => request<ApprovalDelegation>("/timesheets/delegations", { method: "POST", body: JSON.stringify(data) }),
+  getMyDelegations: () => request<ApprovalDelegation[]>("/timesheets/delegations/my"),
+  getDelegatedToMe: () => request<ApprovalDelegation[]>("/timesheets/delegations/to-me"),
+  revokeDelegation: (id: string) => request<ApprovalDelegation>(`/timesheets/delegations/${id}`, { method: "DELETE" }),
+  getAutoRules: () => request<ApprovalDelegation[]>("/timesheets/delegations/auto-rules"),
 };
 
 // ── Billing Rate & Timesheet-to-Invoice Bridge ──
