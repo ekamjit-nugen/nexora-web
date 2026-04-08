@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
+import { useProjectPermissions } from "@/lib/hooks/useProjectPermissions";
 import { projectApi, taskApi, boardApi, sprintApi, hrApi, Project, Task, Board, Sprint, Employee, ActivityLog } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { Card, CardContent } from "@/components/ui/card";
@@ -4132,7 +4133,7 @@ function RoadmapInlineView({ projectId, project }: { projectId: string; project:
 type ViewTab = "summary" | "timeline" | "board" | "calendar" | "list" | "planning" | "hierarchy" | "reports" | "gantt" | "roadmap";
 
 export default function ProjectDetailPage() {
-  const { user, loading: authLoading, logout, isProjectRole, hasOrgRole } = useAuth();
+  const { user, loading: authLoading, logout } = useAuth();
   const router = useRouter();
   const params = useParams();
   const projectId = params.id as string;
@@ -4160,11 +4161,12 @@ export default function ProjectDetailPage() {
   const [editForm, setEditForm] = useState({ projectName: "", description: "", status: "", priority: "", category: "", startDate: "", endDate: "" });
   const [saving, setSaving] = useState(false);
 
-  // Permission helpers — computed from project team and org role
-  const projectTeam = (project?.team as Array<{ userId: string; role: string }>) || [];
-  const canManageProject = isProjectRole(projectTeam, 'manager');
-  const canCreateTask = isProjectRole(projectTeam, 'member');
-  const canDeleteProject = hasOrgRole('admin');
+  // Permission helpers — computed from BOTH org role AND project-level role
+  const userId = user?._id || (user as any)?.userId;
+  const perms = useProjectPermissions(project, userId);
+  const canManageProject = perms.canEditProject;
+  const canCreateTask = perms.canCreateTasks;
+  const canDeleteProject = perms.canDeleteProject;
 
   const handleTaskUpdate = useCallback((taskId: string, patch: Partial<Task>) => {
     setTasks((prev) => prev.map((t) => t._id === taskId ? { ...t, ...patch } : t));

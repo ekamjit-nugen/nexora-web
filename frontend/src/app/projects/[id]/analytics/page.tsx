@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
+import { useProjectPermissions } from "@/lib/hooks/useProjectPermissions";
 import {
   projectApi, reportingApi, sprintApi, hrApi,
   Project, Sprint, Employee,
@@ -82,15 +83,10 @@ export default function ProjectAnalyticsPage() {
   const [toDate, setToDate] = useState(defaults.to);
   const [selectedSprintId, setSelectedSprintId] = useState<string>("");
 
-  // Role check
-  const isAuthorized = user && (
-    user.role === "manager" || user.role === "admin" || user.role === "owner" ||
-    user.role === "super_admin" ||
-    (user.roles && (
-      user.roles.includes("manager") || user.roles.includes("admin") ||
-      user.roles.includes("owner") || user.roles.includes("super_admin")
-    ))
-  );
+  // Role check — uses both org role and project-level role
+  const userId = user?._id || (user as any)?.userId;
+  const perms = useProjectPermissions(project, userId);
+  const isAuthorized = perms.canViewAnalytics;
 
   const getEmployeeName = useCallback((userId: string) => {
     const emp = employees.find((e) => e.userId === userId || e._id === userId);
@@ -199,7 +195,7 @@ export default function ProjectAnalyticsPage() {
               </svg>
             </div>
             <h2 className="text-lg font-semibold text-[#0F172A] mb-1">Access Denied</h2>
-            <p className="text-sm text-[#64748B]">You need manager, admin, or owner role to view analytics.</p>
+            <p className="text-sm text-[#64748B]">You need org manager/admin role or project lead/admin role to view analytics.</p>
           </div>
         </main>
       </div>

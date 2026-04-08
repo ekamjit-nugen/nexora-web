@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { projectApi, ProjectTemplate } from "@/lib/api";
+import { projectApi, ProjectTemplate, Project } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -29,8 +29,13 @@ const categoryColors: Record<string, string> = {
 export default function TemplatesPage() {
   const { user, loading: authLoading, logout, hasOrgRole } = useAuth();
   const router = useRouter();
-  const canManage = hasOrgRole("manager");
-  const canDelete = hasOrgRole("admin");
+  const isOrgManager = hasOrgRole("manager");
+  const isOrgAdmin = hasOrgRole("admin");
+
+  // Track whether user is a project lead/admin on any project
+  const [isProjectLeadOrAdmin, setIsProjectLeadOrAdmin] = useState(false);
+  const canManage = isOrgManager || isProjectLeadOrAdmin;
+  const canDelete = isOrgAdmin;
 
   const [templates, setTemplates] = useState<ProjectTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -75,6 +80,26 @@ export default function TemplatesPage() {
   useEffect(() => {
     if (user) fetchTemplates();
   }, [user, fetchTemplates]);
+
+  // Check if user is a lead/admin on any project (for non-org-managers)
+  useEffect(() => {
+    if (!user || isOrgManager) return;
+    const userId = user._id || (user as any)?.userId;
+    if (!userId) return;
+    (async () => {
+      try {
+        const projRes = await projectApi.getAll();
+        const projects: Project[] = Array.isArray(projRes.data) ? projRes.data : [];
+        const hasLeadRole = projects.some((p) => {
+          const member = p.team?.find((m) => m.userId === userId);
+          return member && (member.role === "lead" || member.role === "admin");
+        });
+        setIsProjectLeadOrAdmin(hasLeadRole);
+      } catch {
+        // Ignore — leave as false
+      }
+    })();
+  }, [user, isOrgManager]);
 
   const handleApply = async () => {
     if (!applyTemplate || !applyForm.projectName.trim()) return;

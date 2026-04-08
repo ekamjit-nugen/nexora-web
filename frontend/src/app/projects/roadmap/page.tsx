@@ -18,10 +18,11 @@ import RoadmapView, {
 export default function PortfolioRoadmapPage() {
   const { user, loading: authLoading, logout, hasOrgRole } = useAuth();
   const router = useRouter();
-  const canView = hasOrgRole("manager");
+  const isOrgManager = hasOrgRole("manager");
 
   const [roadmapProjects, setRoadmapProjects] = useState<RoadmapProject[]>([]);
   const [loading, setLoading] = useState(true);
+  const [canView, setCanView] = useState(isOrgManager);
 
   const fetchData = useCallback(async () => {
     try {
@@ -30,9 +31,20 @@ export default function PortfolioRoadmapPage() {
       const projRes = await projectApi.getAll({ status: "active" });
       const allProjects: Project[] = Array.isArray(projRes.data) ? projRes.data : [];
 
+      // If user is not an org manager, filter to projects where they are lead or admin
+      const userId = user?._id || (user as any)?.userId;
+      let visibleProjects = allProjects;
+      if (!isOrgManager && userId) {
+        visibleProjects = allProjects.filter((p) => {
+          const member = p.team?.find((m) => m.userId === userId);
+          return member && (member.role === "lead" || member.role === "admin");
+        });
+        setCanView(visibleProjects.length > 0);
+      }
+
       // For each project, fetch epics and build roadmap data
       const items: RoadmapProject[] = await Promise.all(
-        allProjects.map(async (proj) => {
+        visibleProjects.map(async (proj) => {
           // Fetch epics for this project
           let epics: Task[] = [];
           try {
@@ -117,7 +129,7 @@ export default function PortfolioRoadmapPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user, isOrgManager]);
 
   useEffect(() => {
     if (!authLoading && !user) router.push("/login");
@@ -153,7 +165,7 @@ export default function PortfolioRoadmapPage() {
               </div>
               <h3 className="text-sm font-semibold text-[#334155] mb-1">Access Restricted</h3>
               <p className="text-[13px] text-[#94A3B8] mb-4">
-                The portfolio roadmap is available to managers and admins only.
+                The portfolio roadmap is available to org managers/admins or project leads/admins.
               </p>
               <Button
                 onClick={() => router.push("/projects")}
