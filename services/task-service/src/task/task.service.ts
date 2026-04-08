@@ -6,12 +6,8 @@ import { IBoard } from './schemas/board.schema';
 import { ICounter } from './schemas/counter.schema';
 import { ITimesheet } from './schemas/timesheet.schema';
 import { IActivity } from './schemas/activity.schema';
-<<<<<<< HEAD
-import { NotificationService, extractMentions } from './notification.service';
-=======
 import { ISprint } from './schemas/sprint.schema';
-import { NotificationService } from './notification.service';
->>>>>>> worktree-agent-a5b27143
+import { NotificationService, extractMentions } from './notification.service';
 import {
   CreateTaskDto, UpdateTaskDto, AddCommentDto,
   LogTimeDto, TaskQueryDto, UpdateStatusDto, BulkUpdateDto,
