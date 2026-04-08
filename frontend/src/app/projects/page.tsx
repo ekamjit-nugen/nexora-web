@@ -154,14 +154,22 @@ export default function ProjectsPage() {
             <h1 className="text-2xl font-bold text-[#0F172A]">Projects</h1>
             <p className="text-[13px] text-[#94A3B8] mt-1">Manage and track your team&apos;s projects</p>
           </div>
-          {canCreateProject && (
-            <Button onClick={() => router.push("/projects/new")} className="gap-2 h-10 px-5 bg-[#2E86C1] hover:bg-[#2471A3]">
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => router.push("/projects/roadmap")} className="gap-2 h-10 px-4">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l5.447 2.724A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
               </svg>
-              New Project
+              Roadmap
             </Button>
-          )}
+            {canCreateProject && (
+              <Button onClick={() => router.push("/projects/new")} className="gap-2 h-10 px-5 bg-[#2E86C1] hover:bg-[#2471A3]">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                New Project
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Stat Cards */}
