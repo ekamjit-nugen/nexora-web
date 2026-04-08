@@ -57,7 +57,7 @@ function StatSkeleton() {
 // ── Main Page ──
 
 export default function ProjectAnalyticsPage() {
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading, logout, hasOrgRole, isProjectRole } = useAuth();
   const router = useRouter();
   const params = useParams();
   const projectId = params.id as string;
@@ -82,15 +82,14 @@ export default function ProjectAnalyticsPage() {
   const [toDate, setToDate] = useState(defaults.to);
   const [selectedSprintId, setSelectedSprintId] = useState<string>("");
 
-  // Role check
-  const isAuthorized = user && (
-    user.role === "manager" || user.role === "admin" || user.role === "owner" ||
-    user.role === "super_admin" ||
-    (user.roles && (
-      user.roles.includes("manager") || user.roles.includes("admin") ||
-      user.roles.includes("owner") || user.roles.includes("super_admin")
-    ))
-  );
+  // Role check — allow project members (including viewers) OR org-level managers+
+  const projectTeam = (project?.team as Array<{ userId: string; role: string }>) || [];
+  const isProjectMember = isProjectRole(projectTeam, 'viewer');
+  const isOrgManager = hasOrgRole('manager');
+  const isAuthorized = user && (isProjectMember || isOrgManager);
+
+  // Viewer = read-only analytics (no export/configure actions)
+  const isReadOnly = isAuthorized && !isOrgManager && !isProjectRole(projectTeam, 'developer');
 
   const getEmployeeName = useCallback((userId: string) => {
     const emp = employees.find((e) => e.userId === userId || e._id === userId);
@@ -199,7 +198,7 @@ export default function ProjectAnalyticsPage() {
               </svg>
             </div>
             <h2 className="text-lg font-semibold text-[#0F172A] mb-1">Access Denied</h2>
-            <p className="text-sm text-[#64748B]">You need manager, admin, or owner role to view analytics.</p>
+            <p className="text-sm text-[#64748B]">You need to be a project member or have manager role to view analytics.</p>
           </div>
         </main>
       </div>

@@ -70,7 +70,7 @@ export const PROJECT_ROLE_PERMISSIONS: Record<ProjectRole, IProjectPermissions> 
       deleteTask: false,
       manageMembers: false,
       manageProject: false,
-      viewAnalytics: false,
+      viewAnalytics: true,
       viewProject: true,
       assignTasks: false,
       createSprint: false,

@@ -42,7 +42,7 @@ const priorityOptions = [
 const pointScale = [1, 2, 3, 5, 8, 13, 21];
 
 export default function ItemDetailPage() {
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading, logout, isProjectRole } = useAuth();
   const router = useRouter();
   const params = useParams();
   const projectId = params.id as string;
@@ -54,6 +54,11 @@ export default function ItemDetailPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  // Permission: viewer = read-only (no editing, commenting, or reactions)
+  const projectTeam = (project?.team as Array<{ userId: string; role: string }>) || [];
+  const canEdit = isProjectRole(projectTeam, 'member');
+  const isReadOnly = !canEdit;
 
   // Editable fields
   const [title, setTitle] = useState("");
@@ -305,11 +310,12 @@ export default function ItemDetailPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {/* Flag */}
+            {/* Flag — disabled for viewers */}
             <button
-              onClick={handleToggleFlag}
-              title="Flag"
-              className={`p-2 rounded-lg transition-colors ${task.isFlagged ? "bg-amber-50 text-amber-500" : "text-[#94A3B8] hover:bg-[#F1F5F9] hover:text-amber-500"}`}
+              onClick={isReadOnly ? undefined : handleToggleFlag}
+              disabled={isReadOnly}
+              title={isReadOnly ? "Flagged status" : "Flag"}
+              className={`p-2 rounded-lg transition-colors ${isReadOnly ? "cursor-default" : ""} ${task.isFlagged ? "bg-amber-50 text-amber-500" : "text-[#94A3B8] hover:bg-[#F1F5F9] hover:text-amber-500"}`}
             >
               <svg className="w-4 h-4" fill={task.isFlagged ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v18m0-13.5h14.25l-2.5 3.5 2.5 3.5H3" />
@@ -326,21 +332,25 @@ export default function ItemDetailPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
             </button>
-            {/* Vote */}
+            {/* Vote — disabled for viewers */}
             <button
-              onClick={handleToggleVote}
-              title="Vote"
-              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition-colors text-[12px] font-medium ${task.votes?.includes(user._id) ? "bg-violet-50 text-violet-600" : "text-[#94A3B8] hover:bg-[#F1F5F9] hover:text-violet-600"}`}
+              onClick={isReadOnly ? undefined : handleToggleVote}
+              title={isReadOnly ? "Vote count" : "Vote"}
+              disabled={isReadOnly}
+              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition-colors text-[12px] font-medium ${isReadOnly ? "cursor-default" : ""} ${task.votes?.includes(user._id) ? "bg-violet-50 text-violet-600" : "text-[#94A3B8] hover:bg-[#F1F5F9] hover:text-violet-600"}`}
             >
               <svg className="w-3.5 h-3.5" fill={task.votes?.includes(user._id) ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6.633 10.5c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 012.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 00.322-1.672V3a.75.75 0 01.75-.75A2.25 2.25 0 0116.5 4.5c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 01-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 00-1.423-.23H5.904M14.25 9h2.25M5.904 18.669A1.989 1.989 0 013.916 17.5v-2.38a2 2 0 00-.91-1.686L2.37 12.5" />
               </svg>
               {(task.votes?.length || 0) > 0 && <span>{task.votes!.length}</span>}
             </button>
-            {dirty && <span className="text-[11px] text-amber-600 font-medium ml-1">Unsaved changes</span>}
+            {!isReadOnly && dirty && <span className="text-[11px] text-amber-600 font-medium ml-1">Unsaved changes</span>}
+            {isReadOnly && <span className="text-[11px] text-[#94A3B8] font-medium ml-1 bg-[#F1F5F9] px-2 py-1 rounded">Read-only</span>}
+            {!isReadOnly && (
             <Button onClick={handleSave} disabled={saving || !dirty} className="bg-[#2E86C1] hover:bg-[#2471A3] h-9 min-w-[100px]">
               {saving ? "Saving..." : "Save"}
             </Button>
+            )}
           </div>
         </div>
 
@@ -352,8 +362,9 @@ export default function ItemDetailPage() {
             <div className="flex items-center gap-2">
               <input
                 value={title}
-                onChange={(e) => { setTitle(e.target.value); markDirty(); }}
-                className="flex-1 text-[28px] font-bold text-[#0F172A] placeholder:text-[#CBD5E1] bg-transparent border-0 outline-none p-0"
+                onChange={(e) => { if (!isReadOnly) { setTitle(e.target.value); markDirty(); } }}
+                readOnly={isReadOnly}
+                className={`flex-1 text-[28px] font-bold text-[#0F172A] placeholder:text-[#CBD5E1] bg-transparent border-0 outline-none p-0 ${isReadOnly ? "cursor-default" : ""}`}
               />
               {(task.recurrence?.enabled || task.isRecurringInstance) && (
                 <span title={task.isRecurringInstance ? "Recurring instance" : "Recurring task template"} className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-full bg-blue-50 border border-blue-200">
@@ -382,16 +393,17 @@ export default function ItemDetailPage() {
               </label>
               <RichTextEditor
                 content={description}
-                onChange={(html) => { setDescription(html); markDirty(); }}
-                placeholder="Add a detailed description... Drag & drop images or paste screenshots."
+                onChange={(html) => { if (!isReadOnly) { setDescription(html); markDirty(); } }}
+                placeholder={isReadOnly ? "No description." : "Add a detailed description... Drag & drop images or paste screenshots."}
                 minHeight="300px"
+                editable={!isReadOnly}
               />
             </div>
 
             {/* Labels */}
             <div>
               <label className="text-[12px] font-semibold text-[#475569] uppercase tracking-wide mb-2 block">Labels</label>
-              <Input value={labels} onChange={(e) => { setLabels(e.target.value); markDirty(); }} placeholder="frontend, api, urgent" className="h-10 text-sm bg-white border-[#E2E8F0]" />
+              {!isReadOnly && <Input value={labels} onChange={(e) => { setLabels(e.target.value); markDirty(); }} placeholder="frontend, api, urgent" className="h-10 text-sm bg-white border-[#E2E8F0]" />}
               {labels && (
                 <div className="flex flex-wrap gap-1.5 mt-2">
                   {labels.split(",").map((l) => l.trim()).filter(Boolean).map((label, i) => (
@@ -414,7 +426,7 @@ export default function ItemDetailPage() {
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" /></svg>
                       Dependencies ({deps.length})
                     </label>
-                    <button onClick={() => setShowDepModal(true)} className="text-[11px] font-medium text-[#2E86C1] hover:underline">+ Add</button>
+                    {!isReadOnly && <button onClick={() => setShowDepModal(true)} className="text-[11px] font-medium text-[#2E86C1] hover:underline">+ Add</button>}
                   </div>
 
                   {/* Dep modal */}
@@ -484,7 +496,7 @@ export default function ItemDetailPage() {
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>
                   Sub-items ({children.length})
                 </label>
-                <button onClick={() => setAddingChild(!addingChild)} className="text-[11px] font-medium text-[#2E86C1] hover:underline">+ Add</button>
+                {!isReadOnly && <button onClick={() => setAddingChild(!addingChild)} className="text-[11px] font-medium text-[#2E86C1] hover:underline">+ Add</button>}
               </div>
 
               {/* Progress bar */}
@@ -556,6 +568,7 @@ export default function ItemDetailPage() {
                 Activity ({task.comments?.length || 0})
               </label>
 
+              {!isReadOnly && (
               <CommentEditor
                 onSubmit={async (text) => {
                   setAddingComment(true);
@@ -573,6 +586,7 @@ export default function ItemDetailPage() {
                 userInitials={`${user.firstName?.charAt(0) || ""}${user.lastName?.charAt(0) || ""}`.toUpperCase()}
                 submitting={addingComment}
               />
+              )}
 
               {(task.comments || []).length > 0 && (
                 <div className="space-y-4 mt-5">
@@ -590,7 +604,7 @@ export default function ItemDetailPage() {
                             <span className="text-[12px] font-semibold text-[#334155]">{c.userId?.slice(-6) || "User"}</span>
                             <span className="text-[10px] text-[#94A3B8]">{c.createdAt ? new Date(c.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}</span>
                             {c.isEdited && <span className="text-[10px] text-[#94A3B8] italic">(edited)</span>}
-                            {isOwn && !isEditing && (
+                            {isOwn && !isEditing && !isReadOnly && (
                               <div className="ml-auto flex items-center gap-1.5">
                                 <button onClick={() => { setEditingCommentId(c._id || null); setEditingCommentText(c.content); }} className="text-[10px] text-[#94A3B8] hover:text-[#2E86C1]">Edit</button>
                                 <button onClick={() => c._id && handleDeleteComment(c._id)} className="text-[10px] text-[#94A3B8] hover:text-red-500">Delete</button>
@@ -616,16 +630,17 @@ export default function ItemDetailPage() {
                               {/* Reactions */}
                               <div className="flex items-center flex-wrap gap-1.5 mt-2">
                                 {(c.reactions || []).map((r) => (
-                                  <button
+                                  <span
                                     key={r.emoji}
-                                    onClick={() => c._id && handleToggleReaction(c._id, r.emoji)}
-                                    className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] border transition-colors ${r.userIds?.includes(user._id) ? "bg-[#EBF5FB] border-[#2E86C1] text-[#2E86C1]" : "bg-[#F8FAFC] border-[#E2E8F0] text-[#64748B] hover:border-[#CBD5E1]"}`}
+                                    onClick={() => !isReadOnly && c._id && handleToggleReaction(c._id, r.emoji)}
+                                    className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] border transition-colors ${isReadOnly ? "cursor-default" : "cursor-pointer"} ${r.userIds?.includes(user._id) ? "bg-[#EBF5FB] border-[#2E86C1] text-[#2E86C1]" : "bg-[#F8FAFC] border-[#E2E8F0] text-[#64748B]"} ${!isReadOnly ? "hover:border-[#CBD5E1]" : ""}`}
                                   >
                                     <span>{r.emoji}</span>
                                     <span>{r.userIds?.length || 0}</span>
-                                  </button>
+                                  </span>
                                 ))}
-                                {/* Quick emoji picker */}
+                                {/* Quick emoji picker — hidden for viewers */}
+                                {!isReadOnly && (
                                 <div className="flex gap-0.5">
                                   {QUICK_EMOJIS.map((emoji) => (
                                     <button
@@ -637,6 +652,7 @@ export default function ItemDetailPage() {
                                     </button>
                                   ))}
                                 </div>
+                                )}
                               </div>
                             </>
                           )}
@@ -672,6 +688,12 @@ export default function ItemDetailPage() {
             {/* Status */}
             <div>
                 <label className="text-[11px] font-semibold text-[#475569] mb-2 block">Status</label>
+                {isReadOnly ? (
+                  <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg bg-[#EBF5FB] text-[#2E86C1] text-[12px] font-medium">
+                    <div className={`w-2 h-2 rounded-full ${statusOptions.find(s => s.value === status)?.dot || "bg-gray-400"}`} />
+                    {statusOptions.find(s => s.value === status)?.label || status}
+                  </div>
+                ) : (
                 <div className="space-y-0.5">
                   {statusOptions.map((s) => (
                     <button key={s.value} onClick={() => { setStatus(s.value); markDirty(); }}
@@ -682,6 +704,7 @@ export default function ItemDetailPage() {
                     </button>
                   ))}
                 </div>
+                )}
             </div>
 
             <div className="border-t border-[#F1F5F9]" />
@@ -689,6 +712,12 @@ export default function ItemDetailPage() {
             {/* Priority */}
             <div>
               <label className="text-[11px] font-semibold text-[#475569] mb-2 block">Priority</label>
+              {isReadOnly ? (
+                <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-[#EBF5FB] text-[#2E86C1] text-[13px] font-medium">
+                  <div className={`w-2.5 h-2.5 rounded-full ${priorityOptions.find(p => p.value === priority)?.color || "bg-gray-400"}`} />
+                  {priorityOptions.find(p => p.value === priority)?.label || priority}
+                </div>
+              ) : (
               <div className="space-y-0.5">
                 {priorityOptions.map((p) => (
                   <button key={p.value} onClick={() => { setPriority(p.value); markDirty(); }}
@@ -699,6 +728,7 @@ export default function ItemDetailPage() {
                   </button>
                 ))}
               </div>
+              )}
             </div>
 
             <div className="border-t border-[#F1F5F9]" />
@@ -706,12 +736,16 @@ export default function ItemDetailPage() {
             {/* Story Points */}
             <div>
               <label className="text-[11px] font-semibold text-[#475569] mb-2 block">Story Points</label>
+              {isReadOnly ? (
+                <p className="text-xl font-bold text-[#0F172A]">{storyPoints ?? "—"}</p>
+              ) : (
               <div className="flex flex-wrap gap-2">
                 {pointScale.map((p) => (
                   <button key={p} onClick={() => { setStoryPoints(storyPoints === p ? null : p); markDirty(); }}
                     className={`w-10 h-10 rounded-lg text-[14px] font-bold transition-all ${storyPoints === p ? "bg-[#2E86C1] text-white shadow-sm" : "bg-[#F8FAFC] border border-[#E2E8F0] text-[#64748B] hover:bg-[#F1F5F9]"}`}>{p}</button>
                 ))}
               </div>
+              )}
             </div>
 
             <div className="border-t border-[#F1F5F9]" />
@@ -719,11 +753,15 @@ export default function ItemDetailPage() {
             {/* Assignee */}
             <div>
               <label className="text-[11px] font-semibold text-[#475569] mb-2 block">Assignee</label>
+              {isReadOnly ? (
+                <p className="text-sm text-[#0F172A]">{assigneeId ? (employees.find(e => (e.userId || e._id) === assigneeId) ? `${employees.find(e => (e.userId || e._id) === assigneeId)!.firstName} ${employees.find(e => (e.userId || e._id) === assigneeId)!.lastName}` : assigneeId.slice(0, 8)) : "Unassigned"}</p>
+              ) : (
               <select value={assigneeId} onChange={(e) => { setAssigneeId(e.target.value); markDirty(); }}
                 className="w-full h-11 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[#2E86C1]">
                 <option value="">Unassigned</option>
                 {employees.map((e) => <option key={e._id} value={e.userId || e._id}>{e.firstName} {e.lastName}</option>)}
               </select>
+              )}
             </div>
 
             <div className="border-t border-[#F1F5F9]" />
@@ -731,7 +769,11 @@ export default function ItemDetailPage() {
             {/* Estimated Hours */}
             <div>
               <label className="text-[11px] font-semibold text-[#475569] mb-2 block">Estimated Hours</label>
+              {isReadOnly ? (
+                <p className="text-sm text-[#0F172A]">{estimatedHours || "—"}</p>
+              ) : (
               <Input type="number" value={estimatedHours} onChange={(e) => { setEstimatedHours(e.target.value); markDirty(); }} placeholder="0" className="h-11 text-sm bg-[#F8FAFC] border-[#E2E8F0]" />
+              )}
             </div>
 
             {/* Logged Hours */}
@@ -743,7 +785,11 @@ export default function ItemDetailPage() {
             {/* Due Date */}
             <div>
               <label className="text-[11px] font-semibold text-[#475569] mb-2 block">Due Date</label>
+              {isReadOnly ? (
+                <p className="text-sm text-[#0F172A]">{dueDate ? new Date(dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}</p>
+              ) : (
               <Input type="date" value={dueDate} onChange={(e) => { setDueDate(e.target.value); markDirty(); }} className="h-11 text-sm bg-[#F8FAFC] border-[#E2E8F0]" />
+              )}
             </div>
 
             <div className="border-t border-[#F1F5F9]" />
@@ -804,8 +850,8 @@ export default function ItemDetailPage() {
                 </div>
               )}
 
-              {/* Button to set recurrence if not already set and not an instance */}
-              {!task.recurrence?.enabled && !task.isRecurringInstance && (
+              {/* Button to set recurrence if not already set and not an instance — hidden for viewers */}
+              {!isReadOnly && !task.recurrence?.enabled && !task.isRecurringInstance && (
                 <>
                   <Button
                     variant="outline"
@@ -890,7 +936,8 @@ export default function ItemDetailPage() {
 
             <div className="border-t border-[#F1F5F9]" />
 
-            {/* Log Time */}
+            {/* Log Time — hidden for viewers */}
+            {!isReadOnly && (
             <div>
               <label className="text-[11px] font-semibold text-[#475569] mb-2 block">Log Time</label>
               <div className="space-y-2">
@@ -915,6 +962,7 @@ export default function ItemDetailPage() {
                 </Button>
               </div>
             </div>
+            )}
 
             <div className="border-t border-[#F1F5F9]" />
 

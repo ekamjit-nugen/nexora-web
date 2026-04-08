@@ -708,12 +708,12 @@ function BoardView({
                       task={task}
                       projectId={projectId}
                       employees={employees}
-                      draggable
-                      onDragStart={handleDragStart}
+                      draggable={canCreateTask || canManageProject}
+                      onDragStart={canCreateTask || canManageProject ? handleDragStart : undefined}
                       parentTask={task.parentTaskId ? parentMap.get(task.parentTaskId) || null : null}
                       childCount={childrenMap.get(task._id)?.length || 0}
                       isSelected={selectedTasks.has(task._id)}
-                      onSelectionChange={toggleTaskSelection}
+                      onSelectionChange={canCreateTask ? toggleTaskSelection : undefined}
                     />
                   ))}
                 </div>
@@ -724,7 +724,8 @@ function BoardView({
                   </div>
                 )}
 
-                {/* Quick add */}
+                {/* Quick add — hidden for viewers */}
+                {canCreateTask && (
                 <div className="mt-2 px-0.5">
                   <div className="flex items-center gap-1.5">
                     <input
@@ -753,6 +754,7 @@ function BoardView({
                     )}
                   </div>
                 </div>
+                )}
               </div>
             </div>
           );
@@ -761,7 +763,8 @@ function BoardView({
         </div>
       )}
 
-      {/* Bulk Operations FAB */}
+      {/* Bulk Operations FAB — hidden for viewers */}
+      {canCreateTask && (
       <BulkOperations
         selectedTasks={selectedTasks}
         onClearSelection={() => setSelectedTasks(new Set())}
@@ -769,6 +772,7 @@ function BoardView({
         employees={employees}
         loading={bulkUpdating}
       />
+      )}
     </>
   );
 }
@@ -3187,6 +3191,7 @@ function SprintBar({
   onCompleteSprint,
   methodology,
   projectId,
+  readOnly,
 }: {
   sprints: Sprint[];
   tasks: Task[];
@@ -3194,6 +3199,7 @@ function SprintBar({
   onCompleteSprint: (id: string) => void;
   methodology?: string;
   projectId: string;
+  readOnly?: boolean;
 }) {
   const router = useRouter();
   const [showAllSprints, setShowAllSprints] = useState(false);
@@ -3418,6 +3424,7 @@ function SprintBar({
                 )}
 
                 {/* Complete button */}
+                {!readOnly && (
                 <Button
                   size="sm"
                   onClick={(e) => { e.stopPropagation(); onCompleteSprint(activeSprint._id); }}
@@ -3425,6 +3432,7 @@ function SprintBar({
                 >
                   Complete Sprint
                 </Button>
+                )}
 
                 {/* Sprint list toggle */}
                 <button
@@ -3457,6 +3465,7 @@ function SprintBar({
             <p className="text-[13px] font-medium text-[#334155]">No active sprint</p>
             <p className="text-[11px] text-[#94A3B8]">{planningSprints.length} sprint{planningSprints.length !== 1 ? "s" : ""} in planning</p>
           </div>
+          {!readOnly && (
           <Button
             size="sm"
             onClick={() => onStartSprint(planningSprints[0]._id)}
@@ -3464,6 +3473,7 @@ function SprintBar({
           >
             Start {planningSprints[0].name}
           </Button>
+          )}
           <button
             onClick={() => setShowAllSprints(!showAllSprints)}
             className="p-1.5 rounded-lg hover:bg-[#F1F5F9] text-[#94A3B8] transition-colors"
@@ -3532,7 +3542,7 @@ function SprintBar({
                     <span className="text-[11px] text-[#64748B]">{stats.done}/{stats.total} tasks</span>
                     {stats.totalPts > 0 && <span className="text-[11px] font-medium text-[#2E86C1]">{stats.donePts}/{stats.totalPts} pts</span>}
                     {sprint.velocity != null && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-600">vel: {sprint.velocity}</span>}
-                    {sprint.status === "planning" && !activeSprint && (
+                    {sprint.status === "planning" && !activeSprint && !readOnly && (
                       <Button size="sm" onClick={() => onStartSprint(sprint._id)} className="h-6 text-[10px] bg-[#2E86C1] hover:bg-[#2471A3] px-2">Start</Button>
                     )}
                   </div>
@@ -3675,9 +3685,9 @@ function PlanningView({
     const children = childrenMap.get(task._id)?.length || 0;
     return (
       <div
-        draggable
-        onDragStart={(e) => handleDragStart(e, task._id)}
-        className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[#E2E8F0] bg-white hover:shadow-sm hover:border-[#CBD5E1] cursor-grab transition-all group"
+        draggable={canCreateTask || canManageProject}
+        onDragStart={canCreateTask || canManageProject ? (e) => handleDragStart(e, task._id) : undefined}
+        className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-[#E2E8F0] bg-white hover:shadow-sm hover:border-[#CBD5E1] ${canCreateTask || canManageProject ? "cursor-grab" : "cursor-default"} transition-all group`}
       >
         <svg className={`w-3.5 h-3.5 shrink-0 ${typeInfo.color}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d={typeInfo.icon} />
@@ -4165,6 +4175,8 @@ export default function ProjectDetailPage() {
   const canManageProject = isProjectRole(projectTeam, 'manager');
   const canCreateTask = isProjectRole(projectTeam, 'member');
   const canDeleteProject = hasOrgRole('admin');
+  // Viewer = project member who can see everything but write nothing
+  const isViewer = isProjectRole(projectTeam, 'viewer') && !canCreateTask;
 
   const handleTaskUpdate = useCallback((taskId: string, patch: Partial<Task>) => {
     setTasks((prev) => prev.map((t) => t._id === taskId ? { ...t, ...patch } : t));
@@ -4553,6 +4565,91 @@ export default function ProjectDetailPage() {
           </Card>
         </div>
 
+        {/* Project Brief — executive snapshot for viewers */}
+        {isViewer && (
+          <Card className="border-0 shadow-sm mb-5">
+            <CardContent className="p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center">
+                  <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                </div>
+                <h3 className="text-sm font-bold text-[#0F172A]">Project Brief</h3>
+                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-[#F1F5F9] text-[#94A3B8]">Read-only view</span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                {/* Health Score */}
+                <div className="space-y-1">
+                  <p className="text-[10px] font-medium text-[#94A3B8] uppercase">Health</p>
+                  <div className="flex items-center gap-1.5">
+                    <div className={`w-2.5 h-2.5 rounded-full ${blockedTasks > tasks.length * 0.2 ? "bg-red-500" : blockedTasks > 0 ? "bg-amber-500" : "bg-emerald-500"}`} />
+                    <span className={`text-sm font-bold ${blockedTasks > tasks.length * 0.2 ? "text-red-600" : blockedTasks > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                      {blockedTasks > tasks.length * 0.2 ? "At Risk" : blockedTasks > 0 ? "Needs Attention" : "On Track"}
+                    </span>
+                  </div>
+                </div>
+                {/* Progress */}
+                <div className="space-y-1">
+                  <p className="text-[10px] font-medium text-[#94A3B8] uppercase">Progress</p>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-[#0F172A]">{completionPct}%</span>
+                    <div className="flex-1 h-1.5 bg-[#F1F5F9] rounded-full"><div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${completionPct}%` }} /></div>
+                  </div>
+                </div>
+                {/* Key Milestones */}
+                <div className="space-y-1">
+                  <p className="text-[10px] font-medium text-[#94A3B8] uppercase">Next Milestones</p>
+                  {(() => {
+                    const upcoming = (project.milestones || [])
+                      .filter((m: any) => m.status !== "completed" && m.targetDate)
+                      .sort((a: any, b: any) => new Date(a.targetDate).getTime() - new Date(b.targetDate).getTime())
+                      .slice(0, 3);
+                    return upcoming.length > 0 ? (
+                      <div className="space-y-0.5">
+                        {upcoming.map((m: any, i: number) => (
+                          <p key={i} className="text-[11px] text-[#334155] truncate" title={m.name}>
+                            <span className="font-medium">{m.name}</span>
+                            <span className="text-[#94A3B8] ml-1">{new Date(m.targetDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                          </p>
+                        ))}
+                      </div>
+                    ) : <p className="text-[11px] text-[#94A3B8]">No milestones set</p>;
+                  })()}
+                </div>
+                {/* Budget Status */}
+                <div className="space-y-1">
+                  <p className="text-[10px] font-medium text-[#94A3B8] uppercase">Budget</p>
+                  {project.budget ? (
+                    <p className="text-sm font-bold text-[#0F172A]">
+                      ${((project.budget as any).spent || 0).toLocaleString()} / ${((project.budget as any).total || 0).toLocaleString()}
+                    </p>
+                  ) : <p className="text-[11px] text-[#94A3B8]">Not configured</p>}
+                </div>
+                {/* Team Size */}
+                <div className="space-y-1">
+                  <p className="text-[10px] font-medium text-[#94A3B8] uppercase">Team</p>
+                  <p className="text-sm font-bold text-[#0F172A]">{project.team?.length || 0} members</p>
+                </div>
+                {/* Active Sprint */}
+                <div className="space-y-1">
+                  <p className="text-[10px] font-medium text-[#94A3B8] uppercase">Active Sprint</p>
+                  {(() => {
+                    const active = sprints.find((s) => s.status === "active");
+                    if (!active) return <p className="text-[11px] text-[#94A3B8]">No active sprint</p>;
+                    const sprintTasks = tasks.filter((t) => t.sprintId === active._id);
+                    const sprintDone = sprintTasks.filter((t) => t.status === "done").length;
+                    return (
+                      <div>
+                        <p className="text-[11px] font-medium text-[#334155]">{active.name}</p>
+                        <p className="text-[10px] text-[#94A3B8]">{sprintDone}/{sprintTasks.length} tasks done</p>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Sprint Bar */}
         <SprintBar
           sprints={sprints}
@@ -4561,6 +4658,7 @@ export default function ProjectDetailPage() {
           onCompleteSprint={handleCompleteSprint}
           methodology={project.methodology}
           projectId={projectId}
+          readOnly={isViewer}
         />
 
         {/* Toolbar */}
