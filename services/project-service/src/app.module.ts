@@ -9,6 +9,7 @@ import { VersionModule } from './versioning/version.module';
 import { CollaborationModule } from './collaboration/collaboration.module';
 import { PWAModule } from './pwa/pwa.module';
 import { AuditModule } from './audit-blockchain/audit.module';
+import { ProjectTemplateModule } from './project-template/project-template.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { AuditModule } from './audit-blockchain/audit.module';
         retryDelay: 5000,
       }),
     }),
+    ProjectTemplateModule,
     ProjectModule,
     HealthModule,
     RoleModule,
