@@ -596,6 +596,13 @@ export interface ChatMessage {
   fileName?: string;
   fileSize?: number;
   fileMimeType?: string;
+  clip?: {
+    clipId: string;
+    mediaUrl: string;
+    thumbnailUrl: string;
+    duration: number;
+    transcription: string;
+  };
   reactions: Array<{ emoji: string; userId: string }>;
   isEdited: boolean;
   isDeleted: boolean;
@@ -671,6 +678,14 @@ export const chatApi = {
   getSettings: () => request<ChatSettings>("/chat/settings"),
   updateSettings: (data: Partial<ChatSettings>) =>
     request<ChatSettings>("/chat/settings", { method: "PUT", body: JSON.stringify(data) }),
+
+  // Clips
+  createClip: (data: { conversationId: string; mediaUrl: string; duration: number; fileSize: number; mimeType: string }) =>
+    request<any>('/chat/clips', { method: 'POST', body: JSON.stringify(data) }),
+  getClip: (clipId: string) =>
+    request<any>(`/chat/clips/${clipId}`),
+  getClipTranscription: (clipId: string) =>
+    request<any>(`/chat/clips/${clipId}/transcription`),
 
   // Moderation
   getFlagged: () => request("/chat/moderation/flagged"),

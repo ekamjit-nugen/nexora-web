@@ -10,6 +10,8 @@ import { useGlobalSocket } from "@/lib/socket-context";
 import { useWebRTC } from "@/lib/hooks/useWebRTC";
 import { useCallContext } from "@/lib/call-context";
 import { CallControls, VideoCallWindow } from "@/components/calling";
+import ClipRecorder from "@/components/chat/ClipRecorder";
+import ClipPlayer from "@/components/chat/ClipPlayer";
 import { toast } from "sonner";
 
 // ── Helpers ──
@@ -177,6 +179,9 @@ export default function MessagesPage() {
 
   // File upload spinner
   const [isUploading, setIsUploading] = useState(false);
+
+  // Clip recording
+  const [showClipRecorder, setShowClipRecorder] = useState(false);
 
   // Socket state
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
@@ -498,6 +503,61 @@ export default function MessagesPage() {
     }
     // Reset input so same file can be re-selected
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  // ── Clip recording ──
+  const handleClipReady = async (blob: Blob, duration: number) => {
+    if (!activeId) return;
+    setShowClipRecorder(false);
+    setIsUploading(true);
+    const spinnerStart = Date.now();
+
+    try {
+      // Read clip as base64 data URL
+      const mediaUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("Failed to read clip"));
+        reader.readAsDataURL(blob);
+      });
+
+      // Create clip record via API
+      const clipRes = await chatApi.createClip({
+        conversationId: activeId,
+        mediaUrl,
+        duration: Math.max(1, Math.round(duration)),
+        fileSize: blob.size,
+        mimeType: blob.type || "video/webm",
+      });
+
+      const clipData = clipRes.data;
+
+      // Send as a clip message via socket
+      emit("message:send", {
+        conversationId: activeId,
+        content: `Clip (${Math.round(duration)}s)`,
+        type: "clip",
+        fileUrl: mediaUrl,
+        fileName: `clip-${clipData?._id || "recording"}.webm`,
+        fileSize: blob.size,
+        fileMimeType: blob.type || "video/webm",
+        clip: {
+          clipId: clipData?._id || "",
+          mediaUrl,
+          thumbnailUrl: "",
+          duration: Math.max(1, Math.round(duration)),
+          transcription: clipData?.transcription || "",
+        },
+      });
+
+      toast.success("Clip sent");
+    } catch (err) {
+      toast.error("Failed to send clip");
+    } finally {
+      const elapsed = Date.now() - spinnerStart;
+      const remaining = Math.max(0, 1200 - elapsed);
+      setTimeout(() => setIsUploading(false), remaining);
+    }
   };
 
   // ── Typing indicator ──
@@ -1736,6 +1796,19 @@ export default function MessagesPage() {
                                           )}
                                         </div>
                                       </div>
+                                    ) : msg.type === "clip" && (msg.clip || msg.fileUrl) ? (
+                                      <ClipPlayer
+                                        clipId={msg.clip?.clipId || msg._id}
+                                        mediaUrl={msg.clip?.mediaUrl || msg.fileUrl || ""}
+                                        thumbnailUrl={msg.clip?.thumbnailUrl}
+                                        duration={msg.clip?.duration || 0}
+                                        transcription={msg.clip?.transcription}
+                                        senderName={(() => {
+                                          const emp = employeeMap[msg.senderId];
+                                          return emp ? `${emp.firstName} ${emp.lastName}` : msg.senderId.slice(-6);
+                                        })()}
+                                        isMe={isMe}
+                                      />
                                     ) : msg.type === "file" ? (
                                       <div className="py-1.5 min-w-[220px]">
                                         <div className="flex items-center gap-3">
@@ -1879,6 +1952,15 @@ export default function MessagesPage() {
                     >
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => setShowClipRecorder(true)}
+                      className="p-1.5 rounded-md text-[#94A3B8] hover:text-[#64748B] hover:bg-[#F1F5F9] transition-colors"
+                      title="Record clip"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
                       </svg>
                     </button>
                     <div className="w-px h-4 bg-[#E2E8F0] mx-1" />
@@ -2930,6 +3012,14 @@ export default function MessagesPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Clip Recorder Overlay */}
+      {showClipRecorder && (
+        <ClipRecorder
+          onClipReady={handleClipReady}
+          onCancel={() => setShowClipRecorder(false)}
+        />
       )}
 
       {/* Float-up keyframe for emoji animation */}

@@ -214,7 +214,7 @@ export class ChatService {
 
   // ── Messages ──
 
-  async sendMessage(conversationId: string, senderId: string, content: string, type: string = 'text', replyTo?: string, fileData?: { fileUrl?: string; fileName?: string; fileSize?: number; fileMimeType?: string }) {
+  async sendMessage(conversationId: string, senderId: string, content: string, type: string = 'text', replyTo?: string, fileData?: { fileUrl?: string; fileName?: string; fileSize?: number; fileMimeType?: string }, clipData?: { clipId?: string; mediaUrl?: string; thumbnailUrl?: string; duration?: number; transcription?: string }) {
     const conversation = await this.conversationModel.findOne({
       _id: conversationId,
       isDeleted: false,
@@ -236,6 +236,15 @@ export class ChatService {
       ...(fileData?.fileName && { fileName: fileData.fileName }),
       ...(fileData?.fileSize && { fileSize: fileData.fileSize }),
       ...(fileData?.fileMimeType && { fileMimeType: fileData.fileMimeType }),
+      ...(clipData && {
+        clip: {
+          clipId: clipData.clipId || '',
+          mediaUrl: clipData.mediaUrl || '',
+          thumbnailUrl: clipData.thumbnailUrl || '',
+          duration: clipData.duration || 0,
+          transcription: clipData.transcription || '',
+        },
+      }),
     });
 
     await message.save();

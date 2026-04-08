@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ChatModule } from './chat/chat.module';
+import { ClipsModule } from './clips/clips.module';
 import { HealthModule } from './health/health.module';
 
 @Module({
@@ -17,6 +18,7 @@ import { HealthModule } from './health/health.module';
       }),
     }),
     ChatModule,
+    ClipsModule,
     HealthModule,
   ],
 })

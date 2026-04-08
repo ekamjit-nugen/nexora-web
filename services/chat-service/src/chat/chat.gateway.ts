@@ -91,7 +91,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('message:send')
   async handleSendMessage(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { conversationId: string; content: string; type?: string; replyTo?: string; fileUrl?: string; fileName?: string; fileSize?: number; fileMimeType?: string },
+    @MessageBody() data: { conversationId: string; content: string; type?: string; replyTo?: string; fileUrl?: string; fileName?: string; fileSize?: number; fileMimeType?: string; clip?: { clipId?: string; mediaUrl?: string; thumbnailUrl?: string; duration?: number; transcription?: string } },
   ) {
     const userId = this.socketUsers.get(client.id);
     if (!userId) return;
@@ -100,6 +100,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const message = await this.chatService.sendMessage(
         data.conversationId, userId, data.content, data.type || 'text', data.replyTo,
         data.fileUrl ? { fileUrl: data.fileUrl, fileName: data.fileName, fileSize: data.fileSize, fileMimeType: data.fileMimeType } : undefined,
+        data.clip || undefined,
       );
       // Emit to all participants in the conversation room
       this.server.to(`conv:${data.conversationId}`).emit('message:new', message);
