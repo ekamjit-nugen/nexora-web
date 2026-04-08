@@ -11,6 +11,7 @@ import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { CallingService } from './calling.service';
+import { VoiceHuddleService } from './voice-huddle.service';
 import { InitiateCallDto, AnswerCallDto, RejectCallDto, EndCallDto, IceCandidateDto, MediaNegotiationDto } from './dto/index';
 
 @WebSocketGateway({
@@ -34,6 +35,7 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect 
   constructor(
     private jwtService: JwtService,
     private callingService: CallingService,
+    private voiceHuddleService: VoiceHuddleService,
   ) {}
 
   // ── Connection handling ──
@@ -104,6 +106,14 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect 
             }
           }
         }
+      }
+
+      // Clean up huddles on disconnect — only if user has no other sockets
+      const remainingUserSockets = this.onlineUsers.get(userId);
+      const otherSocketCount = remainingUserSockets ? remainingUserSockets.size - 1 : 0;
+      if (otherSocketCount === 0) {
+        // User fully disconnected — remove from all huddles
+        this.cleanupHuddlesForUser(userId, client);
       }
 
       const userSockets = this.onlineUsers.get(userId);
@@ -370,6 +380,257 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect 
       });
     } catch (err) {
       client.emit('error', { message: err.message });
+    }
+  }
+
+  // ── Huddle events ──
+
+  @SubscribeMessage('huddle:get')
+  async handleHuddleGet(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId) return;
+
+    try {
+      const huddle = this.voiceHuddleService.getHuddle(data.conversationId);
+      client.emit('huddle:state', {
+        conversationId: data.conversationId,
+        huddle: huddle ? {
+          active: huddle.active,
+          startedBy: huddle.startedBy,
+          startedAt: huddle.startedAt,
+          participants: huddle.participants,
+        } : null,
+      });
+    } catch (err) {
+      client.emit('error', { message: err.message });
+    }
+  }
+
+  @SubscribeMessage('huddle:start')
+  async handleHuddleStart(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId) return;
+
+    try {
+      const huddle = this.voiceHuddleService.startHuddle(data.conversationId, userId);
+
+      // Join the socket to the huddle room
+      client.join(`huddle:${data.conversationId}`);
+
+      // Notify the conversation room about new huddle state
+      this.server.emit('huddle:state', {
+        conversationId: data.conversationId,
+        huddle: {
+          active: huddle.active,
+          startedBy: huddle.startedBy,
+          startedAt: huddle.startedAt,
+          participants: huddle.participants,
+        },
+      });
+
+      this.logger.log(`Huddle started in ${data.conversationId} by ${userId}`);
+    } catch (err) {
+      client.emit('error', { message: err.message });
+    }
+  }
+
+  @SubscribeMessage('huddle:join')
+  async handleHuddleJoin(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId) return;
+
+    try {
+      const huddle = this.voiceHuddleService.joinHuddle(data.conversationId, userId);
+      if (!huddle) {
+        client.emit('error', { message: 'No active huddle in this conversation' });
+        return;
+      }
+
+      // Join the socket to the huddle room
+      client.join(`huddle:${data.conversationId}`);
+
+      // Notify huddle participants about new joiner
+      this.server.to(`huddle:${data.conversationId}`).emit('huddle:participant-joined', {
+        conversationId: data.conversationId,
+        userId,
+        userName: this.userNames.get(userId) || '',
+      });
+
+      // Broadcast updated state to everyone
+      this.server.emit('huddle:state', {
+        conversationId: data.conversationId,
+        huddle: {
+          active: huddle.active,
+          startedBy: huddle.startedBy,
+          startedAt: huddle.startedAt,
+          participants: huddle.participants,
+        },
+      });
+
+      this.logger.log(`User ${userId} joined huddle in ${data.conversationId}`);
+    } catch (err) {
+      client.emit('error', { message: err.message });
+    }
+  }
+
+  @SubscribeMessage('huddle:leave')
+  async handleHuddleLeave(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId) return;
+
+    try {
+      const huddle = this.voiceHuddleService.leaveHuddle(data.conversationId, userId);
+
+      // Leave the socket room
+      client.leave(`huddle:${data.conversationId}`);
+
+      if (!huddle || huddle.participants.length === 0) {
+        // Huddle ended
+        this.server.emit('huddle:ended', { conversationId: data.conversationId });
+        this.server.emit('huddle:state', {
+          conversationId: data.conversationId,
+          huddle: null,
+        });
+        this.logger.log(`Huddle ended in ${data.conversationId}`);
+      } else {
+        // Notify remaining participants
+        this.server.to(`huddle:${data.conversationId}`).emit('huddle:participant-left', {
+          conversationId: data.conversationId,
+          userId,
+        });
+
+        // Broadcast updated state
+        this.server.emit('huddle:state', {
+          conversationId: data.conversationId,
+          huddle: {
+            active: huddle.active,
+            startedBy: huddle.startedBy,
+            startedAt: huddle.startedAt,
+            participants: huddle.participants,
+          },
+        });
+      }
+
+      this.logger.log(`User ${userId} left huddle in ${data.conversationId}`);
+    } catch (err) {
+      client.emit('error', { message: err.message });
+    }
+  }
+
+  @SubscribeMessage('huddle:offer')
+  async handleHuddleOffer(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string; targetUserId: string; sdp: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId) return;
+
+    try {
+      // Forward SDP offer to the specific target user in the huddle
+      const targetSockets = this.onlineUsers.get(data.targetUserId) || new Set();
+      targetSockets.forEach(socketId => {
+        this.server.to(socketId).emit('huddle:offer', {
+          conversationId: data.conversationId,
+          sdp: data.sdp,
+          from: userId,
+        });
+      });
+    } catch (err) {
+      client.emit('error', { message: err.message });
+    }
+  }
+
+  @SubscribeMessage('huddle:answer')
+  async handleHuddleAnswer(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string; targetUserId: string; sdp: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId) return;
+
+    try {
+      // Forward SDP answer to the specific target user
+      const targetSockets = this.onlineUsers.get(data.targetUserId) || new Set();
+      targetSockets.forEach(socketId => {
+        this.server.to(socketId).emit('huddle:answer', {
+          conversationId: data.conversationId,
+          sdp: data.sdp,
+          from: userId,
+        });
+      });
+    } catch (err) {
+      client.emit('error', { message: err.message });
+    }
+  }
+
+  @SubscribeMessage('huddle:ice-candidate')
+  async handleHuddleIceCandidate(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string; targetUserId: string; candidate: string; sdpMLineIndex?: number; sdpMid?: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId) return;
+
+    try {
+      // Forward ICE candidate to the specific target user
+      const targetSockets = this.onlineUsers.get(data.targetUserId) || new Set();
+      targetSockets.forEach(socketId => {
+        this.server.to(socketId).emit('huddle:ice-candidate', {
+          conversationId: data.conversationId,
+          candidate: data.candidate,
+          sdpMLineIndex: data.sdpMLineIndex,
+          sdpMid: data.sdpMid,
+          from: userId,
+        });
+      });
+    } catch (err) {
+      client.emit('error', { message: err.message });
+    }
+  }
+
+  // ── Huddle cleanup helper ──
+  private cleanupHuddlesForUser(userId: string, client: Socket) {
+    // Check all active huddles and remove user
+    // VoiceHuddleService stores by conversationId; iterate known rooms
+    // We check socket rooms that start with 'huddle:'
+    const rooms = Array.from(client.rooms || []);
+    for (const room of rooms) {
+      if (room.startsWith('huddle:')) {
+        const conversationId = room.replace('huddle:', '');
+        const huddle = this.voiceHuddleService.leaveHuddle(conversationId, userId);
+
+        if (!huddle || huddle.participants.length === 0) {
+          this.server.emit('huddle:ended', { conversationId });
+          this.server.emit('huddle:state', { conversationId, huddle: null });
+          this.logger.log(`Huddle ended in ${conversationId} (user ${userId} disconnected)`);
+        } else {
+          this.server.to(`huddle:${conversationId}`).emit('huddle:participant-left', {
+            conversationId,
+            userId,
+          });
+          this.server.emit('huddle:state', {
+            conversationId,
+            huddle: {
+              active: huddle.active,
+              startedBy: huddle.startedBy,
+              startedAt: huddle.startedAt,
+              participants: huddle.participants,
+            },
+          });
+        }
+      }
     }
   }
 

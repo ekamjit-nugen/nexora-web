@@ -10,6 +10,8 @@ import { useGlobalSocket } from "@/lib/socket-context";
 import { useWebRTC } from "@/lib/hooks/useWebRTC";
 import { useCallContext } from "@/lib/call-context";
 import { CallControls, VideoCallWindow } from "@/components/calling";
+import VoiceHuddle from "@/components/chat/VoiceHuddle";
+import { useSocket } from "@/lib/use-socket";
 import { toast } from "sonner";
 
 // ── Helpers ──
@@ -181,6 +183,38 @@ export default function MessagesPage() {
   // Socket state
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Huddle state: conversationId -> { active, participantCount }
+  const [huddleStates, setHuddleStates] = useState<Record<string, { active: boolean; participantCount: number }>>({});
+  const CALL_SOCKET_URL = process.env.NEXT_PUBLIC_CALL_SOCKET_URL || "http://localhost:3051";
+  const callSocket = useSocket({ namespace: "/calls", enabled: true, baseUrl: CALL_SOCKET_URL });
+
+  // Listen for huddle:state events from calling service to track active huddles across conversations
+  useEffect(() => {
+    if (!callSocket.socket || !callSocket.connected) return;
+
+    const unsub = callSocket.on("huddle:state", (data: { conversationId: string; huddle: { active: boolean; participants: Array<{ userId: string }> } | null }) => {
+      setHuddleStates(prev => {
+        const next = { ...prev };
+        if (data.huddle && data.huddle.active) {
+          next[data.conversationId] = { active: true, participantCount: data.huddle.participants.length };
+        } else {
+          delete next[data.conversationId];
+        }
+        return next;
+      });
+    });
+
+    const unsubEnded = callSocket.on("huddle:ended", (data: { conversationId: string }) => {
+      setHuddleStates(prev => {
+        const next = { ...prev };
+        delete next[data.conversationId];
+        return next;
+      });
+    });
+
+    return () => { unsub(); unsubEnded(); };
+  }, [callSocket.socket, callSocket.connected, callSocket.on]);
 
   // Calling hooks
   const webrtc = useWebRTC();
@@ -1490,6 +1524,14 @@ export default function MessagesPage() {
                             </p>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
+                            {huddleStates[convo._id] && (
+                              <div className="flex items-center gap-1 px-1.5 py-0.5 bg-[#F0FDF4] rounded-full" title={`Huddle active - ${huddleStates[convo._id].participantCount} participant(s)`}>
+                                <svg className="w-3 h-3 text-[#22C55E]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+                                </svg>
+                                <span className="text-[9px] font-semibold text-[#16A34A]">{huddleStates[convo._id].participantCount}</span>
+                              </div>
+                            )}
                             <span className="text-[10px] text-[#94A3B8]">{timeAgo(lastMsgTime)}</span>
                             {unread && <span className="w-2 h-2 rounded-full bg-[#2E86C1]" />}
                           </div>
@@ -1568,6 +1610,32 @@ export default function MessagesPage() {
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
                       </svg>
+                    </button>
+                  )}
+                  {activeConvo.type !== "direct" && (
+                    <button
+                      onClick={() => {
+                        const el = document.getElementById("voice-huddle-section");
+                        if (el) el.scrollIntoView({ behavior: "smooth" });
+                      }}
+                      className={`relative p-2 rounded-lg transition-colors ${
+                        huddleStates[activeConvo._id]
+                          ? "bg-[#F0FDF4] text-[#16A34A]"
+                          : "text-[#64748B] hover:bg-[#F1F5F9]"
+                      }`}
+                      title={huddleStates[activeConvo._id]
+                        ? `Join Huddle (${huddleStates[activeConvo._id].participantCount} participant${huddleStates[activeConvo._id].participantCount !== 1 ? "s" : ""})`
+                        : "Start Huddle"
+                      }
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+                      </svg>
+                      {huddleStates[activeConvo._id] && (
+                        <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-[#22C55E] text-white text-[8px] font-bold flex items-center justify-center">
+                          {huddleStates[activeConvo._id].participantCount}
+                        </span>
+                      )}
                     </button>
                   )}
                   {activeConvo.type !== "direct" && (
@@ -1827,6 +1895,17 @@ export default function MessagesPage() {
                     </svg>
                     <span className="text-[12px] font-medium text-[#2E86C1]">Uploading file...</span>
                   </div>
+                </div>
+              )}
+
+              {/* Voice Huddle — channel/group conversations */}
+              {activeConvo.type !== "direct" && (
+                <div id="voice-huddle-section">
+                  <VoiceHuddle
+                    conversationId={activeConvo._id}
+                    currentUserId={user._id}
+                    employeeMap={employeeMap}
+                  />
                 </div>
               )}
 
