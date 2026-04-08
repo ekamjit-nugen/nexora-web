@@ -1360,6 +1360,7 @@ export interface Project {
   budget?: { amount?: number; currency?: string; billingType?: string; spent?: number };
   settings?: {
     boardType?: 'scrum' | 'kanban' | 'custom';
+    clientPortalEnabled?: boolean;
     sprintDuration?: number;
     estimationUnit?: 'hours' | 'story_points';
     enableTimeTracking?: boolean;
@@ -2108,6 +2109,97 @@ export const chatAnalyticsApi = {
 };
 
 // ── Chat Webhooks ──
+
+// ── Client Portal API ──
+
+export interface ClientPortalData {
+  projectName: string;
+  projectKey: string;
+  description: string;
+  status: string;
+  progressPercentage: number;
+  healthScore: number;
+  startDate?: string;
+  endDate?: string;
+  milestones: Array<{
+    _id: string;
+    name: string;
+    status: string;
+    targetDate: string;
+    completedDate?: string;
+    phase?: string;
+    deliverables: string[];
+    description: string;
+  }>;
+  releases: Array<{
+    _id: string;
+    name: string;
+    status: string;
+    releaseDate?: string;
+    description: string;
+  }>;
+  budget: {
+    total: number;
+    spent: number;
+    remaining: number;
+    currency: string;
+    utilizationPercent: number;
+    burnRate: number;
+  };
+  recentUpdates: Array<{
+    date: string;
+    title: string;
+    description: string;
+  }>;
+  team: Array<{
+    role: string;
+    userId: string;
+  }>;
+}
+
+export interface ClientFeedbackItem {
+  _id: string;
+  projectId: string;
+  clientId: string;
+  clientName: string;
+  clientEmail: string;
+  type: 'bug' | 'feature' | 'question' | 'general';
+  title: string;
+  description: string;
+  priority: 'low' | 'medium' | 'high';
+  status: 'new' | 'reviewed' | 'in_progress' | 'completed' | 'closed';
+  attachments?: Array<{ url: string; name: string; type: string; size: number }>;
+  taskKey?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const clientPortalApi = {
+  getPortalData: (projectId: string) =>
+    request<ClientPortalData>(`/projects/${projectId}/client-portal`),
+  getFeedback: (projectId: string, params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return request<ClientFeedbackItem[]>(`/projects/${projectId}/client-portal/feedback${qs}`);
+  },
+  submitFeedback: (projectId: string, data: {
+    clientId: string;
+    clientName: string;
+    clientEmail: string;
+    type: 'bug' | 'feature' | 'question' | 'general';
+    title: string;
+    description: string;
+    priority?: 'low' | 'medium' | 'high';
+  }) =>
+    request<ClientFeedbackItem>(`/projects/${projectId}/client-portal/feedback`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  togglePortal: (projectId: string, enabled: boolean) =>
+    request<Project>(`/projects/${projectId}/client-portal/toggle`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    }),
+};
 
 export const webhookApi = {
   getWebhooks: () => request<any[]>('/chat/webhooks'),

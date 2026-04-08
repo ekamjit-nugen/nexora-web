@@ -787,6 +787,112 @@ export class ProjectService {
     };
   }
 
+  // ── Client Portal ──
+
+  async getClientPortalData(projectId: string) {
+    const project = await this.projectModel.findOne({
+      _id: projectId,
+      isDeleted: false,
+    });
+    if (!project) throw new NotFoundException('Project not found');
+
+    if (!project.settings?.clientPortalEnabled) {
+      throw new BadRequestException('Client portal is not enabled for this project');
+    }
+
+    // Budget: client-safe view (no hourly rates or internal breakdowns)
+    const budgetTotal = project.budget?.amount || 0;
+    const budgetSpent = project.budget?.spent || 0;
+    const budgetRemaining = budgetTotal - budgetSpent;
+    const utilizationPercent = budgetTotal > 0
+      ? Math.round((budgetSpent / budgetTotal) * 100)
+      : 0;
+
+    // Burn rate
+    const now = new Date();
+    const startDate = project.startDate ? new Date(project.startDate) : project.createdAt;
+    const weeksElapsed = Math.max((now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 7), 0.01);
+    const burnRate = Math.round((budgetSpent / weeksElapsed) * 100) / 100;
+
+    // Recent updates: curated from activities (exclude internal details)
+    const publicActions = ['created', 'status_changed', 'milestone_updated', 'milestone_added', 'archived'];
+    const recentUpdates = [...project.activities]
+      .filter(a => publicActions.includes(a.action))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 10)
+      .map(a => ({
+        date: a.createdAt,
+        title: a.action.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+        description: a.description,
+      }));
+
+    // Team: name and role only (no internal details)
+    const team = project.team.map(t => ({
+      role: t.projectRole || t.role,
+      userId: t.userId,
+    }));
+
+    return {
+      projectName: project.projectName,
+      projectKey: project.projectKey,
+      description: project.description || '',
+      status: project.status,
+      progressPercentage: project.progressPercentage,
+      healthScore: project.healthScore,
+      startDate: project.startDate,
+      endDate: project.endDate,
+      milestones: (project.milestones || []).map(m => ({
+        _id: m._id,
+        name: m.name,
+        status: m.status,
+        targetDate: m.targetDate,
+        completedDate: m.completedDate,
+        phase: m.phase || null,
+        deliverables: m.deliverables || [],
+        description: m.description || '',
+      })),
+      releases: (project.releases || []).map(r => ({
+        _id: r._id,
+        name: r.name,
+        status: r.status,
+        releaseDate: r.releaseDate,
+        description: r.description || '',
+      })),
+      budget: {
+        total: budgetTotal,
+        spent: budgetSpent,
+        remaining: budgetRemaining,
+        currency: project.budget?.currency || 'USD',
+        utilizationPercent,
+        burnRate,
+      },
+      recentUpdates,
+      team,
+    };
+  }
+
+  async toggleClientPortal(projectId: string, enabled: boolean, userId: string, orgId?: string) {
+    const filter: any = { _id: projectId, isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+    const project = await this.projectModel.findOne(filter);
+    if (!project) throw new NotFoundException('Project not found');
+
+    if (!project.settings) {
+      (project as any).settings = {};
+    }
+    project.settings.clientPortalEnabled = enabled;
+    await project.save();
+
+    await this.addActivity(
+      projectId,
+      'settings_changed',
+      `Client portal ${enabled ? 'enabled' : 'disabled'}`,
+      userId,
+    );
+
+    return project;
+  }
+
   // ── Archive Project ──
 
   async archiveProject(projectId: string, userId: string, orgId?: string) {

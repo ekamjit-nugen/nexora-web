@@ -7,7 +7,7 @@ import { ProjectController } from './project.controller';
 import { Wave3Controller } from './wave3.controller';
 import { ReportingController } from './wave4.controller';
 import { TimeTrackingController, TimesheetController, BillingController } from './wave4.controller';
-import { ClientFeedbackController } from './wave4.controller';
+import { ClientFeedbackController, ClientPortalController } from './wave4.controller';
 import { AssetPreviewController } from './controllers/asset-preview.controller';
 import { ProjectService } from './project.service';
 import { ProjectSchema } from './schemas/project.schema';
@@ -50,6 +50,7 @@ import { AssetPreviewService } from './services/asset-preview.service';
     TimesheetController,
     BillingController,
     ClientFeedbackController,
+    ClientPortalController,
     AssetPreviewController,
   ],
   providers: [
