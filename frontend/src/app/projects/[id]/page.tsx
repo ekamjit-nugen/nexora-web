@@ -17,6 +17,7 @@ import RoadmapView, { RoadmapProject, RoadmapMilestone, RoadmapRelease, RoadmapE
 import ActivityFeed from "@/components/projects/ActivityFeed";
 import { GitLinksBadge } from "@/components/git/GitActivitySection";
 import { toast } from "sonner";
+import { TaskImportModal } from "@/components/task-import-modal";
 
 // ── Constants ──
 
@@ -4160,6 +4161,8 @@ export default function ProjectDetailPage() {
   const [showCompleteSprintModal, setShowCompleteSprintModal] = useState(false);
   const [completingSprintId, setCompletingSprintId] = useState<string | null>(null);
   const [completeSprintOption, setCompleteSprintOption] = useState<"backlog" | "next_sprint">("backlog");
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [editForm, setEditForm] = useState({ projectName: "", description: "", status: "", priority: "", category: "", startDate: "", endDate: "" });
   const [saving, setSaving] = useState(false);
@@ -4648,14 +4651,88 @@ export default function ProjectDetailPage() {
               </select>
             </div>
 
-            {canCreateTask && (
-              <Button size="sm" onClick={() => router.push(`/projects/${projectId}/items/new?boardId=${board?._id || ""}`)} className="gap-1.5 h-9 bg-[#2E86C1] hover:bg-[#2471A3]">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                Add Item
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              {/* Export dropdown */}
+              <div className="relative">
+                <Button size="sm" variant="outline" onClick={() => setShowExportMenu(!showExportMenu)} className="gap-1.5 h-9 text-xs">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Export
+                </Button>
+                {showExportMenu && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setShowExportMenu(false)} />
+                    <div className="absolute right-0 top-full mt-1 w-36 bg-white rounded-lg shadow-lg border border-[#E2E8F0] z-20 py-1">
+                      <button
+                        onClick={async () => {
+                          setShowExportMenu(false);
+                          try {
+                            const filters: Record<string, string> = {};
+                            if (typeFilter !== "all") filters.type = typeFilter;
+                            if (priorityFilter !== "all") filters.priority = priorityFilter;
+                            const blob = await taskApi.exportTasks(projectId, "csv", filters);
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `tasks-${project?.projectKey || projectId}-${new Date().toISOString().split("T")[0]}.csv`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                            toast.success("Tasks exported as CSV");
+                          } catch { toast.error("Export failed"); }
+                        }}
+                        className="w-full px-3 py-2 text-left text-xs text-[#334155] hover:bg-[#F8FAFC] flex items-center gap-2"
+                      >
+                        <svg className="w-3.5 h-3.5 text-[#64748B]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                        Export as CSV
+                      </button>
+                      <button
+                        onClick={async () => {
+                          setShowExportMenu(false);
+                          try {
+                            const filters: Record<string, string> = {};
+                            if (typeFilter !== "all") filters.type = typeFilter;
+                            if (priorityFilter !== "all") filters.priority = priorityFilter;
+                            const blob = await taskApi.exportTasks(projectId, "json", filters);
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `tasks-${project?.projectKey || projectId}-${new Date().toISOString().split("T")[0]}.json`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                            toast.success("Tasks exported as JSON");
+                          } catch { toast.error("Export failed"); }
+                        }}
+                        className="w-full px-3 py-2 text-left text-xs text-[#334155] hover:bg-[#F8FAFC] flex items-center gap-2"
+                      >
+                        <svg className="w-3.5 h-3.5 text-[#64748B]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
+                        Export as JSON
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Import button */}
+              {canCreateTask && (
+                <Button size="sm" variant="outline" onClick={() => setShowImportModal(true)} className="gap-1.5 h-9 text-xs">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                  </svg>
+                  Import
+                </Button>
+              )}
+
+              {/* Add Item button */}
+              {canCreateTask && (
+                <Button size="sm" onClick={() => router.push(`/projects/${projectId}/items/new?boardId=${board?._id || ""}`)} className="gap-1.5 h-9 bg-[#2E86C1] hover:bg-[#2471A3]">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add Item
+                </Button>
+              )}
+            </div>
           </CardContent>
         </Card>
 
@@ -4961,6 +5038,15 @@ export default function ProjectDetailPage() {
           </div>
         );
       })()}
+
+      {/* Import Modal */}
+      <TaskImportModal
+        open={showImportModal}
+        projectId={projectId}
+        projectKey={project?.projectKey}
+        onClose={() => setShowImportModal(false)}
+        onImportComplete={() => { fetchAll(); toast.success("Tasks imported successfully"); }}
+      />
     </div>
   );
 }

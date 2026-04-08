@@ -1727,6 +1727,53 @@ export const taskApi = {
     request<Task[]>(`/tasks/${id}/recurrence/instances`),
   getGitLinks: (id: string) =>
     request<Task['gitLinks']>(`/tasks/${id}/git-links`),
+
+  // Import / Export
+  exportTasks: async (projectId: string, format: 'csv' | 'json', filters?: Record<string, string>) => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+    const params = new URLSearchParams({ projectId, format, ...filters });
+    const res = await fetch(`${API_BASE}/api/v1/tasks/export?${params.toString()}`, {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      credentials: 'include',
+    });
+    if (!res.ok) throw new Error('Export failed');
+    return res.blob();
+  },
+
+  importTasks: async (projectId: string, file: File, projectKey?: string) => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('projectId', projectId);
+    if (projectKey) formData.append('projectKey', projectKey);
+    const res = await fetch(`${API_BASE}/api/v1/tasks/import`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      credentials: 'include',
+      body: formData,
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.message || 'Import failed');
+    }
+    return res.json();
+  },
+
+  getImportTemplate: async () => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+    const res = await fetch(`${API_BASE}/api/v1/tasks/import/template`, {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      credentials: 'include',
+    });
+    if (!res.ok) throw new Error('Failed to get template');
+    return res.blob();
+  },
 };
 
 // ── Timesheet Types & API ──

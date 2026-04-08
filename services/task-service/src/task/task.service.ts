@@ -1195,4 +1195,299 @@ export class TaskService {
       completedPoints: doneTasks.reduce((s, t) => s + (t.storyPoints || 0), 0),
     };
   }
+
+  // ── Export ──
+
+  async getTasksForExport(query: {
+    projectId?: string;
+    status?: string;
+    type?: string;
+    assigneeId?: string;
+    sprintId?: string;
+  }, orgId?: string): Promise<ITask[]> {
+    const filter: any = { isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+    if (query.projectId) filter.projectId = query.projectId;
+    if (query.status) filter.status = query.status;
+    if (query.type) filter.type = query.type;
+    if (query.assigneeId) filter.assigneeId = query.assigneeId;
+    if (query.sprintId) filter.sprintId = query.sprintId;
+    return this.taskModel.find(filter).sort({ createdAt: -1 }).lean();
+  }
+
+  tasksToCSV(tasks: ITask[]): string {
+    const headers = ['Key', 'Title', 'Description', 'Type', 'Status', 'Priority', 'Assignee', 'Story Points', 'Due Date', 'Sprint', 'Labels', 'Created', 'Updated'];
+    const escapeCSV = (val: string | null | undefined): string => {
+      if (val == null) return '';
+      const s = String(val);
+      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+        return '"' + s.replace(/"/g, '""') + '"';
+      }
+      return s;
+    };
+    const rows = tasks.map(t => [
+      escapeCSV(t.taskKey),
+      escapeCSV(t.title),
+      escapeCSV(t.description),
+      escapeCSV(t.type),
+      escapeCSV(t.status),
+      escapeCSV(t.priority),
+      escapeCSV(t.assigneeId),
+      t.storyPoints != null ? String(t.storyPoints) : '',
+      t.dueDate ? new Date(t.dueDate).toISOString().split('T')[0] : '',
+      escapeCSV(t.sprintId),
+      escapeCSV((t.labels || []).join(', ')),
+      t.createdAt ? new Date(t.createdAt).toISOString() : '',
+      t.updatedAt ? new Date(t.updatedAt).toISOString() : '',
+    ].join(','));
+    return [headers.join(','), ...rows].join('\n');
+  }
+
+  getImportTemplate(): string {
+    return 'Title,Description,Type,Status,Priority,Assignee,Story Points,Due Date,Sprint,Labels\n';
+  }
+
+  // ── Import ──
+
+  private static readonly COLUMN_MAP: Record<string, string> = {
+    'title': 'title',
+    'summary': 'title',
+    'description': 'description',
+    'type': 'type',
+    'issue type': 'type',
+    'issuetype': 'type',
+    'status': 'status',
+    'priority': 'priority',
+    'assignee': 'assigneeId',
+    'story points': 'storyPoints',
+    'story_points': 'storyPoints',
+    'storypoints': 'storyPoints',
+    'due date': 'dueDate',
+    'due_date': 'dueDate',
+    'duedate': 'dueDate',
+    'sprint': 'sprintId',
+    'labels': 'labels',
+    'label': 'labels',
+  };
+
+  private static readonly TYPE_MAP: Record<string, string> = {
+    'story': 'story',
+    'bug': 'bug',
+    'task': 'task',
+    'epic': 'epic',
+    'sub-task': 'sub_task',
+    'subtask': 'sub_task',
+    'sub_task': 'sub_task',
+    'improvement': 'improvement',
+    'spike': 'spike',
+  };
+
+  private static readonly PRIORITY_MAP: Record<string, string> = {
+    'highest': 'critical',
+    'critical': 'critical',
+    'blocker': 'critical',
+    'high': 'high',
+    'major': 'high',
+    'medium': 'medium',
+    'normal': 'medium',
+    'low': 'low',
+    'minor': 'low',
+    'lowest': 'trivial',
+    'trivial': 'trivial',
+  };
+
+  private static readonly STATUS_MAP: Record<string, string> = {
+    'backlog': 'backlog',
+    'to do': 'todo',
+    'todo': 'todo',
+    'open': 'todo',
+    'new': 'todo',
+    'in progress': 'in_progress',
+    'in_progress': 'in_progress',
+    'in development': 'in_progress',
+    'in review': 'in_review',
+    'in_review': 'in_review',
+    'code review': 'in_review',
+    'blocked': 'blocked',
+    'done': 'done',
+    'closed': 'done',
+    'resolved': 'done',
+    'complete': 'done',
+    'completed': 'done',
+    'cancelled': 'cancelled',
+    'canceled': 'cancelled',
+    'won\'t do': 'cancelled',
+    'wontfix': 'cancelled',
+  };
+
+  parseCSV(csvContent: string): { headers: string[]; rows: string[][] } {
+    const lines: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < csvContent.length; i++) {
+      const ch = csvContent[i];
+      if (ch === '"') {
+        if (inQuotes && csvContent[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
+        if (current.trim()) lines.push(current);
+        current = '';
+        if (ch === '\r' && csvContent[i + 1] === '\n') i++;
+      } else {
+        current += ch;
+      }
+    }
+    if (current.trim()) lines.push(current);
+
+    if (lines.length === 0) return { headers: [], rows: [] };
+
+    const parseLine = (line: string): string[] => {
+      const fields: string[] = [];
+      let field = '';
+      let q = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (q && line[i + 1] === '"') {
+            field += '"';
+            i++;
+          } else {
+            q = !q;
+          }
+        } else if (ch === ',' && !q) {
+          fields.push(field.trim());
+          field = '';
+        } else {
+          field += ch;
+        }
+      }
+      fields.push(field.trim());
+      return fields;
+    };
+
+    const headers = parseLine(lines[0]);
+    const rows = lines.slice(1).map(l => parseLine(l));
+    return { headers, rows };
+  }
+
+  detectJiraFormat(headers: string[]): boolean {
+    const lower = headers.map(h => h.toLowerCase().trim());
+    const jiraIndicators = ['summary', 'issue type', 'issue key', 'issue id', 'reporter'];
+    return jiraIndicators.filter(j => lower.includes(j)).length >= 2;
+  }
+
+  async importTasks(
+    csvContent: string,
+    projectId: string,
+    userId: string,
+    orgId?: string,
+    projectKey?: string,
+  ): Promise<{ total: number; created: number; failed: number; errors: Array<{ row: number; reason: string }> }> {
+    const { headers, rows } = this.parseCSV(csvContent);
+    if (headers.length === 0 || rows.length === 0) {
+      return { total: 0, created: 0, failed: 0, errors: [{ row: 0, reason: 'CSV file is empty or has no data rows' }] };
+    }
+
+    // Build column mapping
+    const columnMapping: Array<{ csvIndex: number; field: string }> = [];
+    for (let i = 0; i < headers.length; i++) {
+      const normalized = headers[i].toLowerCase().trim();
+      const field = TaskService.COLUMN_MAP[normalized];
+      if (field) {
+        columnMapping.push({ csvIndex: i, field });
+      }
+    }
+
+    const errors: Array<{ row: number; reason: string }> = [];
+    let created = 0;
+
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r];
+      try {
+        const taskData: any = { projectId };
+
+        for (const { csvIndex, field } of columnMapping) {
+          const val = row[csvIndex] || '';
+          if (!val) continue;
+
+          switch (field) {
+            case 'title':
+              taskData.title = val;
+              break;
+            case 'description':
+              taskData.description = val;
+              break;
+            case 'type': {
+              const mapped = TaskService.TYPE_MAP[val.toLowerCase().trim()];
+              if (mapped) taskData.type = mapped;
+              break;
+            }
+            case 'status': {
+              const mapped = TaskService.STATUS_MAP[val.toLowerCase().trim()];
+              if (mapped) taskData.status = mapped;
+              break;
+            }
+            case 'priority': {
+              const mapped = TaskService.PRIORITY_MAP[val.toLowerCase().trim()];
+              if (mapped) taskData.priority = mapped;
+              break;
+            }
+            case 'assigneeId':
+              taskData.assigneeId = val;
+              break;
+            case 'storyPoints': {
+              const pts = parseFloat(val);
+              if (!isNaN(pts)) taskData.storyPoints = pts;
+              break;
+            }
+            case 'dueDate':
+              taskData.dueDate = val;
+              break;
+            case 'sprintId':
+              taskData.sprintId = val;
+              break;
+            case 'labels':
+              taskData.labels = val.split(',').map(l => l.trim()).filter(Boolean);
+              break;
+          }
+        }
+
+        if (!taskData.title) {
+          errors.push({ row: r + 2, reason: 'Missing required field: title' });
+          continue;
+        }
+
+        const dto: CreateTaskDto = {
+          title: taskData.title,
+          projectId,
+          description: taskData.description,
+          type: taskData.type,
+          status: taskData.status,
+          priority: taskData.priority,
+          assigneeId: taskData.assigneeId,
+          storyPoints: taskData.storyPoints,
+          dueDate: taskData.dueDate,
+          labels: taskData.labels,
+          sprintId: taskData.sprintId,
+          projectKey: projectKey || undefined,
+        };
+
+        // Remove undefined values
+        Object.keys(dto).forEach(k => {
+          if ((dto as any)[k] === undefined) delete (dto as any)[k];
+        });
+
+        await this.createTask(dto, userId, orgId);
+        created++;
+      } catch (e) {
+        errors.push({ row: r + 2, reason: e.message || 'Unknown error' });
+      }
+    }
+
+    return { total: rows.length, created, failed: rows.length - created, errors };
+  }
 }

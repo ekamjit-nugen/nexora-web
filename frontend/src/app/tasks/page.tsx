@@ -57,6 +57,7 @@ export default function TasksPage() {
   // Members default to "my" view; managers+ can switch to "all"
   const [viewMode, setViewMode] = useState<"my" | "all">(canViewAllTasks ? "my" : "my");
   const [groupBy, setGroupBy] = useState<GroupBy>("type");
+  const [showExportMenu, setShowExportMenu] = useState(false);
 
   const fetchTasks = useCallback(async () => {
     try {
@@ -276,6 +277,71 @@ export default function TasksPage() {
               </select>
 
               <div className="ml-auto flex items-center gap-2">
+                {/* Export button — active when a project is selected */}
+                {projectFilter !== "all" && (
+                  <div className="relative">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setShowExportMenu(!showExportMenu)}
+                      className="gap-1.5 h-9 text-xs"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Export
+                    </Button>
+                    {showExportMenu && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setShowExportMenu(false)} />
+                        <div className="absolute right-0 top-full mt-1 w-36 bg-white rounded-lg shadow-lg border border-[#E2E8F0] z-20 py-1">
+                          <button
+                            onClick={async () => {
+                              setShowExportMenu(false);
+                              try {
+                                const filters: Record<string, string> = {};
+                                if (statusFilter !== "all") filters.status = statusFilter;
+                                if (typeFilter !== "all") filters.type = typeFilter;
+                                const blob = await taskApi.exportTasks(projectFilter, "csv", filters);
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = `tasks-${projectFilter}-${new Date().toISOString().split("T")[0]}.csv`;
+                                a.click();
+                                URL.revokeObjectURL(url);
+                                toast.success("Tasks exported as CSV");
+                              } catch { toast.error("Export failed"); }
+                            }}
+                            className="w-full px-3 py-2 text-left text-xs text-[#334155] hover:bg-[#F8FAFC] flex items-center gap-2"
+                          >
+                            Export as CSV
+                          </button>
+                          <button
+                            onClick={async () => {
+                              setShowExportMenu(false);
+                              try {
+                                const filters: Record<string, string> = {};
+                                if (statusFilter !== "all") filters.status = statusFilter;
+                                if (typeFilter !== "all") filters.type = typeFilter;
+                                const blob = await taskApi.exportTasks(projectFilter, "json", filters);
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = `tasks-${projectFilter}-${new Date().toISOString().split("T")[0]}.json`;
+                                a.click();
+                                URL.revokeObjectURL(url);
+                                toast.success("Tasks exported as JSON");
+                              } catch { toast.error("Export failed"); }
+                            }}
+                            className="w-full px-3 py-2 text-left text-xs text-[#334155] hover:bg-[#F8FAFC] flex items-center gap-2"
+                          >
+                            Export as JSON
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
                 <span className="text-[10px] font-medium text-[#94A3B8] uppercase">Group by</span>
                 <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} className="h-9 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 text-xs text-[#475569]">
                   <option value="type">Type</option>
