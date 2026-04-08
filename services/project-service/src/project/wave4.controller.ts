@@ -16,6 +16,7 @@ import {
 import { ReportingService } from './services/reporting.service';
 import { TimeTrackingService } from './services/time-tracking.service';
 import { ClientFeedbackService } from './services/client-feedback.service';
+import { ProjectService } from './project.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import {
   CreateTimeLogDto,
@@ -477,6 +478,86 @@ export class ClientFeedbackController {
       success: true,
       message: 'Feedback statistics retrieved',
       data: stats,
+    };
+  }
+}
+
+// ── CLIENT PORTAL ENDPOINTS ──
+
+@Controller('projects/:projectId/client-portal')
+export class ClientPortalController {
+  private readonly logger = new Logger(ClientPortalController.name);
+
+  constructor(
+    private projectService: ProjectService,
+    private clientFeedbackService: ClientFeedbackService,
+  ) {}
+
+  @Get()
+  async getClientPortalData(@Param('projectId') projectId: string) {
+    const data = await this.projectService.getClientPortalData(projectId);
+
+    return {
+      success: true,
+      message: 'Client portal data retrieved',
+      data,
+    };
+  }
+
+  @Get('feedback')
+  async getPortalFeedback(
+    @Param('projectId') projectId: string,
+    @Query() query: ClientFeedbackQueryDto,
+  ) {
+    const result = await this.clientFeedbackService.getProjectFeedback(projectId, {
+      status: query.status,
+      priority: query.priority,
+      type: query.type,
+      limit: query.limit,
+      skip: query.skip,
+    });
+
+    return {
+      success: true,
+      message: 'Portal feedback retrieved',
+      data: result.feedback,
+      total: result.total,
+    };
+  }
+
+  @Post('feedback')
+  @HttpCode(HttpStatus.CREATED)
+  async submitPortalFeedback(
+    @Param('projectId') projectId: string,
+    @Body() dto: SubmitClientFeedbackDto,
+  ) {
+    const feedback = await this.clientFeedbackService.submitFeedback(projectId, dto);
+
+    return {
+      success: true,
+      message: 'Feedback submitted successfully',
+      data: feedback,
+    };
+  }
+
+  @Put('toggle')
+  @UseGuards(JwtAuthGuard)
+  async toggleClientPortal(
+    @Param('projectId') projectId: string,
+    @Body() body: { enabled: boolean },
+    @Req() req,
+  ) {
+    const project = await this.projectService.toggleClientPortal(
+      projectId,
+      body.enabled,
+      req.user.userId,
+      req.user.organizationId,
+    );
+
+    return {
+      success: true,
+      message: `Client portal ${body.enabled ? 'enabled' : 'disabled'}`,
+      data: project,
     };
   }
 }
