@@ -5,7 +5,6 @@ import { ITask } from './schemas/task.schema';
 import { IBoard } from './schemas/board.schema';
 import { ICounter } from './schemas/counter.schema';
 import { ITimesheet } from './schemas/timesheet.schema';
-import { IApprovalDelegation } from './schemas/approval-delegation.schema';
 import { IActivity } from './schemas/activity.schema';
 import { ISprint } from './schemas/sprint.schema';
 import { NotificationService, extractMentions } from './notification.service';
@@ -16,7 +15,6 @@ import {
 import {
   CreateTimesheetDto, UpdateTimesheetDto,
   ReviewTimesheetDto, TimesheetQueryDto,
-  CreateDelegationDto,
 } from './dto/timesheet.dto';
 
 @Injectable()
@@ -28,7 +26,6 @@ export class TaskService {
     @InjectModel('Board') private boardModel: Model<IBoard>,
     @InjectModel('Counter') private counterModel: Model<ICounter>,
     @InjectModel('Timesheet') private timesheetModel: Model<ITimesheet>,
-    @InjectModel('ApprovalDelegation') private delegationModel: Model<IApprovalDelegation>,
     @InjectModel('Activity') private activityModel: Model<IActivity>,
     @InjectModel('Sprint') private sprintModel: Model<ISprint>,
     private notificationService: NotificationService,
@@ -927,158 +924,16 @@ export class TaskService {
     return ts;
   }
 
-  // ── Approval Delegation Methods ──
-
-  async createDelegation(dto: CreateDelegationDto, userId: string, orgId: string) {
-    if (dto.type === 'project_specific' && !dto.projectId) {
-      throw new ForbiddenException('projectId is required for project_specific delegation');
-    }
-    if (dto.type === 'temporary' && !dto.endDate) {
-      throw new ForbiddenException('endDate is required for temporary delegation');
-    }
-    // Prevent self-delegation
-    if (dto.delegateId === userId) {
-      throw new ForbiddenException('Cannot delegate approval authority to yourself');
-    }
-    const delegation = new this.delegationModel({
-      delegatorId: userId,
-      delegateId: dto.delegateId,
-      organizationId: orgId,
-      type: dto.type,
-      projectId: dto.projectId || null,
-      reason: dto.reason || '',
-      startDate: new Date(dto.startDate),
-      endDate: dto.endDate ? new Date(dto.endDate) : null,
-      isActive: true,
-      autoExpire: dto.autoExpire !== false,
-    });
-    await delegation.save();
-    this.logger.log(`Delegation created: ${userId} -> ${dto.delegateId} (${dto.type})`);
-    return delegation;
-  }
-
-  async getMyDelegations(userId: string, orgId: string) {
-    return this.delegationModel.find({
-      delegatorId: userId,
-      organizationId: orgId,
-    }).sort({ createdAt: -1 });
-  }
-
-  async getDelegatedToMe(userId: string, orgId: string) {
-    return this.delegationModel.find({
-      delegateId: userId,
-      organizationId: orgId,
-      isActive: true,
-      $or: [
-        { endDate: null },
-        { endDate: { $gte: new Date() } },
-      ],
-    }).sort({ createdAt: -1 });
-  }
-
-  async revokeDelegation(delegationId: string, userId: string) {
-    const delegation = await this.delegationModel.findOneAndUpdate(
-      { _id: delegationId, delegatorId: userId },
-      { isActive: false },
-      { new: true },
-    );
-    if (!delegation) throw new NotFoundException('Delegation not found or you are not the delegator');
-    this.logger.log(`Delegation revoked: ${delegationId}`);
-    return delegation;
-  }
-
-  async canApproveTimesheet(userId: string, orgId: string, timesheetOwnerId: string, projectId?: string): Promise<{ canApprove: boolean; delegatorId?: string }> {
-    // Check for active delegations where this user is the delegate
-    const now = new Date();
-    const filter: any = {
-      delegateId: userId,
-      organizationId: orgId,
-      isActive: true,
-      startDate: { $lte: now },
-      $or: [
-        { endDate: null },
-        { endDate: { $gte: now } },
-      ],
-    };
-
-    const delegations = await this.delegationModel.find(filter);
-    if (delegations.length === 0) return { canApprove: false };
-
-    for (const d of delegations) {
-      if (d.type === 'project_specific') {
-        if (projectId && d.projectId === projectId) {
-          return { canApprove: true, delegatorId: d.delegatorId };
-        }
-      } else {
-        // temporary or permanent — can approve any timesheet in the org
-        return { canApprove: true, delegatorId: d.delegatorId };
-      }
-    }
-    return { canApprove: false };
-  }
-
-  async expireOldDelegations() {
-    const result = await this.delegationModel.updateMany(
-      {
-        isActive: true,
-        autoExpire: true,
-        endDate: { $ne: null, $lt: new Date() },
-      },
-      { isActive: false },
-    );
-    if (result.modifiedCount > 0) {
-      this.logger.log(`Expired ${result.modifiedCount} delegation(s)`);
-    }
-    return result.modifiedCount;
-  }
-
-  async getAutoDelegationRules(orgId: string) {
-    return this.delegationModel.find({
-      organizationId: orgId,
-      isActive: true,
-      autoExpire: true,
-      endDate: { $ne: null },
-    }).sort({ endDate: 1 });
-  }
-
-  async reviewTimesheet(id: string, dto: ReviewTimesheetDto, reviewerId: string, orgId?: string, orgRole?: string) {
+  async reviewTimesheet(id: string, dto: ReviewTimesheetDto, reviewerId: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false, status: 'submitted' };
     if (orgId) filter.organizationId = orgId;
-
-    // Determine if the reviewer is acting as a delegate
-    let approvedByDelegateId: string | null = null;
-    let delegatorId: string | null = null;
-    const isManager = orgRole && ['manager', 'admin', 'owner'].includes(orgRole);
-
-    if (!isManager && orgId) {
-      // Not a native manager — check delegation authority
-      const timesheet = await this.timesheetModel.findOne(filter);
-      if (!timesheet) throw new NotFoundException('Timesheet not found or not in submitted state');
-
-      // Determine the primary project from entries for project_specific check
-      const primaryProjectId = timesheet.entries?.[0]?.projectId || undefined;
-      const delegationCheck = await this.canApproveTimesheet(reviewerId, orgId, timesheet.userId, primaryProjectId);
-      if (!delegationCheck.canApprove) {
-        throw new ForbiddenException('You do not have authority to review this timesheet');
-      }
-      approvedByDelegateId = reviewerId;
-      delegatorId = delegationCheck.delegatorId || null;
-    }
-
-    const updateData: any = {
-      status: dto.status,
-      reviewedBy: delegatorId || reviewerId,
-      reviewedAt: new Date(),
-      reviewComment: dto.reviewComment || '',
-    };
-    if (approvedByDelegateId) {
-      updateData.approvedByDelegateId = approvedByDelegateId;
-      updateData.delegatorId = delegatorId;
-    }
-
-    const ts = await this.timesheetModel.findOneAndUpdate(filter, updateData, { new: true });
+    const ts = await this.timesheetModel.findOneAndUpdate(
+      filter,
+      { status: dto.status, reviewedBy: reviewerId, reviewedAt: new Date(), reviewComment: dto.reviewComment || '' },
+      { new: true },
+    );
     if (!ts) throw new NotFoundException('Timesheet not found or not in submitted state');
-    this.logger.log(`Timesheet ${id} reviewed: ${dto.status}${approvedByDelegateId ? ` (by delegate ${approvedByDelegateId} on behalf of ${delegatorId})` : ''}`);
+    this.logger.log(`Timesheet ${id} reviewed: ${dto.status}`);
     return ts;
   }
 
@@ -1341,298 +1196,258 @@ export class TaskService {
     };
   }
 
-  // ── Export ──
+  /**
+   * Personal productivity stats — private to the requesting user.
+   */
+  async getPersonalStats(userId: string, orgId?: string) {
+    const now = new Date();
 
-  async getTasksForExport(query: {
-    projectId?: string;
-    status?: string;
-    type?: string;
-    assigneeId?: string;
-    sprintId?: string;
-  }, orgId?: string): Promise<ITask[]> {
-    const filter: any = { isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
-    if (query.projectId) filter.projectId = query.projectId;
-    if (query.status) filter.status = query.status;
-    if (query.type) filter.type = query.type;
-    if (query.assigneeId) filter.assigneeId = query.assigneeId;
-    if (query.sprintId) filter.sprintId = query.sprintId;
-    return this.taskModel.find(filter).sort({ createdAt: -1 }).lean();
-  }
+    // --- Week boundaries (Monday-Sunday) ---
+    const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon...
+    const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const thisWeekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMonday);
+    const lastWeekStart = new Date(thisWeekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const lastWeekEnd = new Date(thisWeekStart.getTime() - 1); // Sunday 23:59:59
 
-  tasksToCSV(tasks: ITask[]): string {
-    const headers = ['Key', 'Title', 'Description', 'Type', 'Status', 'Priority', 'Assignee', 'Story Points', 'Due Date', 'Sprint', 'Labels', 'Created', 'Updated'];
-    const escapeCSV = (val: string | null | undefined): string => {
-      if (val == null) return '';
-      const s = String(val);
-      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-        return '"' + s.replace(/"/g, '""') + '"';
-      }
-      return s;
-    };
-    const rows = tasks.map(t => [
-      escapeCSV(t.taskKey),
-      escapeCSV(t.title),
-      escapeCSV(t.description),
-      escapeCSV(t.type),
-      escapeCSV(t.status),
-      escapeCSV(t.priority),
-      escapeCSV(t.assigneeId),
-      t.storyPoints != null ? String(t.storyPoints) : '',
-      t.dueDate ? new Date(t.dueDate).toISOString().split('T')[0] : '',
-      escapeCSV(t.sprintId),
-      escapeCSV((t.labels || []).join(', ')),
-      t.createdAt ? new Date(t.createdAt).toISOString() : '',
-      t.updatedAt ? new Date(t.updatedAt).toISOString() : '',
-    ].join(','));
-    return [headers.join(','), ...rows].join('\n');
-  }
+    const baseFilter: any = { assigneeId: userId, isDeleted: false };
+    if (orgId) baseFilter.organizationId = orgId;
 
-  getImportTemplate(): string {
-    return 'Title,Description,Type,Status,Priority,Assignee,Story Points,Due Date,Sprint,Labels\n';
-  }
+    // Fetch all completed tasks for this + last week, plus all-time completed tasks
+    const [thisWeekDone, lastWeekDone, allDone, allAssigned] = await Promise.all([
+      this.taskModel.find({
+        ...baseFilter,
+        status: 'done',
+        completedAt: { $gte: thisWeekStart },
+      }).lean(),
+      this.taskModel.find({
+        ...baseFilter,
+        status: 'done',
+        completedAt: { $gte: lastWeekStart, $lt: thisWeekStart },
+      }).lean(),
+      this.taskModel.find({
+        ...baseFilter,
+        status: 'done',
+      }).lean(),
+      this.taskModel.find(baseFilter).lean(),
+    ]);
 
-  // ── Import ──
+    // Tasks created this week by user
+    const createdFilter: any = { createdBy: userId, isDeleted: false };
+    if (orgId) createdFilter.organizationId = orgId;
+    const thisWeekCreated = await this.taskModel.countDocuments({
+      ...createdFilter,
+      createdAt: { $gte: thisWeekStart },
+    });
 
-  private static readonly COLUMN_MAP: Record<string, string> = {
-    'title': 'title',
-    'summary': 'title',
-    'description': 'description',
-    'type': 'type',
-    'issue type': 'type',
-    'issuetype': 'type',
-    'status': 'status',
-    'priority': 'priority',
-    'assignee': 'assigneeId',
-    'story points': 'storyPoints',
-    'story_points': 'storyPoints',
-    'storypoints': 'storyPoints',
-    'due date': 'dueDate',
-    'due_date': 'dueDate',
-    'duedate': 'dueDate',
-    'sprint': 'sprintId',
-    'labels': 'labels',
-    'label': 'labels',
-  };
-
-  private static readonly TYPE_MAP: Record<string, string> = {
-    'story': 'story',
-    'bug': 'bug',
-    'task': 'task',
-    'epic': 'epic',
-    'sub-task': 'sub_task',
-    'subtask': 'sub_task',
-    'sub_task': 'sub_task',
-    'improvement': 'improvement',
-    'spike': 'spike',
-  };
-
-  private static readonly PRIORITY_MAP: Record<string, string> = {
-    'highest': 'critical',
-    'critical': 'critical',
-    'blocker': 'critical',
-    'high': 'high',
-    'major': 'high',
-    'medium': 'medium',
-    'normal': 'medium',
-    'low': 'low',
-    'minor': 'low',
-    'lowest': 'trivial',
-    'trivial': 'trivial',
-  };
-
-  private static readonly STATUS_MAP: Record<string, string> = {
-    'backlog': 'backlog',
-    'to do': 'todo',
-    'todo': 'todo',
-    'open': 'todo',
-    'new': 'todo',
-    'in progress': 'in_progress',
-    'in_progress': 'in_progress',
-    'in development': 'in_progress',
-    'in review': 'in_review',
-    'in_review': 'in_review',
-    'code review': 'in_review',
-    'blocked': 'blocked',
-    'done': 'done',
-    'closed': 'done',
-    'resolved': 'done',
-    'complete': 'done',
-    'completed': 'done',
-    'cancelled': 'cancelled',
-    'canceled': 'cancelled',
-    'won\'t do': 'cancelled',
-    'wontfix': 'cancelled',
-  };
-
-  parseCSV(csvContent: string): { headers: string[]; rows: string[][] } {
-    const lines: string[] = [];
-    let current = '';
-    let inQuotes = false;
-    for (let i = 0; i < csvContent.length; i++) {
-      const ch = csvContent[i];
-      if (ch === '"') {
-        if (inQuotes && csvContent[i + 1] === '"') {
-          current += '"';
-          i++;
-        } else {
-          inQuotes = !inQuotes;
+    // --- Helper: compute hours logged by this user in a date range ---
+    const hoursInRange = (tasks: any[], from: Date, to?: Date) => {
+      let total = 0;
+      for (const task of tasks) {
+        for (const entry of task.timeEntries || []) {
+          if (entry.userId !== userId) continue;
+          const d = new Date(entry.date);
+          if (d >= from && (!to || d <= to)) {
+            total += entry.hours || 0;
+          }
         }
-      } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
-        if (current.trim()) lines.push(current);
-        current = '';
-        if (ch === '\r' && csvContent[i + 1] === '\n') i++;
+      }
+      return Math.round(total * 100) / 100;
+    };
+
+    // --- Helper: average cycle time (days) from statusHistory ---
+    const avgCycleTime = (tasks: any[]) => {
+      const cycleTimes: number[] = [];
+      for (const task of tasks) {
+        if (!task.statusHistory?.length || !task.completedAt) continue;
+        // Find when task first entered in_progress (or todo as fallback)
+        const startEntry = task.statusHistory.find(
+          (h: any) => h.status === 'in_progress',
+        ) || task.statusHistory.find(
+          (h: any) => h.status === 'todo',
+        );
+        if (startEntry) {
+          const startDate = new Date(startEntry.changedAt);
+          const endDate = new Date(task.completedAt);
+          const days = (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
+          if (days >= 0) cycleTimes.push(days);
+        }
+      }
+      if (cycleTimes.length === 0) return 0;
+      return Math.round((cycleTimes.reduce((a, b) => a + b, 0) / cycleTimes.length) * 10) / 10;
+    };
+
+    // --- This Week ---
+    const thisWeekPoints = thisWeekDone.reduce((s, t) => s + (t.storyPoints || 0), 0);
+    const thisWeekHours = hoursInRange(allAssigned, thisWeekStart);
+    const thisWeekCycle = avgCycleTime(thisWeekDone);
+
+    // --- Last Week ---
+    const lastWeekPoints = lastWeekDone.reduce((s, t) => s + (t.storyPoints || 0), 0);
+    const lastWeekHours = hoursInRange(allAssigned, lastWeekStart, lastWeekEnd);
+    const lastWeekCycle = avgCycleTime(lastWeekDone);
+
+    // --- Trends (% change) ---
+    const pctChange = (curr: number, prev: number) => {
+      if (prev === 0) return curr > 0 ? 100 : 0;
+      return Math.round(((curr - prev) / prev) * 100);
+    };
+
+    // --- Streak (consecutive workdays with at least 1 task completed) ---
+    const completionDates = new Set<string>();
+    for (const t of allDone) {
+      if (t.completedAt) {
+        const d = new Date(t.completedAt);
+        completionDates.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
+      }
+    }
+
+    const isWorkday = (d: Date) => d.getDay() >= 1 && d.getDay() <= 5;
+    const dateKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+
+    // Walk backwards from today to compute current streak
+    let currentStreak = 0;
+    let checkDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    // If today is a workday and nothing completed yet, start checking from previous workday
+    if (isWorkday(checkDate) && !completionDates.has(dateKey(checkDate))) {
+      // Today is still ongoing, check if yesterday was active
+      checkDate.setDate(checkDate.getDate() - 1);
+      while (!isWorkday(checkDate)) {
+        checkDate.setDate(checkDate.getDate() - 1);
+      }
+    }
+    // Now count consecutive workdays
+    while (true) {
+      if (!isWorkday(checkDate)) {
+        checkDate.setDate(checkDate.getDate() - 1);
+        continue;
+      }
+      if (completionDates.has(dateKey(checkDate))) {
+        currentStreak++;
+        checkDate.setDate(checkDate.getDate() - 1);
       } else {
-        current += ch;
+        break;
       }
     }
-    if (current.trim()) lines.push(current);
 
-    if (lines.length === 0) return { headers: [], rows: [] };
+    // Compute longest streak from all completion dates
+    let longestStreak = 0;
+    if (allDone.length > 0) {
+      const sortedDates = Array.from(completionDates).map((k) => {
+        const [y, m, d] = k.split('-').map(Number);
+        return new Date(y, m, d);
+      }).sort((a, b) => a.getTime() - b.getTime());
 
-    const parseLine = (line: string): string[] => {
-      const fields: string[] = [];
-      let field = '';
-      let q = false;
-      for (let i = 0; i < line.length; i++) {
-        const ch = line[i];
-        if (ch === '"') {
-          if (q && line[i + 1] === '"') {
-            field += '"';
-            i++;
-          } else {
-            q = !q;
-          }
-        } else if (ch === ',' && !q) {
-          fields.push(field.trim());
-          field = '';
+      let streak = 1;
+      for (let i = 1; i < sortedDates.length; i++) {
+        // Count workdays between consecutive dates
+        let prev = new Date(sortedDates[i - 1]);
+        let next = new Date(sortedDates[i]);
+        // Move prev to next workday
+        prev.setDate(prev.getDate() + 1);
+        while (!isWorkday(prev) && prev < next) {
+          prev.setDate(prev.getDate() + 1);
+        }
+        if (prev.getTime() === next.getTime()) {
+          streak++;
         } else {
-          field += ch;
+          longestStreak = Math.max(longestStreak, streak);
+          streak = 1;
         }
       }
-      fields.push(field.trim());
-      return fields;
-    };
-
-    const headers = parseLine(lines[0]);
-    const rows = lines.slice(1).map(l => parseLine(l));
-    return { headers, rows };
-  }
-
-  detectJiraFormat(headers: string[]): boolean {
-    const lower = headers.map(h => h.toLowerCase().trim());
-    const jiraIndicators = ['summary', 'issue type', 'issue key', 'issue id', 'reporter'];
-    return jiraIndicators.filter(j => lower.includes(j)).length >= 2;
-  }
-
-  async importTasks(
-    csvContent: string,
-    projectId: string,
-    userId: string,
-    orgId?: string,
-    projectKey?: string,
-  ): Promise<{ total: number; created: number; failed: number; errors: Array<{ row: number; reason: string }> }> {
-    const { headers, rows } = this.parseCSV(csvContent);
-    if (headers.length === 0 || rows.length === 0) {
-      return { total: 0, created: 0, failed: 0, errors: [{ row: 0, reason: 'CSV file is empty or has no data rows' }] };
+      longestStreak = Math.max(longestStreak, streak);
     }
 
-    // Build column mapping
-    const columnMapping: Array<{ csvIndex: number; field: string }> = [];
-    for (let i = 0; i < headers.length; i++) {
-      const normalized = headers[i].toLowerCase().trim();
-      const field = TaskService.COLUMN_MAP[normalized];
-      if (field) {
-        columnMapping.push({ csvIndex: i, field });
-      }
-    }
+    // Last active date
+    const lastActiveDate = allDone.length > 0
+      ? allDone.reduce((latest, t) =>
+          t.completedAt && new Date(t.completedAt) > new Date(latest)
+            ? t.completedAt.toISOString()
+            : latest,
+        allDone[0].completedAt?.toISOString() || '',
+      )
+      : null;
 
-    const errors: Array<{ row: number; reason: string }> = [];
-    let created = 0;
+    // --- Sprint Stats ---
+    // Find active sprints from this user's assigned tasks
+    const sprintIds = [...new Set(allAssigned.filter(t => t.sprintId).map(t => t.sprintId))];
+    let thisSprint = { assignedTasks: 0, completedTasks: 0, assignedPoints: 0, completedPoints: 0, completionRate: 0, sprintName: '' };
+    if (sprintIds.length > 0) {
+      const activeSprints = await this.sprintModel.find({
+        _id: { $in: sprintIds },
+        status: 'active',
+      }).lean();
 
-    for (let r = 0; r < rows.length; r++) {
-      const row = rows[r];
-      try {
-        const taskData: any = { projectId };
-
-        for (const { csvIndex, field } of columnMapping) {
-          const val = row[csvIndex] || '';
-          if (!val) continue;
-
-          switch (field) {
-            case 'title':
-              taskData.title = val;
-              break;
-            case 'description':
-              taskData.description = val;
-              break;
-            case 'type': {
-              const mapped = TaskService.TYPE_MAP[val.toLowerCase().trim()];
-              if (mapped) taskData.type = mapped;
-              break;
-            }
-            case 'status': {
-              const mapped = TaskService.STATUS_MAP[val.toLowerCase().trim()];
-              if (mapped) taskData.status = mapped;
-              break;
-            }
-            case 'priority': {
-              const mapped = TaskService.PRIORITY_MAP[val.toLowerCase().trim()];
-              if (mapped) taskData.priority = mapped;
-              break;
-            }
-            case 'assigneeId':
-              taskData.assigneeId = val;
-              break;
-            case 'storyPoints': {
-              const pts = parseFloat(val);
-              if (!isNaN(pts)) taskData.storyPoints = pts;
-              break;
-            }
-            case 'dueDate':
-              taskData.dueDate = val;
-              break;
-            case 'sprintId':
-              taskData.sprintId = val;
-              break;
-            case 'labels':
-              taskData.labels = val.split(',').map(l => l.trim()).filter(Boolean);
-              break;
-          }
-        }
-
-        if (!taskData.title) {
-          errors.push({ row: r + 2, reason: 'Missing required field: title' });
-          continue;
-        }
-
-        const dto: CreateTaskDto = {
-          title: taskData.title,
-          projectId,
-          description: taskData.description,
-          type: taskData.type,
-          status: taskData.status,
-          priority: taskData.priority,
-          assigneeId: taskData.assigneeId,
-          storyPoints: taskData.storyPoints,
-          dueDate: taskData.dueDate,
-          labels: taskData.labels,
-          sprintId: taskData.sprintId,
-          projectKey: projectKey || undefined,
+      if (activeSprints.length > 0) {
+        const sprint = activeSprints[0]; // Use the first active sprint
+        const sprintTasks = allAssigned.filter(t => t.sprintId === sprint._id.toString());
+        const sprintDone = sprintTasks.filter(t => t.status === 'done');
+        thisSprint = {
+          assignedTasks: sprintTasks.length,
+          completedTasks: sprintDone.length,
+          assignedPoints: sprintTasks.reduce((s, t) => s + (t.storyPoints || 0), 0),
+          completedPoints: sprintDone.reduce((s, t) => s + (t.storyPoints || 0), 0),
+          completionRate: sprintTasks.length > 0
+            ? Math.round((sprintDone.length / sprintTasks.length) * 100)
+            : 0,
+          sprintName: sprint.name,
         };
-
-        // Remove undefined values
-        Object.keys(dto).forEach(k => {
-          if ((dto as any)[k] === undefined) delete (dto as any)[k];
-        });
-
-        await this.createTask(dto, userId, orgId);
-        created++;
-      } catch (e) {
-        errors.push({ row: r + 2, reason: e.message || 'Unknown error' });
       }
     }
 
-    return { total: rows.length, created, failed: rows.length - created, errors };
+    // --- All Time ---
+    const allTimePoints = allDone.reduce((s, t) => s + (t.storyPoints || 0), 0);
+    let allTimeHours = 0;
+    for (const task of allAssigned) {
+      for (const entry of task.timeEntries || []) {
+        if (entry.userId === userId) allTimeHours += entry.hours || 0;
+      }
+    }
+    allTimeHours = Math.round(allTimeHours * 100) / 100;
+
+    // Top project by tasks completed
+    const projectCounts: Record<string, number> = {};
+    for (const t of allDone) {
+      projectCounts[t.projectId] = (projectCounts[t.projectId] || 0) + 1;
+    }
+    let topProject = { projectId: '', tasksCompleted: 0 };
+    for (const [pid, count] of Object.entries(projectCounts)) {
+      if (count > topProject.tasksCompleted) {
+        topProject = { projectId: pid, tasksCompleted: count };
+      }
+    }
+
+    return {
+      thisWeek: {
+        tasksCompleted: thisWeekDone.length,
+        tasksCreated: thisWeekCreated,
+        storyPointsDelivered: thisWeekPoints,
+        hoursLogged: thisWeekHours,
+        avgCycleTimeDays: thisWeekCycle,
+      },
+      lastWeek: {
+        tasksCompleted: lastWeekDone.length,
+        storyPointsDelivered: lastWeekPoints,
+        hoursLogged: lastWeekHours,
+        avgCycleTimeDays: lastWeekCycle,
+      },
+      trends: {
+        tasksCompletedChange: pctChange(thisWeekDone.length, lastWeekDone.length),
+        pointsDeliveredChange: pctChange(thisWeekPoints, lastWeekPoints),
+        cycleTimeChange: pctChange(thisWeekCycle, lastWeekCycle),
+      },
+      streak: {
+        currentDays: currentStreak,
+        longestDays: longestStreak,
+        lastActiveDate,
+      },
+      thisSprint,
+      allTime: {
+        totalTasksCompleted: allDone.length,
+        totalPointsDelivered: allTimePoints,
+        totalHoursLogged: allTimeHours,
+        avgCycleTimeDays: avgCycleTime(allDone),
+        topProject,
+      },
+    };
   }
 }
