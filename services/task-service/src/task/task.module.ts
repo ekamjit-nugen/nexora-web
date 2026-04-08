@@ -15,6 +15,7 @@ import { BoardService } from './board.service';
 import { SprintService } from './sprint.service';
 import { TaskReportingService } from './reporting.service';
 import { NotificationService } from './notification.service';
+import { TaskCronService } from './task-cron.service';
 import { TaskSchema } from './schemas/task.schema';
 import { CounterSchema } from './schemas/counter.schema';
 import { TimesheetSchema } from './schemas/timesheet.schema';
@@ -46,7 +47,7 @@ import { RolesGuard } from './guards/roles.guard';
     }),
   ],
   controllers: [TaskController, TimesheetController, BoardController, SprintController, TaskReportingController, NotificationController],
-  providers: [TaskService, RecurrenceService, BoardService, SprintService, TaskReportingService, NotificationService, JwtAuthGuard, RolesGuard, Reflector],
+  providers: [TaskService, RecurrenceService, BoardService, SprintService, TaskReportingService, NotificationService, TaskCronService, JwtAuthGuard, RolesGuard, Reflector],
   exports: [TaskService, RecurrenceService, BoardService, SprintService, TaskReportingService, NotificationService],
 })
 export class TaskModule {}

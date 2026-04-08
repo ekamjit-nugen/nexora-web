@@ -4,7 +4,9 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ISprint } from './schemas/sprint.schema';
 import { ITask } from './schemas/task.schema';
+import { IActivity } from './schemas/activity.schema';
 import { CreateSprintDto, UpdateSprintDto } from './dto/board.dto';
+import { NotificationService } from './notification.service';
 
 @Injectable()
 export class SprintService {
@@ -13,6 +15,8 @@ export class SprintService {
   constructor(
     @InjectModel('Sprint') private sprintModel: Model<ISprint>,
     @InjectModel('Task') private taskModel: Model<ITask>,
+    @InjectModel('Activity') private activityModel: Model<IActivity>,
+    private notificationService: NotificationService,
   ) {}
 
   async createSprint(dto: CreateSprintDto, userId: string) {
@@ -82,6 +86,15 @@ export class SprintService {
     if (!sprint.startDate) sprint.startDate = new Date();
     await sprint.save();
     this.logger.log(`Sprint started: ${sprintId}`);
+
+    // Notify team members (unique assignees of sprint tasks)
+    this.notifySprintTeam(sprint, 'started').catch((e) =>
+      this.logger.error(`Failed to send sprint start notifications: ${e.message}`),
+    );
+
+    // Activity log
+    this.logSprintActivity(sprint, 'sprint.started').catch(() => {});
+
     return sprint;
   }
 
@@ -201,6 +214,23 @@ export class SprintService {
     (sprint as any).completedAt = new Date();
     await sprint.save();
     this.logger.log(`Sprint completed: ${sprintId}, velocity: ${velocity}sp, spillover: ${spilloverPoints}sp, action: ${moveUnfinishedTo}`);
+
+    // Notify team members of sprint completion
+    this.notifySprintTeam(
+      sprint,
+      'completed',
+      `Completed ${completedTasks.length} items (${velocity} SP). ${incompleteTasks.length} items carried over.`,
+    ).catch((e) =>
+      this.logger.error(`Failed to send sprint completion notifications: ${e.message}`),
+    );
+
+    // Activity log
+    this.logSprintActivity(sprint, 'sprint.completed', {
+      velocity,
+      completedCount: completedTasks.length,
+      incompleteCount: incompleteTasks.length,
+      moveUnfinishedTo,
+    }).catch(() => {});
 
     return {
       sprint,
@@ -352,5 +382,52 @@ export class SprintService {
       await sprint.save();
     }
     this.logger.log(`Daily burndown snapshot recorded for ${activeSprints.length} active sprint(s)`);
+  }
+
+  /**
+   * Notify all unique assignees of sprint tasks about a sprint event.
+   */
+  private async notifySprintTeam(sprint: ISprint, event: 'started' | 'completed', details?: string) {
+    const tasks = await this.taskModel.find({
+      _id: { $in: sprint.taskIds },
+      isDeleted: false,
+      assigneeId: { $ne: null, $exists: true },
+    });
+
+    const uniqueAssignees = [...new Set(tasks.map((t) => t.assigneeId).filter(Boolean))];
+    if (uniqueAssignees.length === 0) return;
+
+    const actor = {
+      userId: sprint.createdBy,
+      userName: sprint.createdBy,
+      userEmail: sprint.createdBy,
+    };
+
+    await this.notificationService.createSprintNotification({
+      organizationId: sprint.organizationId,
+      recipientIds: uniqueAssignees,
+      projectId: sprint.projectId,
+      sprintName: sprint.name,
+      event,
+      details,
+      actor,
+    });
+  }
+
+  private async logSprintActivity(sprint: ISprint, action: string, details?: Record<string, any>) {
+    try {
+      await this.activityModel.create({
+        organizationId: sprint.organizationId,
+        projectId: sprint.projectId,
+        sprintId: sprint._id.toString(),
+        action,
+        actorId: sprint.createdBy,
+        entityType: 'sprint',
+        entityTitle: sprint.name,
+        details: details || {},
+      });
+    } catch (e) {
+      this.logger.warn(`Failed to log sprint activity: ${e.message}`);
+    }
   }
 }
