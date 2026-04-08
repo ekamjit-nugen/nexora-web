@@ -15,6 +15,8 @@ import {
   CreateCallLogDto, UpdateCallLogDto, CallLogQueryDto,
   CreateInvoiceDto, UpdateInvoiceDto, UpdateInvoiceStatusDto, InvoiceQueryDto, SendInvoiceDto, MarkPaidDto,
   CreateInvoiceTemplateDto,
+  CreateBillingRateDto, UpdateBillingRateDto, BillingRateQueryDto,
+  PreviewInvoiceDto, GenerateInvoiceDto,
 } from './dto/index';
 
 @Controller()
@@ -425,5 +427,65 @@ export class HrController {
   async updateInvoiceStatus(@Param('id') id: string, @Body() dto: UpdateInvoiceStatusDto, @Req() req) {
     const invoice = await this.hrService.updateInvoiceStatus(id, dto, req.user.userId, req.user?.organizationId);
     return { success: true, message: 'Invoice status updated', data: invoice };
+  }
+}
+
+// ── Billing Controller ──
+
+@Controller('billing')
+export class BillingController {
+  private readonly logger = new Logger(BillingController.name);
+
+  constructor(private hrService: HrService) {}
+
+  // ── Billing Rates ──
+
+  @Get('rates')
+  @UseGuards(JwtAuthGuard)
+  async getBillingRates(@Query() query: BillingRateQueryDto, @Req() req) {
+    const rates = await this.hrService.getBillingRates(query, req.user?.organizationId);
+    return { success: true, message: 'Billing rates retrieved', data: rates };
+  }
+
+  @Post('rates')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.CREATED)
+  async createBillingRate(@Body() dto: CreateBillingRateDto, @Req() req) {
+    const rate = await this.hrService.createBillingRate(dto, req.user.userId, req.user?.organizationId);
+    return { success: true, message: 'Billing rate created', data: rate };
+  }
+
+  @Put('rates/:id')
+  @UseGuards(JwtAuthGuard)
+  async updateBillingRate(@Param('id') id: string, @Body() dto: UpdateBillingRateDto, @Req() req) {
+    const rate = await this.hrService.updateBillingRate(id, dto, req.user.userId, req.user?.organizationId);
+    return { success: true, message: 'Billing rate updated', data: rate };
+  }
+
+  @Delete('rates/:id')
+  @UseGuards(JwtAuthGuard)
+  async deleteBillingRate(@Param('id') id: string, @Req() req) {
+    const result = await this.hrService.deleteBillingRate(id, req.user?.organizationId);
+    return { success: true, ...result };
+  }
+
+  // ── Timesheet-to-Invoice Bridge ──
+
+  @Post('preview')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async previewInvoice(@Body() dto: PreviewInvoiceDto, @Req() req) {
+    const authToken = req.headers.authorization;
+    const preview = await this.hrService.previewInvoiceFromTimesheets(dto, authToken, req.user?.organizationId);
+    return { success: true, message: 'Invoice preview generated', data: preview };
+  }
+
+  @Post('generate-invoice')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.CREATED)
+  async generateInvoice(@Body() dto: GenerateInvoiceDto, @Req() req) {
+    const authToken = req.headers.authorization;
+    const result = await this.hrService.generateInvoiceFromTimesheets(dto, req.user.userId, authToken, req.user?.organizationId);
+    return { success: true, message: 'Invoice generated from timesheets', data: result };
   }
 }
