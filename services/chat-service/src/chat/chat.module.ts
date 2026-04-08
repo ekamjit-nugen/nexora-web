@@ -11,6 +11,7 @@ import { MessageSchema } from './schemas/message.schema';
 import { ChatSettingsSchema } from './schemas/chat-settings.schema';
 import { FlaggedMessageSchema } from './schemas/flagged-message.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { CommandsModule } from '../commands/commands.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
         secret: configService.get<string>('JWT_SECRET') || 'nexora-secret-key-change-in-production',
       }),
     }),
+    CommandsModule,
   ],
   controllers: [ChatController],
   providers: [ChatService, ChatGateway, ModerationService, JwtAuthGuard],

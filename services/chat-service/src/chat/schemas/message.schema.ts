@@ -45,7 +45,7 @@ export const MessageSchema = new Schema<IMessage>(
     content: { type: String, required: true },
     type: {
       type: String,
-      enum: ['text', 'file', 'image', 'video', 'system'],
+      enum: ['text', 'file', 'image', 'video', 'system', 'poll', 'standup'],
       default: 'text',
     },
     fileUrl: { type: String, default: null },

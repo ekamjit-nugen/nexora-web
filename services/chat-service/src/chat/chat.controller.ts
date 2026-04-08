@@ -6,6 +6,7 @@ import {
 import { ChatService } from './chat.service';
 import { ChatGateway } from './chat.gateway';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { CommandsService } from '../commands/commands.service';
 import {
   CreateDirectConversationDto,
   CreateGroupDto,
@@ -27,7 +28,16 @@ export class ChatController {
   constructor(
     private chatService: ChatService,
     private chatGateway: ChatGateway,
+    private commandsService: CommandsService,
   ) {}
+
+  // ── Commands ──
+
+  @Get('commands')
+  @UseGuards(JwtAuthGuard)
+  getAvailableCommands() {
+    return { success: true, data: this.commandsService.getAvailableCommands() };
+  }
 
   // ── Conversations ──
 

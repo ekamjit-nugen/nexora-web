@@ -600,6 +600,17 @@ export interface ChatMessage {
   isEdited: boolean;
   isDeleted: boolean;
   readBy: Array<{ userId: string; readAt: string }>;
+  commandData?: {
+    action?: string;
+    title?: string;
+    assignee?: string;
+    leaveType?: string;
+    start?: string;
+    end?: string;
+    reason?: string;
+    question?: string;
+    options?: string[];
+  };
   createdAt: string;
 }
 
@@ -671,6 +682,9 @@ export const chatApi = {
   getSettings: () => request<ChatSettings>("/chat/settings"),
   updateSettings: (data: Partial<ChatSettings>) =>
     request<ChatSettings>("/chat/settings", { method: "PUT", body: JSON.stringify(data) }),
+
+  // Commands
+  getCommands: () => request<Array<{ name: string; description: string; usage: string }>>("/chat/commands"),
 
   // Moderation
   getFlagged: () => request("/chat/moderation/flagged"),
