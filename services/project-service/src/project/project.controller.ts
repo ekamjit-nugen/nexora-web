@@ -60,6 +60,14 @@ export class ProjectController {
     return { success: true, message: 'Project stats retrieved', data: stats };
   }
 
+  @Get('projects/manager-overview')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
+  async getManagerOverview(@Req() req) {
+    const overview = await this.projectService.getManagerOverview(req.user?.organizationId);
+    return { success: true, message: 'Manager overview retrieved', data: overview };
+  }
+
   @Get('projects/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async getProject(@Param('id') id: string, @Req() req) {

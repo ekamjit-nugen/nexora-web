@@ -1417,6 +1417,7 @@ export const projectApi = {
     request(`/projects/${projectId}/team/${userId}`, { method: "PUT", body: JSON.stringify(data) }),
   updateBudget: (projectId: string, spent: number) =>
     request(`/projects/${projectId}/budget`, { method: "PUT", body: JSON.stringify({ spent }) }),
+  getManagerOverview: () => request<any>("/projects/manager-overview"),
 
   // ── Templates ──
   getTemplates: (params?: Record<string, string>) => {
