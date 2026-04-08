@@ -4,32 +4,22 @@ import {
   SubscribeMessage,
   OnGatewayConnection,
   OnGatewayDisconnect,
-  OnGatewayInit,
   ConnectedSocket,
   MessageBody,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger, HttpException } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { CallingService } from './calling.service';
-import { VoiceHuddleService } from '../calls/voice-huddle.service';
+import { VoiceHuddleService } from './voice-huddle.service';
 import { InitiateCallDto, AnswerCallDto, RejectCallDto, EndCallDto, IceCandidateDto, MediaNegotiationDto } from './dto/index';
 
-const RINGING_TIMEOUT_MS = 45_000; // 45 seconds before marking as missed
-const DISCONNECT_GRACE_MS = 30_000; // 30 seconds grace period before ending call
-const CALL_RATE_LIMIT_MAX = 10; // max calls per window
-const CALL_RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute window
-
 @WebSocketGateway({
-  cors: {
-    origin: (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3100,http://localhost:3005')
-      .split(',').map(o => o.trim()),
-    credentials: true,
-  },
+  cors: { origin: '*', credentials: true },
   namespace: '/calls',
   transports: ['websocket', 'polling'],
 })
-export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
+export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() server: Server;
   private logger = new Logger('CallingGateway');
 
@@ -41,44 +31,12 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
   private onlineUsers = new Map<string, Set<string>>();
   // Track active call sessions: callId -> Set<socketId>
   private callSessions = new Map<string, Set<string>>();
-  // Track ringing timeouts: callId -> timeout handle
-  private ringingTimeouts = new Map<string, NodeJS.Timeout>();
-  // Track disconnect grace periods: callId:userId -> timeout handle
-  private disconnectGraceTimers = new Map<string, NodeJS.Timeout>();
-  // Track call initiation rate limits: userId -> { count, resetAt }
-  private callRateLimits = new Map<string, { count: number; resetAt: number }>();
-
-  // Redis publisher for cross-service notification events
-  private redisPubClient: any = null;
 
   constructor(
     private jwtService: JwtService,
     private callingService: CallingService,
     private voiceHuddleService: VoiceHuddleService,
   ) {}
-
-  async afterInit(server: any) {
-    const redisUrl = process.env.REDIS_URI || 'redis://redis:6379';
-    try {
-      const { createAdapter } = await import('@socket.io/redis-adapter');
-      const { createClient } = await import('redis');
-      const pubClient = createClient({ url: redisUrl });
-      const subClient = pubClient.duplicate();
-
-      // Add error handlers to prevent unhandled rejections and enable reconnect logging
-      pubClient.on('error', (err) => this.logger.warn(`Redis pub client error: ${err.message}`));
-      pubClient.on('reconnecting', () => this.logger.log('Redis pub client reconnecting...'));
-      subClient.on('error', (err) => this.logger.warn(`Redis sub client error: ${err.message}`));
-      subClient.on('reconnecting', () => this.logger.log('Redis sub client reconnecting...'));
-
-      await Promise.all([pubClient.connect(), subClient.connect()]);
-      server.adapter(createAdapter(pubClient, subClient));
-      this.redisPubClient = pubClient;
-      this.logger.log('Calling gateway: Redis adapter connected');
-    } catch (error: any) {
-      this.logger.warn(`Calling gateway: Redis adapter failed, using in-memory: ${error.message}`);
-    }
-  }
 
   // ── Connection handling ──
   async handleConnection(client: Socket) {
@@ -99,10 +57,8 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
         return;
       }
 
-      const user = decoded;
-      client.data.user = user;
-
       this.socketUsers.set(client.id, userId);
+      // Store display name from JWT for use in call events
       const fullName = [decoded.firstName, decoded.lastName].filter(Boolean).join(' ');
       if (fullName) this.userNames.set(userId, fullName);
       if (!this.onlineUsers.has(userId)) {
@@ -125,46 +81,39 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
       for (const [callId, sockets] of this.callSessions.entries()) {
         if (sockets.has(client.id)) {
           sockets.delete(client.id);
-
-          // Count distinct users remaining (not just sockets)
-          const remainingUserIds = this.getDistinctUsersInCall(sockets);
-          const userStillInCall = remainingUserIds.has(userId);
-
-          if (!userStillInCall) {
-            if (remainingUserIds.size > 0) {
-              // Other participants remain — start grace period before declaring user left
-              const graceKey = `${callId}:${userId}`;
-              if (!this.disconnectGraceTimers.has(graceKey)) {
-                const timer = setTimeout(async () => {
-                  this.disconnectGraceTimers.delete(graceKey);
-                  // Re-check: did user rejoin during grace period?
-                  const currentSockets = this.callSessions.get(callId);
-                  if (currentSockets) {
-                    const currentUsers = this.getDistinctUsersInCall(currentSockets);
-                    if (!currentUsers.has(userId)) {
-                      // User did not rejoin — notify remaining participants
-                      this.server.to(`call:${callId}`).emit('call:participant-left', {
-                        callId,
-                        userId,
-                        reason: 'disconnected',
-                      });
-                      this.logger.log(`User ${userId} left call ${callId} after grace period`);
-
-                      // If only 1 user remains, end the call
-                      if (currentUsers.size <= 1) {
-                        this.endCallCleanup(callId, userId, 'last-participant');
-                      }
-                    }
-                  }
-                }, DISCONNECT_GRACE_MS);
-                this.disconnectGraceTimers.set(graceKey, timer);
-              }
+          // Check if this user has other sockets still in the call
+          const userHasOtherSockets = Array.from(sockets).some(
+            (sid) => this.socketUsers.get(sid) === userId,
+          );
+          if (!userHasOtherSockets) {
+            if (sockets.size > 0) {
+              // Other participants remain — notify them this person left, but DON'T end the call
+              this.server.to(`call:${callId}`).emit('call:participant-left', {
+                callId,
+                userId,
+                reason: 'disconnected',
+              });
+              this.logger.log(`User ${userId} left call ${callId} (disconnected), ${sockets.size} socket(s) remain`);
             } else {
-              // No one left at all — end the call
-              this.endCallCleanup(callId, userId, 'disconnected');
+              // Last person — end the call
+              this.server.to(`call:${callId}`).emit('call:ended', {
+                callId,
+                endedBy: userId,
+                reason: 'disconnected',
+              });
+              this.callSessions.delete(callId);
+              this.logger.log(`Call ${callId} ended — last participant ${userId} disconnected`);
             }
           }
         }
+      }
+
+      // Clean up huddles on disconnect — only if user has no other sockets
+      const remainingUserSockets = this.onlineUsers.get(userId);
+      const otherSocketCount = remainingUserSockets ? remainingUserSockets.size - 1 : 0;
+      if (otherSocketCount === 0) {
+        // User fully disconnected — remove from all huddles
+        this.cleanupHuddlesForUser(userId, client);
       }
 
       const userSockets = this.onlineUsers.get(userId);
@@ -188,42 +137,9 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     const userId = this.socketUsers.get(client.id);
     if (!userId) return;
 
-    if (client.data?.user?.orgRole === 'viewer') {
-      client.emit('error', { message: 'Viewers cannot initiate calls' });
-      return;
-    }
-
-    // Rate limit: max 10 calls per minute per user
-    if (!this.checkCallRateLimit(userId)) {
-      client.emit('error', { message: 'Too many call attempts. Please wait before trying again.' });
-      return;
-    }
-
     try {
-      const orgId = client.data?.user?.organizationId || 'default-org';
-
-      // UC-012: Check if recipient already has an active call
-      const recipientHasActiveCall = await this.isUserInActiveCall(data.recipientId);
-      if (recipientHasActiveCall) {
-        client.emit('error', { message: 'User is currently on another call' });
-        return;
-      }
-
-      // UC-011: Check if recipient is on DND — don't ring, mark as missed immediately
-      const recipientDnd = await this.isUserOnDnd(data.recipientId, orgId);
-      if (recipientDnd) {
-        const dndCall = await this.callingService.initiateCall(userId, orgId, data);
-        await this.callingService.missCall(dndCall.callId);
-        client.emit('call:missed', {
-          callId: dndCall.callId,
-          recipientId: data.recipientId,
-          reason: 'User is on Do Not Disturb',
-        });
-        this.logger.log(`Call ${dndCall.callId} to ${data.recipientId} skipped — recipient on DND`);
-        return;
-      }
-
-      const call = await this.callingService.initiateCall(userId, orgId, data);
+      // Create call in database
+      const call = await this.callingService.initiateCall(userId, 'default-org', data);
 
       // Join initiator to call room
       client.join(`call:${call.callId}`);
@@ -237,8 +153,7 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
           initiatorId: userId,
           initiatorName: this.userNames.get(userId) || '',
           type: data.type,
-          // S-004: Use conversationId from validated call record, not raw client data
-          conversationId: call.conversationId,
+          conversationId: data.conversationId,
         });
       });
 
@@ -248,22 +163,6 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
         status: call.status,
         type: call.type,
       });
-
-      // Publish incoming call push notification
-      this.publishCallNotification({
-        type: 'incoming_call',
-        title: `${this.userNames.get(userId) || 'Someone'} is calling`,
-        body: data.type === 'video' ? 'Incoming video call' : 'Incoming voice call',
-        userId: data.recipientId,
-        organizationId: orgId,
-        senderId: userId,
-        priority: 'high',
-        // S-004: Use conversationId from validated call record, not raw client data
-        data: { callId: call.callId, callType: data.type, conversationId: call.conversationId || '' },
-      }).catch(err => this.logger.warn(`Incoming call notification failed: ${err.message}`));
-
-      // Start ringing timeout — auto-miss after 45 seconds
-      this.startRingingTimeout(call.callId, userId, data.recipientId);
 
       this.logger.log(`Call initiated: ${call.callId} from ${userId} to ${data.recipientId}`);
     } catch (err) {
@@ -280,13 +179,6 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     if (!userId) return;
 
     try {
-      // Check if call was already answered from another tab
-      const existingCall = await this.callingService.getCallDetails(data.callId, userId).catch(() => null);
-      if (existingCall && existingCall.status === 'connected') {
-        client.emit('call:already-answered', { callId: data.callId });
-        return;
-      }
-
       const call = await this.callingService.answerCall(
         data.callId,
         userId,
@@ -294,25 +186,11 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
         data.videoEnabled ?? false,
       );
 
-      // Clear ringing timeout
-      this.clearRingingTimeout(call.callId);
-
       // Add recipient to call room
       client.join(`call:${call.callId}`);
       const callSockets = this.callSessions.get(call.callId) || new Set();
       callSockets.add(client.id);
       this.callSessions.set(call.callId, callSockets);
-
-      // Dismiss ringing on all OTHER sockets of the same user
-      const userSockets = this.onlineUsers.get(userId) || new Set();
-      userSockets.forEach(sid => {
-        if (sid !== client.id) {
-          this.server.to(sid).emit('call:dismissed', {
-            callId: call.callId,
-            reason: 'answered-elsewhere',
-          });
-        }
-      });
 
       // Notify all participants that call is connected
       this.server.to(`call:${call.callId}`).emit('call:connected', {
@@ -374,25 +252,11 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     try {
       const call = await this.callingService.rejectCall(data.callId, userId, data.reason);
 
-      // Clear ringing timeout
-      this.clearRingingTimeout(call.callId);
-
       // Notify initiator that call was rejected
       this.server.to(`call:${call.callId}`).emit('call:rejected', {
         callId: call.callId,
         rejectedBy: userId,
         reason: data.reason,
-      });
-
-      // Dismiss ringing on all OTHER sockets of this user
-      const userSockets = this.onlineUsers.get(userId) || new Set();
-      userSockets.forEach(sid => {
-        if (sid !== client.id) {
-          this.server.to(sid).emit('call:dismissed', {
-            callId: call.callId,
-            reason: 'rejected',
-          });
-        }
       });
 
       // Clean up call room
@@ -413,97 +277,46 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     if (!userId) return;
 
     try {
-      // Remove ALL of this user's sockets from the call (handles multi-tab)
+      // Remove this user's socket from the call session
       const callSockets = this.callSessions.get(data.callId);
       if (callSockets) {
-        const userSocketsInCall = Array.from(callSockets).filter(
-          sid => this.socketUsers.get(sid) === userId,
-        );
-        for (const sid of userSocketsInCall) {
-          callSockets.delete(sid);
-          const targetSocket = this.server.sockets.sockets.get(sid);
-          targetSocket?.leave(`call:${data.callId}`);
-        }
+        callSockets.delete(client.id);
       }
       client.leave(`call:${data.callId}`);
 
-      // Clear any disconnect grace timer for this user
-      this.disconnectGraceTimers.delete(`${data.callId}:${userId}`);
+      const remainingSockets = callSockets ? callSockets.size : 0;
 
-      // Count distinct remaining users
-      const remainingUsers = callSockets ? this.getDistinctUsersInCall(callSockets) : new Set<string>();
-
-      if (remainingUsers.size > 0) {
-        // Other participants remain — mark this user as left
+      if (remainingSockets > 0) {
+        // Other participants remain — mark this user as left but keep call alive
         await this.callingService.leaveCall(data.callId, userId);
 
+        // Notify remaining participants
         this.server.to(`call:${data.callId}`).emit('call:participant-left', {
           callId: data.callId,
           userId,
           reason: 'left',
         });
 
-        this.logger.log(`User ${userId} left call ${data.callId}, ${remainingUsers.size} user(s) remain`);
-
-        // If only 1 user remains, end the call
-        if (remainingUsers.size <= 1) {
-          this.endCallCleanup(data.callId, userId, 'last-participant');
-        }
+        this.logger.log(`User ${userId} left call ${data.callId}, ${remainingSockets} socket(s) remain`);
       } else {
         // Last person — fully end the call
-        this.endCallCleanup(data.callId, userId, 'ended');
+        const call = await this.callingService.endCall(data.callId, userId);
+
+        // Notify all participants that call ended
+        call.participantIds?.forEach(pid => {
+          this.emitToUser(pid, 'call:ended', {
+            callId: call.callId,
+            endedBy: userId,
+            duration: call.duration,
+          });
+        });
+
+        // Clean up call room
+        this.callSessions.delete(call.callId);
+        this.logger.log(`Call ended: ${call.callId} by ${userId}`);
       }
     } catch (err) {
       client.emit('error', { message: err.message });
-    }
-  }
-
-  // ── Reconnection support ──
-  @SubscribeMessage('call:rejoin')
-  async handleRejoinCall(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { callId: string },
-  ) {
-    const userId = this.socketUsers.get(client.id);
-    if (!userId || !data?.callId) return;
-
-    try {
-      // Verify user is a participant
-      const call = await this.callingService.getCallDetails(data.callId, userId);
-      if (!call || ['ended', 'missed', 'rejected'].includes(call.status)) {
-        client.emit('call:rejoin-failed', { callId: data.callId, reason: 'Call no longer active' });
-        return;
-      }
-
-      // Cancel any disconnect grace timer
-      const graceKey = `${data.callId}:${userId}`;
-      const graceTimer = this.disconnectGraceTimers.get(graceKey);
-      if (graceTimer) {
-        clearTimeout(graceTimer);
-        this.disconnectGraceTimers.delete(graceKey);
-      }
-
-      // Re-add to call room and session
-      client.join(`call:${data.callId}`);
-      const callSockets = this.callSessions.get(data.callId) || new Set();
-      callSockets.add(client.id);
-      this.callSessions.set(data.callId, callSockets);
-
-      // Notify participant rejoined
-      this.server.to(`call:${data.callId}`).emit('call:participant-rejoined', {
-        callId: data.callId,
-        userId,
-      });
-
-      client.emit('call:rejoined', {
-        callId: data.callId,
-        status: call.status,
-        participants: call.participants,
-      });
-
-      this.logger.log(`User ${userId} rejoined call ${data.callId}`);
-    } catch (err) {
-      client.emit('call:rejoin-failed', { callId: data.callId, reason: err.message });
     }
   }
 
@@ -517,6 +330,7 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     if (!userId) return;
 
     try {
+      // Forward SDP offer to other participants
       client.to(`call:${data.callId}`).emit('call:offer', {
         callId: data.callId,
         sdp: data.sdp,
@@ -536,6 +350,7 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     if (!userId) return;
 
     try {
+      // Forward SDP answer to other participants
       client.to(`call:${data.callId}`).emit('call:answer-sdp', {
         callId: data.callId,
         sdp: data.sdp,
@@ -555,6 +370,7 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     if (!userId) return;
 
     try {
+      // Forward ICE candidate to other participants
       client.to(`call:${data.callId}`).emit('call:ice-candidate', {
         callId: data.callId,
         candidate: data.candidate,
@@ -567,292 +383,255 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     }
   }
 
-  // ── In-call ephemeral chat ──
-  @SubscribeMessage('call:chat')
-  handleCallChat(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { callId: string; content: string },
-  ) {
-    const userId = this.socketUsers.get(client.id);
-    if (!userId || !data?.callId || !data?.content) return;
-    // Broadcast to ALL participants in the call (including sender for confirmation)
-    this.server.to(`call:${data.callId}`).emit('call:chat', {
-      id: `${Date.now()}-${userId}`,
-      senderId: userId,
-      content: data.content,
-      createdAt: new Date().toISOString(),
-    });
-  }
-
-  // ── Annotation broadcast (screen share drawing) ──
-  @SubscribeMessage('call:annotation-stroke')
-  handleAnnotationStroke(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { callId: string; stroke: { fromX: number; fromY: number; toX: number; toY: number; color: string; brushSize: number } },
-  ) {
-    const userId = this.socketUsers.get(client.id);
-    if (!userId || !data?.callId) return;
-
-    // Broadcast to all other participants in the call
-    client.to(`call:${data.callId}`).emit('call:annotation-stroke', {
-      ...data.stroke,
-      from: userId,
-    });
-  }
-
-  @SubscribeMessage('call:annotation-clear')
-  handleAnnotationClear(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { callId: string },
-  ) {
-    const userId = this.socketUsers.get(client.id);
-    if (!userId || !data?.callId) return;
-
-    client.to(`call:${data.callId}`).emit('call:annotation-clear', {
-      from: userId,
-    });
-  }
-
-  // ── Remote pointer (screen share) ──
-  @SubscribeMessage('call:pointer')
-  handlePointer(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { callId: string; x: number; y: number },
-  ) {
-    const userId = this.socketUsers.get(client.id);
-    if (!userId || !data?.callId) return;
-    client.to(`call:${data.callId}`).emit('call:pointer', { from: userId, x: data.x, y: data.y });
-  }
-
-  @SubscribeMessage('call:pointer-hide')
-  handlePointerHide(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { callId: string },
-  ) {
-    const userId = this.socketUsers.get(client.id);
-    if (!userId || !data?.callId) return;
-    client.to(`call:${data.callId}`).emit('call:pointer-hide', { from: userId });
-  }
-
-  // ── Recording consent ──
-
-  @SubscribeMessage('call:recording-start')
-  async handleRecordingStart(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { callId: string },
-  ) {
-    const userId = this.socketUsers.get(client.id);
-    if (!userId) return;
-
-    // Broadcast recording started to ALL participants in the call
-    this.server.to(`call:${data.callId}`).emit('call:recording-started', {
-      callId: data.callId,
-      startedBy: userId,
-      startedByName: this.userNames.get(userId) || '',
-      startedAt: new Date().toISOString(),
-    });
-
-    this.logger.log(`Recording started on call ${data.callId} by ${userId} — all participants notified`);
-  }
-
-  @SubscribeMessage('call:recording-stop')
-  async handleRecordingStop(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { callId: string },
-  ) {
-    const userId = this.socketUsers.get(client.id);
-    if (!userId) return;
-
-    this.server.to(`call:${data.callId}`).emit('call:recording-stopped', {
-      callId: data.callId,
-      stoppedBy: userId,
-    });
-
-    this.logger.log(`Recording stopped on call ${data.callId} by ${userId}`);
-  }
-
-  @SubscribeMessage('call:recording-consent')
-  async handleRecordingConsent(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { callId: string },
-  ) {
-    const userId = this.socketUsers.get(client.id);
-    if (!userId) return;
-
-    // Notify all participants that this user acknowledged recording
-    this.server.to(`call:${data.callId}`).emit('call:recording-consent-ack', {
-      callId: data.callId,
-      userId,
-      consentedAt: new Date().toISOString(),
-    });
-
-    this.logger.log(`User ${userId} acknowledged recording on call ${data.callId}`);
-  }
-
-  // ── Call Hold/Resume ──
-  // Track hold state per call: callId -> Set<userId>
-  private callHoldState = new Map<string, Set<string>>();
-
-  @SubscribeMessage('call:hold')
-  handleHoldCall(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { callId: string },
-  ) {
-    const userId = this.socketUsers.get(client.id);
-    if (!userId || !data?.callId) return;
-
-    if (!this.callHoldState.has(data.callId)) {
-      this.callHoldState.set(data.callId, new Set());
-    }
-    this.callHoldState.get(data.callId)!.add(userId);
-
-    // Notify other participants
-    client.to(`call:${data.callId}`).emit('call:held', {
-      callId: data.callId,
-      userId,
-    });
-
-    // Confirm to the holder
-    client.emit('call:held', {
-      callId: data.callId,
-      userId,
-    });
-
-    this.logger.log(`User ${userId} put call ${data.callId} on hold`);
-  }
-
-  @SubscribeMessage('call:resume')
-  handleResumeCall(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { callId: string },
-  ) {
-    const userId = this.socketUsers.get(client.id);
-    if (!userId || !data?.callId) return;
-
-    const holdSet = this.callHoldState.get(data.callId);
-    if (holdSet) {
-      holdSet.delete(userId);
-      if (holdSet.size === 0) this.callHoldState.delete(data.callId);
-    }
-
-    // Notify other participants
-    client.to(`call:${data.callId}`).emit('call:resumed', {
-      callId: data.callId,
-      userId,
-    });
-
-    // Confirm to the holder
-    client.emit('call:resumed', {
-      callId: data.callId,
-      userId,
-    });
-
-    this.logger.log(`User ${userId} resumed call ${data.callId}`);
-  }
-
-  // ── Call quality metrics ──
-  @SubscribeMessage('call:quality-report')
-  async handleQualityReport(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { callId: string; metrics: { callQuality?: string; bitrate?: number; frameRate?: number; packetLoss?: number } },
-  ) {
-    if (!data?.callId || !data?.metrics) return;
-
-    // Verify sender is actually in this call
-    if (!client.rooms.has(`call:${data.callId}`)) return;
-
-    try {
-      await this.callingService.updateCallMetrics(data.callId, data.metrics);
-    } catch {
-      // Non-critical — swallow errors
-    }
-  }
-
-  // ── Voice Huddle events ──
+  // ── Huddle events ──
 
   @SubscribeMessage('huddle:get')
-  handleGetHuddle(
+  async handleHuddleGet(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { channelId: string },
+    @MessageBody() data: { conversationId: string },
   ) {
-    if (!data?.channelId) return;
-    const huddle = this.voiceHuddleService.getHuddle(data.channelId);
-    client.emit('huddle:state', huddle);
+    const userId = this.socketUsers.get(client.id);
+    if (!userId) return;
+
+    try {
+      const huddle = this.voiceHuddleService.getHuddle(data.conversationId);
+      client.emit('huddle:state', {
+        conversationId: data.conversationId,
+        huddle: huddle ? {
+          active: huddle.active,
+          startedBy: huddle.startedBy,
+          startedAt: huddle.startedAt,
+          participants: huddle.participants,
+        } : null,
+      });
+    } catch (err) {
+      client.emit('error', { message: err.message });
+    }
   }
 
   @SubscribeMessage('huddle:start')
-  handleStartHuddle(
+  async handleHuddleStart(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { channelId: string; userName: string },
+    @MessageBody() data: { conversationId: string },
   ) {
     const userId = this.socketUsers.get(client.id);
-    if (!userId || !data?.channelId) return;
+    if (!userId) return;
 
     try {
-      const huddle = this.voiceHuddleService.startHuddle(data.channelId, userId, data.userName || this.userNames.get(userId) || 'Unknown');
-      // Join the huddle room for broadcasting
-      client.join(`huddle:${data.channelId}`);
+      const huddle = this.voiceHuddleService.startHuddle(data.conversationId, userId);
 
-      // Broadcast to channel room members only (not all clients)
-      this.server.to(`channel:${data.channelId}`).emit('huddle:started', huddle);
-      this.logger.log(`Huddle started in channel ${data.channelId} by ${userId}`);
+      // Join the socket to the huddle room
+      client.join(`huddle:${data.conversationId}`);
+
+      // Notify the conversation room about new huddle state
+      this.server.emit('huddle:state', {
+        conversationId: data.conversationId,
+        huddle: {
+          active: huddle.active,
+          startedBy: huddle.startedBy,
+          startedAt: huddle.startedAt,
+          participants: huddle.participants,
+        },
+      });
+
+      this.logger.log(`Huddle started in ${data.conversationId} by ${userId}`);
     } catch (err) {
       client.emit('error', { message: err.message });
     }
   }
 
   @SubscribeMessage('huddle:join')
-  handleJoinHuddle(
+  async handleHuddleJoin(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { channelId: string; userName: string },
+    @MessageBody() data: { conversationId: string },
   ) {
     const userId = this.socketUsers.get(client.id);
-    if (!userId || !data?.channelId) return;
+    if (!userId) return;
 
     try {
-      const huddle = this.voiceHuddleService.joinHuddle(data.channelId, userId, data.userName || this.userNames.get(userId) || 'Unknown');
-      client.join(`huddle:${data.channelId}`);
+      const huddle = this.voiceHuddleService.joinHuddle(data.conversationId, userId);
+      if (!huddle) {
+        client.emit('error', { message: 'No active huddle in this conversation' });
+        return;
+      }
 
-      this.server.to(`channel:${data.channelId}`).emit('huddle:joined', {
-        channelId: data.channelId,
+      // Join the socket to the huddle room
+      client.join(`huddle:${data.conversationId}`);
+
+      // Notify huddle participants about new joiner
+      this.server.to(`huddle:${data.conversationId}`).emit('huddle:participant-joined', {
+        conversationId: data.conversationId,
         userId,
-        userName: data.userName || this.userNames.get(userId) || 'Unknown',
-        huddle,
+        userName: this.userNames.get(userId) || '',
       });
-      this.logger.log(`User ${userId} joined huddle in channel ${data.channelId}`);
+
+      // Broadcast updated state to everyone
+      this.server.emit('huddle:state', {
+        conversationId: data.conversationId,
+        huddle: {
+          active: huddle.active,
+          startedBy: huddle.startedBy,
+          startedAt: huddle.startedAt,
+          participants: huddle.participants,
+        },
+      });
+
+      this.logger.log(`User ${userId} joined huddle in ${data.conversationId}`);
     } catch (err) {
       client.emit('error', { message: err.message });
     }
   }
 
   @SubscribeMessage('huddle:leave')
-  handleLeaveHuddle(
+  async handleHuddleLeave(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { channelId: string },
+    @MessageBody() data: { conversationId: string },
   ) {
     const userId = this.socketUsers.get(client.id);
-    if (!userId || !data?.channelId) return;
+    if (!userId) return;
 
-    const huddle = this.voiceHuddleService.leaveHuddle(data.channelId, userId);
-    client.leave(`huddle:${data.channelId}`);
+    try {
+      const huddle = this.voiceHuddleService.leaveHuddle(data.conversationId, userId);
 
-    if (huddle) {
-      this.server.to(`channel:${data.channelId}`).emit('huddle:left', {
-        channelId: data.channelId,
-        userId,
-        huddle,
-      });
-    } else {
-      // Huddle ended
-      this.server.to(`channel:${data.channelId}`).emit('huddle:left', {
-        channelId: data.channelId,
-        userId,
-        huddle: null,
-      });
-      this.server.to(`channel:${data.channelId}`).emit('huddle:ended', { channelId: data.channelId });
+      // Leave the socket room
+      client.leave(`huddle:${data.conversationId}`);
+
+      if (!huddle || huddle.participants.length === 0) {
+        // Huddle ended
+        this.server.emit('huddle:ended', { conversationId: data.conversationId });
+        this.server.emit('huddle:state', {
+          conversationId: data.conversationId,
+          huddle: null,
+        });
+        this.logger.log(`Huddle ended in ${data.conversationId}`);
+      } else {
+        // Notify remaining participants
+        this.server.to(`huddle:${data.conversationId}`).emit('huddle:participant-left', {
+          conversationId: data.conversationId,
+          userId,
+        });
+
+        // Broadcast updated state
+        this.server.emit('huddle:state', {
+          conversationId: data.conversationId,
+          huddle: {
+            active: huddle.active,
+            startedBy: huddle.startedBy,
+            startedAt: huddle.startedAt,
+            participants: huddle.participants,
+          },
+        });
+      }
+
+      this.logger.log(`User ${userId} left huddle in ${data.conversationId}`);
+    } catch (err) {
+      client.emit('error', { message: err.message });
     }
+  }
 
-    this.logger.log(`User ${userId} left huddle in channel ${data.channelId}`);
+  @SubscribeMessage('huddle:offer')
+  async handleHuddleOffer(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string; targetUserId: string; sdp: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId) return;
+
+    try {
+      // Forward SDP offer to the specific target user in the huddle
+      const targetSockets = this.onlineUsers.get(data.targetUserId) || new Set();
+      targetSockets.forEach(socketId => {
+        this.server.to(socketId).emit('huddle:offer', {
+          conversationId: data.conversationId,
+          sdp: data.sdp,
+          from: userId,
+        });
+      });
+    } catch (err) {
+      client.emit('error', { message: err.message });
+    }
+  }
+
+  @SubscribeMessage('huddle:answer')
+  async handleHuddleAnswer(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string; targetUserId: string; sdp: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId) return;
+
+    try {
+      // Forward SDP answer to the specific target user
+      const targetSockets = this.onlineUsers.get(data.targetUserId) || new Set();
+      targetSockets.forEach(socketId => {
+        this.server.to(socketId).emit('huddle:answer', {
+          conversationId: data.conversationId,
+          sdp: data.sdp,
+          from: userId,
+        });
+      });
+    } catch (err) {
+      client.emit('error', { message: err.message });
+    }
+  }
+
+  @SubscribeMessage('huddle:ice-candidate')
+  async handleHuddleIceCandidate(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string; targetUserId: string; candidate: string; sdpMLineIndex?: number; sdpMid?: string },
+  ) {
+    const userId = this.socketUsers.get(client.id);
+    if (!userId) return;
+
+    try {
+      // Forward ICE candidate to the specific target user
+      const targetSockets = this.onlineUsers.get(data.targetUserId) || new Set();
+      targetSockets.forEach(socketId => {
+        this.server.to(socketId).emit('huddle:ice-candidate', {
+          conversationId: data.conversationId,
+          candidate: data.candidate,
+          sdpMLineIndex: data.sdpMLineIndex,
+          sdpMid: data.sdpMid,
+          from: userId,
+        });
+      });
+    } catch (err) {
+      client.emit('error', { message: err.message });
+    }
+  }
+
+  // ── Huddle cleanup helper ──
+  private cleanupHuddlesForUser(userId: string, client: Socket) {
+    // Check all active huddles and remove user
+    // VoiceHuddleService stores by conversationId; iterate known rooms
+    // We check socket rooms that start with 'huddle:'
+    const rooms = Array.from(client.rooms || []);
+    for (const room of rooms) {
+      if (room.startsWith('huddle:')) {
+        const conversationId = room.replace('huddle:', '');
+        const huddle = this.voiceHuddleService.leaveHuddle(conversationId, userId);
+
+        if (!huddle || huddle.participants.length === 0) {
+          this.server.emit('huddle:ended', { conversationId });
+          this.server.emit('huddle:state', { conversationId, huddle: null });
+          this.logger.log(`Huddle ended in ${conversationId} (user ${userId} disconnected)`);
+        } else {
+          this.server.to(`huddle:${conversationId}`).emit('huddle:participant-left', {
+            conversationId,
+            userId,
+          });
+          this.server.emit('huddle:state', {
+            conversationId,
+            huddle: {
+              active: huddle.active,
+              startedBy: huddle.startedBy,
+              startedAt: huddle.startedAt,
+              participants: huddle.participants,
+            },
+          });
+        }
+      }
+    }
   }
 
   // ── Utility methods ──
@@ -865,205 +644,5 @@ export class CallingGateway implements OnGatewayConnection, OnGatewayDisconnect,
     sockets.forEach(socketId => {
       this.server.to(socketId).emit(event, data);
     });
-  }
-
-  // ── Private helpers ──
-
-  /** Get distinct user IDs from a set of socket IDs */
-  private getDistinctUsersInCall(socketIds: Set<string>): Set<string> {
-    const userIds = new Set<string>();
-    for (const sid of socketIds) {
-      const uid = this.socketUsers.get(sid);
-      if (uid) userIds.add(uid);
-    }
-    return userIds;
-  }
-
-  /** Start a 45-second ringing timeout — marks call as missed if unanswered */
-  private startRingingTimeout(callId: string, initiatorId: string, recipientId: string) {
-    this.clearRingingTimeout(callId);
-
-    const timer = setTimeout(async () => {
-      this.ringingTimeouts.delete(callId);
-      try {
-        const call = await this.callingService.missCall(callId);
-        if (call) {
-          // Notify initiator
-          this.emitToUser(initiatorId, 'call:missed', {
-            callId,
-            recipientId,
-            reason: 'no-answer',
-          });
-          // Notify recipient (stop ringing)
-          this.emitToUser(recipientId, 'call:missed', {
-            callId,
-            initiatorId,
-            reason: 'no-answer',
-          });
-          // Publish missed call push notification to recipient
-          this.publishCallNotification({
-            type: 'missed_call',
-            title: 'Missed call',
-            body: `Missed call from ${this.userNames.get(initiatorId) || 'Unknown'}`,
-            userId: recipientId,
-            organizationId: call.organizationId || 'default-org',
-            senderId: initiatorId,
-            data: { callId },
-          }).catch(err => this.logger.warn(`Missed call notification failed: ${err.message}`));
-
-          // Clean up session
-          this.callSessions.delete(callId);
-          this.logger.log(`Call ${callId} timed out — marked as missed`);
-        }
-      } catch (err) {
-        this.logger.error(`Error handling ringing timeout for ${callId}: ${err.message}`);
-      }
-    }, RINGING_TIMEOUT_MS);
-
-    this.ringingTimeouts.set(callId, timer);
-  }
-
-  /** Clear a ringing timeout (call was answered/rejected) */
-  private clearRingingTimeout(callId: string) {
-    const timer = this.ringingTimeouts.get(callId);
-    if (timer) {
-      clearTimeout(timer);
-      this.ringingTimeouts.delete(callId);
-    }
-  }
-
-  /** Full call cleanup: end in DB, notify participants, remove session */
-  private async endCallCleanup(callId: string, endedByUserId: string, reason: string) {
-    try {
-      this.clearRingingTimeout(callId);
-
-      // endCall may return an already-ended call (if REST endpoint ran first)
-      const call = await this.callingService.endCall(callId, endedByUserId);
-
-      call.participantIds?.forEach(pid => {
-        this.emitToUser(pid, 'call:ended', {
-          callId: call.callId,
-          endedBy: endedByUserId,
-          duration: call.duration,
-          reason,
-        });
-      });
-
-      this.callSessions.delete(callId);
-
-      // Clear any remaining grace timers for this call
-      for (const [key, timer] of this.disconnectGraceTimers.entries()) {
-        if (key.startsWith(`${callId}:`)) {
-          clearTimeout(timer);
-          this.disconnectGraceTimers.delete(key);
-        }
-      }
-
-      this.logger.log(`Call cleanup done: ${callId} by ${endedByUserId}, reason: ${reason}, duration: ${call.duration}s`);
-    } catch (err) {
-      this.logger.error(`Error ending call ${callId}: ${err.message}`);
-    }
-  }
-
-
-  /** Per-user rate limit for call initiation */
-  private checkCallRateLimit(userId: string): boolean {
-    const now = Date.now();
-    const entry = this.callRateLimits.get(userId);
-    if (!entry || now > entry.resetAt) {
-      this.callRateLimits.set(userId, { count: 1, resetAt: now + CALL_RATE_LIMIT_WINDOW_MS });
-      return true;
-    }
-    entry.count++;
-    return entry.count <= CALL_RATE_LIMIT_MAX;
-  }
-
-  // ── Push notification helpers ──
-
-  /**
-   * Publish a call-related push notification to the `notifications` Redis channel.
-   * Supports: incoming_call, missed_call, voicemail.
-   */
-  private async publishCallNotification(payload: {
-    type: string;
-    title: string;
-    body: string;
-    userId: string;
-    organizationId: string;
-    senderId?: string;
-    priority?: string;
-    data?: Record<string, string>;
-  }): Promise<void> {
-    if (!this.redisPubClient) return;
-
-    try {
-      await this.redisPubClient.publish('notifications', JSON.stringify({
-        ...payload,
-        priority: payload.priority || 'normal',
-      }));
-    } catch (err) {
-      this.logger.warn(`Failed to publish call notification: ${err.message}`);
-    }
-  }
-
-  /**
-   * Public method: send a voicemail notification.
-   * Called by CallingService or external controllers when a voicemail is left.
-   */
-  async sendVoicemailNotification(
-    recipientId: string, callerId: string, organizationId: string,
-    voicemailData?: { duration?: number; callId?: string },
-  ): Promise<void> {
-    const callerName = this.userNames.get(callerId) || 'Unknown';
-    const durationText = voicemailData?.duration ? ` (${voicemailData.duration}s)` : '';
-
-    await this.publishCallNotification({
-      type: 'voicemail',
-      title: 'New voicemail',
-      body: `Voicemail from ${callerName}${durationText}`,
-      userId: recipientId,
-      organizationId,
-      senderId: callerId,
-      data: {
-        callId: voicemailData?.callId || '',
-        duration: String(voicemailData?.duration || 0),
-      },
-    });
-  }
-
-  /**
-   * UC-011: Check if a user's presence status is 'dnd' via Redis.
-   * Reads from the `presence:{orgId}` hash set by the chat-service presence module.
-   */
-  private async isUserOnDnd(userId: string, orgId: string): Promise<boolean> {
-    if (!this.redisPubClient) return false;
-    try {
-      const raw = await this.redisPubClient.hGet(`presence:${orgId}`, userId);
-      if (!raw) return false;
-      const data = JSON.parse(raw);
-      return data.status === 'dnd';
-    } catch (err) {
-      this.logger.warn(`DND check failed for ${userId}: ${err.message}`);
-      return false; // Fail open — allow the call if presence lookup fails
-    }
-  }
-
-  /**
-   * UC-012: Check if a user already has an active call (ringing or connected).
-   * Checks both the in-memory callSessions map and the database.
-   */
-  private async isUserInActiveCall(userId: string): Promise<boolean> {
-    // Check in-memory sessions first (fast path)
-    for (const [, sockets] of this.callSessions.entries()) {
-      const usersInCall = this.getDistinctUsersInCall(sockets);
-      if (usersInCall.has(userId)) return true;
-    }
-    // Also check DB for calls in 'initiated' or 'connected' status
-    try {
-      const activeCall = await this.callingService.findActiveCallForUser(userId);
-      return !!activeCall;
-    } catch {
-      return false;
-    }
   }
 }

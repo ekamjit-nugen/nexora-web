@@ -5,6 +5,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { CallingController } from './calling.controller';
 import { CallingService } from './calling.service';
 import { CallingGateway } from './calling.gateway';
+import { VoiceHuddleService } from './voice-huddle.service';
 import { MeetingController } from './meeting.controller';
 import { MeetingService } from './meeting.service';
 import { MeetingGateway } from './meeting.gateway';
@@ -35,7 +36,7 @@ import { MeetingsModule } from '../meetings/meetings.module';
     }),
   ],
   controllers: [CallingController, MeetingController],
-  providers: [CallingService, CallingGateway, MeetingService, MeetingGateway, JwtAuthGuard],
-  exports: [CallingService, CallingGateway, MeetingService, MeetingGateway],
+  providers: [CallingService, CallingGateway, VoiceHuddleService, MeetingService, MeetingGateway, JwtAuthGuard],
+  exports: [CallingService, CallingGateway, VoiceHuddleService, MeetingService, MeetingGateway],
 })
 export class CallingModule {}
