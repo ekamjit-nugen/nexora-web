@@ -6,7 +6,12 @@ import { IBoard } from './schemas/board.schema';
 import { ICounter } from './schemas/counter.schema';
 import { ITimesheet } from './schemas/timesheet.schema';
 import { IActivity } from './schemas/activity.schema';
+<<<<<<< HEAD
 import { NotificationService, extractMentions } from './notification.service';
+=======
+import { ISprint } from './schemas/sprint.schema';
+import { NotificationService } from './notification.service';
+>>>>>>> worktree-agent-a5b27143
 import {
   CreateTaskDto, UpdateTaskDto, AddCommentDto,
   LogTimeDto, TaskQueryDto, UpdateStatusDto, BulkUpdateDto,
@@ -26,6 +31,7 @@ export class TaskService {
     @InjectModel('Counter') private counterModel: Model<ICounter>,
     @InjectModel('Timesheet') private timesheetModel: Model<ITimesheet>,
     @InjectModel('Activity') private activityModel: Model<IActivity>,
+    @InjectModel('Sprint') private sprintModel: Model<ISprint>,
     private notificationService: NotificationService,
   ) {}
 
@@ -419,6 +425,140 @@ export class TaskService {
 
   async getMyTasks(userId: string, query: TaskQueryDto, orgId?: string) {
     return this.getTasks({ ...query, assigneeId: userId }, orgId);
+  }
+
+  async getMyWork(userId: string, orgId?: string) {
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const baseFilter: any = { assigneeId: userId, isDeleted: false };
+    if (orgId) baseFilter.organizationId = orgId;
+
+    const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3, trivial: 4 };
+    const sortByPriority = (a: any, b: any) =>
+      (priorityOrder[a.priority] ?? 99) - (priorityOrder[b.priority] ?? 99);
+
+    // Fetch all non-done assigned tasks + recently completed in parallel
+    const [activeTasks, recentlyCompletedRaw] = await Promise.all([
+      this.taskModel.find({
+        ...baseFilter,
+        status: { $nin: ['done', 'cancelled'] },
+      }).lean(),
+      this.taskModel.find({
+        ...baseFilter,
+        status: 'done',
+        completedAt: { $gte: sevenDaysAgo },
+      }).sort({ completedAt: -1 }).limit(10).lean(),
+    ]);
+
+    // Categorize active tasks
+    const overdue: any[] = [];
+    const dueToday: any[] = [];
+    const inProgress: any[] = [];
+    const blocked: any[] = [];
+    const readyToStart: any[] = [];
+    const upcomingThisSprint: any[] = [];
+
+    // Collect all dependency itemIds for blocked_by resolution
+    const allDepIds = new Set<string>();
+    for (const task of activeTasks) {
+      if (task.dependencies?.length) {
+        for (const dep of task.dependencies) {
+          if (dep.type === 'blocked_by') allDepIds.add(dep.itemId);
+        }
+      }
+    }
+
+    // Fetch blocking dependency statuses in bulk
+    let depStatusMap: Record<string, string> = {};
+    if (allDepIds.size > 0) {
+      const depTasks = await this.taskModel.find(
+        { _id: { $in: Array.from(allDepIds) }, isDeleted: false },
+        { _id: 1, status: 1 },
+      ).lean();
+      depStatusMap = depTasks.reduce((m, t) => {
+        m[t._id.toString()] = t.status;
+        return m;
+      }, {} as Record<string, string>);
+    }
+
+    // Find active sprint IDs for this user's tasks
+    const sprintIds = [...new Set(activeTasks.filter(t => t.sprintId).map(t => t.sprintId))];
+    let activeSprintIds = new Set<string>();
+    if (sprintIds.length > 0) {
+      const activeSprints = await this.sprintModel.find(
+        { _id: { $in: sprintIds }, status: 'active' },
+        { _id: 1 },
+      ).lean();
+      activeSprintIds = new Set(activeSprints.map(s => s._id.toString()));
+    }
+
+    for (const task of activeTasks) {
+      const dueDate = task.dueDate ? new Date(task.dueDate) : null;
+
+      // Overdue: past due, not done
+      if (dueDate && dueDate < startOfDay) {
+        overdue.push(task);
+        continue;
+      }
+
+      // Due today
+      if (dueDate && dueDate >= startOfDay && dueDate <= endOfDay) {
+        dueToday.push(task);
+        continue;
+      }
+
+      // Blocked
+      if (task.status === 'blocked') {
+        blocked.push(task);
+        continue;
+      }
+
+      // In Progress
+      if (task.status === 'in_progress' || task.status === 'in_review') {
+        inProgress.push(task);
+        continue;
+      }
+
+      // Ready to start: status=todo, all blocked_by dependencies resolved (done/cancelled)
+      if (task.status === 'todo') {
+        const blockedByDeps = (task.dependencies || []).filter(d => d.type === 'blocked_by');
+        const allResolved = blockedByDeps.length === 0 || blockedByDeps.every(d => {
+          const depStatus = depStatusMap[d.itemId];
+          return depStatus === 'done' || depStatus === 'cancelled';
+        });
+        if (allResolved) {
+          readyToStart.push(task);
+          continue;
+        }
+      }
+
+      // Upcoming this sprint: in an active sprint, not started yet
+      if (task.sprintId && activeSprintIds.has(task.sprintId) && ['backlog', 'todo'].includes(task.status)) {
+        upcomingThisSprint.push(task);
+        continue;
+      }
+    }
+
+    // Sort each group by priority
+    overdue.sort(sortByPriority);
+    dueToday.sort(sortByPriority);
+    inProgress.sort(sortByPriority);
+    readyToStart.sort(sortByPriority);
+    blocked.sort(sortByPriority);
+    upcomingThisSprint.sort(sortByPriority);
+
+    return {
+      overdue,
+      dueToday,
+      inProgress,
+      readyToStart,
+      blocked,
+      upcomingThisSprint,
+      recentlyCompleted: recentlyCompletedRaw,
+    };
   }
 
   async getTasksByProject(projectId: string, query: TaskQueryDto, orgId?: string) {

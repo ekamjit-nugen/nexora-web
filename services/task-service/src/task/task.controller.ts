@@ -77,6 +77,13 @@ export class TaskController {
     return { success: true, message: 'Recurring tasks retrieved', data };
   }
 
+  @Get('my-work')
+  @UseGuards(JwtAuthGuard)
+  async getMyWork(@Req() req) {
+    const data = await this.taskService.getMyWork(req.user.userId, req.user?.organizationId);
+    return { success: true, message: 'My work retrieved', data };
+  }
+
   @Get(':id/children')
   @UseGuards(JwtAuthGuard)
   async getChildTasks(@Param('id') id: string, @Req() req) {
