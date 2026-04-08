@@ -9,6 +9,7 @@ import { BoardController } from './board.controller';
 import { SprintController } from './sprint.controller';
 import { NotificationController } from './notification.controller';
 import { TaskService } from './task.service';
+import { RecurrenceService } from './recurrence.service';
 import { BoardService } from './board.service';
 import { SprintService } from './sprint.service';
 import { NotificationService } from './notification.service';
@@ -43,7 +44,7 @@ import { RolesGuard } from './guards/roles.guard';
     }),
   ],
   controllers: [TaskController, TimesheetController, BoardController, SprintController, NotificationController],
-  providers: [TaskService, BoardService, SprintService, NotificationService, JwtAuthGuard, RolesGuard, Reflector],
-  exports: [TaskService, BoardService, SprintService, NotificationService],
+  providers: [TaskService, RecurrenceService, BoardService, SprintService, NotificationService, JwtAuthGuard, RolesGuard, Reflector],
+  exports: [TaskService, RecurrenceService, BoardService, SprintService, NotificationService],
 })
 export class TaskModule {}

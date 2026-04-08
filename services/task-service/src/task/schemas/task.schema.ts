@@ -26,6 +26,20 @@ export interface IAttachment {
   uploadedAt: Date;
 }
 
+export interface IRecurrence {
+  enabled: boolean;
+  rule?: string;
+  frequency?: string;
+  interval?: number;
+  daysOfWeek?: number[];
+  dayOfMonth?: number;
+  endDate?: Date;
+  maxOccurrences?: number;
+  occurrenceCount?: number;
+  lastGeneratedAt?: Date;
+  templateTaskId?: string;
+}
+
 export interface ITask extends Document {
   organizationId?: string;
   taskKey?: string;
@@ -62,6 +76,9 @@ export interface ITask extends Document {
   environment?: string;
   originalEstimate?: number;
   remainingEstimate?: number;
+  recurrence?: IRecurrence;
+  isRecurringInstance?: boolean;
+  recurringParentId?: string;
   isDeleted: boolean;
   deletedAt?: Date;
   createdBy: string;
@@ -150,6 +167,25 @@ export const TaskSchema = new Schema<ITask>(
     environment: { type: String, default: null },
     originalEstimate: { type: Number, default: null },
     remainingEstimate: { type: Number, default: null },
+    recurrence: {
+      enabled: { type: Boolean, default: false },
+      rule: { type: String, default: null },
+      frequency: {
+        type: String,
+        enum: ['daily', 'weekly', 'biweekly', 'monthly', 'quarterly', 'custom'],
+        default: null,
+      },
+      interval: { type: Number, default: 1 },
+      daysOfWeek: [{ type: Number }],
+      dayOfMonth: { type: Number, default: null },
+      endDate: { type: Date, default: null },
+      maxOccurrences: { type: Number, default: null },
+      occurrenceCount: { type: Number, default: 0 },
+      lastGeneratedAt: { type: Date, default: null },
+      templateTaskId: { type: String, default: null },
+    },
+    isRecurringInstance: { type: Boolean, default: false },
+    recurringParentId: { type: String, default: null, index: true },
     statusHistory: [{
       status: { type: String },
       changedAt: { type: Date, default: Date.now },
@@ -170,3 +206,4 @@ TaskSchema.index({ dueDate: 1 });
 TaskSchema.index({ isDeleted: 1 });
 TaskSchema.index({ boardId: 1, columnId: 1 });
 TaskSchema.index({ projectId: 1, taskKey: 1 }, { unique: true, sparse: true });
+TaskSchema.index({ 'recurrence.enabled': 1, isDeleted: 1 });

@@ -4,11 +4,13 @@ import {
   HttpCode, HttpStatus, Logger,
 } from '@nestjs/common';
 import { TaskService } from './task.service';
+import { RecurrenceService } from './recurrence.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard, Roles } from './guards/roles.guard';
 import {
   CreateTaskDto, UpdateTaskDto, AddCommentDto,
   LogTimeDto, TaskQueryDto, UpdateStatusDto, BulkUpdateDto,
+  SetRecurrenceDto,
 } from './dto/index';
 import {
   CreateTimesheetDto, UpdateTimesheetDto,
@@ -19,7 +21,10 @@ import {
 export class TaskController {
   private readonly logger = new Logger(TaskController.name);
 
-  constructor(private taskService: TaskService) {}
+  constructor(
+    private taskService: TaskService,
+    private recurrenceService: RecurrenceService,
+  ) {}
 
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -63,6 +68,13 @@ export class TaskController {
   async getAnalytics(@Query('projectId') projectId: string, @Req() req) {
     const data = await this.taskService.getProjectAnalytics(projectId, req.user?.organizationId);
     return { success: true, message: 'Analytics retrieved', data };
+  }
+
+  @Get('recurring')
+  @UseGuards(JwtAuthGuard)
+  async getRecurringTasks(@Query('projectId') projectId: string, @Req() req) {
+    const data = await this.recurrenceService.getRecurringTasks(projectId, req.user?.organizationId);
+    return { success: true, message: 'Recurring tasks retrieved', data };
   }
 
   @Get(':id/children')
@@ -207,6 +219,30 @@ export class TaskController {
   async duplicateTask(@Param('id') id: string, @Req() req) {
     const task = await this.taskService.duplicateTask(id, req.user.userId, req.user?.organizationId);
     return { success: true, message: 'Task duplicated', data: task };
+  }
+
+  @Post(':id/recurrence')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('member', 'manager', 'admin', 'owner')
+  @HttpCode(HttpStatus.OK)
+  async setRecurrence(@Param('id') id: string, @Body() dto: SetRecurrenceDto, @Req() req) {
+    const task = await this.recurrenceService.setRecurrence(id, dto, req.user?.organizationId);
+    return { success: true, message: 'Recurrence set successfully', data: task };
+  }
+
+  @Delete(':id/recurrence')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('member', 'manager', 'admin', 'owner')
+  async stopRecurrence(@Param('id') id: string, @Req() req) {
+    const task = await this.recurrenceService.stopRecurrence(id, req.user?.organizationId);
+    return { success: true, message: 'Recurrence stopped', data: task };
+  }
+
+  @Get(':id/recurrence/instances')
+  @UseGuards(JwtAuthGuard)
+  async getRecurringInstances(@Param('id') id: string, @Req() req) {
+    const data = await this.recurrenceService.getRecurringInstances(id, req.user?.organizationId);
+    return { success: true, message: 'Recurring instances retrieved', data };
   }
 }
 
