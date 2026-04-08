@@ -1598,6 +1598,15 @@ export const taskApi = {
   delete: (id: string) =>
     request(`/tasks/${id}`, { method: "DELETE" }),
   getMyTasks: () => request<Task[]>("/tasks/my"),
+  getMyWork: () => request<{
+    overdue: Task[];
+    dueToday: Task[];
+    inProgress: Task[];
+    readyToStart: Task[];
+    blocked: Task[];
+    upcomingThisSprint: Task[];
+    recentlyCompleted: Task[];
+  }>("/tasks/my-work"),
   getStats: (projectId?: string) => {
     const qs = projectId ? `?projectId=${projectId}` : "";
     return request<any>(`/tasks/stats${qs}`);
