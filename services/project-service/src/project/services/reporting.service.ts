@@ -1,50 +1,21 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ITimeLog } from '../schemas/time-log.schema';
 import { IProject } from '../schemas/project.schema';
 
-export interface CumulativeFlowData {
-  dates: string[];
-  columns: Array<{
-    name: string;
-    color: string;
-    counts: number[];
-  }>;
-}
-
-export interface CycleTimeData {
-  tasks: Array<{
-    key: string;
-    title: string;
-    completedDate: Date;
-    cycleTimeDays: number;
-  }>;
-  avgCycleTime: number;
-  medianCycleTime: number;
-  p90CycleTime: number;
-}
-
-export interface EpicProgressData {
-  epics: Array<{
-    id: string;
-    key: string;
-    title: string;
-    status: string;
-    completedStories: number;
-    totalStories: number;
-    completedPoints: number;
-    totalPoints: number;
-    startDate: Date;
-    targetDate: Date;
-    projectedCompletion: Date;
-    stories: Array<{
-      id: string;
-      key: string;
-      title: string;
-      status: string;
-      points: number;
-    }>;
+export interface BudgetUtilizationData {
+  total: number;
+  spent: number;
+  remaining: number;
+  currency: string;
+  billingType: string;
+  burnRate: number;
+  projectedOverrun: number;
+  byUser: Array<{
+    userId: string;
+    hours: number;
+    cost: number;
   }>;
 }
 
@@ -55,204 +26,114 @@ export class ReportingService {
     @InjectModel('TimeLog') private timeLogModel: Model<ITimeLog>,
   ) {}
 
-  // ── 4.1.1 Cumulative Flow Diagram ──
+  // ── Budget Utilization ──
 
-  async getCumulativeFlowData(
-    projectId: string,
-    fromDate: Date,
-    toDate: Date,
-  ): Promise<CumulativeFlowData> {
+  async getBudgetUtilization(projectId: string): Promise<BudgetUtilizationData> {
     const project = await this.projectModel.findById(projectId);
-
     if (!project) {
       throw new NotFoundException('Project not found');
     }
 
-    // Define board columns based on project settings
-    const columns = this.getProjectColumns(project);
-    const dates: string[] = [];
-    const columnCounts: { [key: string]: number[] } = {};
+    const budget = project.budget || { amount: 0, spent: 0, currency: 'USD', billingType: 'fixed' };
+    const total = budget.amount || 0;
+    const spent = budget.spent || 0;
+    const remaining = Math.max(0, total - spent);
 
-    // Initialize counts
-    columns.forEach((col) => {
-      columnCounts[col.name] = [];
-    });
+    // Calculate burn rate from time logs (last 30 days)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const recentLogs = await this.timeLogModel
+      .find({ projectId, date: { $gte: thirtyDaysAgo } })
+      .lean();
 
-    // Generate daily snapshots
-    const current = new Date(fromDate);
-    while (current <= toDate) {
-      const dateStr = current.toISOString().split('T')[0];
-      dates.push(dateStr);
+    const recentCost = recentLogs.reduce((sum, log) => {
+      const hours = log.duration / 60;
+      const rate = log.rate || budget.hourlyRate || 50;
+      return sum + hours * rate;
+    }, 0);
 
-      // For each column, get task count as of this date
-      for (const column of columns) {
-        // Placeholder: In real implementation, would query task history
-        const count = Math.floor(Math.random() * 50); // Mock data
-        columnCounts[column.name].push(count);
+    // Daily burn rate (based on last 30 days)
+    const burnRate = Math.round((recentCost / 30) * 100) / 100;
+
+    // Projected overrun: if burnRate > 0, how many days until budget runs out vs project end
+    let projectedOverrun = 0;
+    if (burnRate > 0 && total > 0) {
+      const daysRemaining = remaining / burnRate;
+      const projectEndDate = project.endDate ? new Date(project.endDate) : null;
+      if (projectEndDate) {
+        const daysUntilEnd = Math.max(0, (projectEndDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+        projectedOverrun = Math.round((daysUntilEnd - daysRemaining) * burnRate * 100) / 100;
+        if (projectedOverrun < 0) projectedOverrun = 0;
       }
-
-      current.setDate(current.getDate() + 1);
     }
 
+    // Aggregate by user
+    const allLogs = await this.timeLogModel.find({ projectId }).lean();
+    const byUserMap: Record<string, { hours: number; cost: number }> = {};
+    for (const log of allLogs) {
+      if (!byUserMap[log.userId]) {
+        byUserMap[log.userId] = { hours: 0, cost: 0 };
+      }
+      const hours = log.duration / 60;
+      const rate = log.rate || budget.hourlyRate || 50;
+      byUserMap[log.userId].hours += hours;
+      byUserMap[log.userId].cost += hours * rate;
+    }
+
+    const byUser = Object.entries(byUserMap).map(([userId, data]) => ({
+      userId,
+      hours: Math.round(data.hours * 10) / 10,
+      cost: Math.round(data.cost * 100) / 100,
+    }));
+
     return {
-      dates,
-      columns: columns.map((col) => ({
-        name: col.name,
-        color: col.color,
-        counts: columnCounts[col.name] || [],
-      })),
+      total,
+      spent,
+      remaining,
+      currency: budget.currency || 'USD',
+      billingType: budget.billingType || 'fixed',
+      burnRate,
+      projectedOverrun: Math.max(0, projectedOverrun),
+      byUser: byUser.sort((a, b) => b.cost - a.cost),
     };
   }
 
-  // ── 4.1.2 Control Chart (Cycle Time) ──
-
-  async getCycleTimeData(projectId: string): Promise<CycleTimeData> {
-    const project = await this.projectModel.findById(projectId);
-
-    if (!project) {
-      throw new NotFoundException('Project not found');
-    }
-
-    // Placeholder: In real implementation, would analyze task completion times
-    // For now, return mock structure
-    const tasks = [
-      {
-        key: 'PROJ-1',
-        title: 'Implement login',
-        completedDate: new Date('2026-03-20'),
-        cycleTimeDays: 5,
-      },
-      {
-        key: 'PROJ-2',
-        title: 'Fix bug',
-        completedDate: new Date('2026-03-21'),
-        cycleTimeDays: 3,
-      },
-      {
-        key: 'PROJ-3',
-        title: 'Design dashboard',
-        completedDate: new Date('2026-03-22'),
-        cycleTimeDays: 7,
-      },
-    ];
-
-    const cycleTimes = tasks.map((t) => t.cycleTimeDays);
-    cycleTimes.sort((a, b) => a - b);
-
-    const avgCycleTime = cycleTimes.reduce((a, b) => a + b, 0) / cycleTimes.length;
-    const medianCycleTime =
-      cycleTimes.length % 2 === 0
-        ? (cycleTimes[cycleTimes.length / 2 - 1] + cycleTimes[cycleTimes.length / 2]) /
-          2
-        : cycleTimes[Math.floor(cycleTimes.length / 2)];
-    const p90Index = Math.ceil(cycleTimes.length * 0.9) - 1;
-    const p90CycleTime = cycleTimes[p90Index];
-
-    return {
-      tasks,
-      avgCycleTime: Math.round(avgCycleTime * 10) / 10,
-      medianCycleTime,
-      p90CycleTime,
-    };
-  }
-
-  // ── 4.1.3 Epic Progress Report ──
-
-  async getEpicProgressData(projectId: string): Promise<EpicProgressData> {
-    const project = await this.projectModel.findById(projectId);
-
-    if (!project) {
-      throw new NotFoundException('Project not found');
-    }
-
-    // Placeholder: In real implementation, would query epic and story data
-    // For now, return structure with mock data
-    return {
-      epics: [
-        {
-          id: 'epic-1',
-          key: 'EPIC-1',
-          title: 'Authentication System',
-          status: 'in_progress',
-          completedStories: 3,
-          totalStories: 5,
-          completedPoints: 21,
-          totalPoints: 40,
-          startDate: new Date('2026-03-01'),
-          targetDate: new Date('2026-04-01'),
-          projectedCompletion: new Date('2026-03-25'),
-          stories: [
-            {
-              id: 'story-1',
-              key: 'AUTH-1',
-              title: 'Login form',
-              status: 'Done',
-              points: 8,
-            },
-            {
-              id: 'story-2',
-              key: 'AUTH-2',
-              title: 'Reset password',
-              status: 'Done',
-              points: 5,
-            },
-            {
-              id: 'story-3',
-              key: 'AUTH-3',
-              title: '2FA implementation',
-              status: 'In Progress',
-              points: 13,
-            },
-          ],
-        },
-      ],
-    };
-  }
-
-  // ── CSV/PDF Export Support ──
+  // ── Velocity Report for Export ──
 
   async getVelocityReportForExport(projectId: string) {
     const project = await this.projectModel.findById(projectId);
-
     if (!project) {
       throw new NotFoundException('Project not found');
     }
 
-    // Return data structure ready for CSV/PDF export
+    // This endpoint returns project-level metadata for export
+    // Actual velocity data comes from task-service
     return {
-      sprints: [
-        {
-          sprint: 'Sprint 1',
-          startDate: '2026-03-01',
-          endDate: '2026-03-07',
-          committedPoints: 40,
-          completedPoints: 38,
-          completionPercentage: 95,
-        },
-        {
-          sprint: 'Sprint 2',
-          startDate: '2026-03-08',
-          endDate: '2026-03-14',
-          committedPoints: 45,
-          completedPoints: 42,
-          completionPercentage: 93,
-        },
-      ],
+      projectId,
+      projectName: project.projectName,
+      projectKey: project.projectKey,
+      methodology: project.methodology,
+      sprintDuration: project.settings?.sprintDuration || 14,
     };
   }
+
+  // ── Billing Report for Export ──
 
   async getBillingReportForExport(
     projectId: string,
     fromDate: Date,
     toDate: Date,
   ) {
-    // Query time logs
+    const project = await this.projectModel.findById(projectId);
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
+
     const timeLogs = await this.timeLogModel
       .find({
         projectId,
         date: { $gte: fromDate, $lte: toDate },
       })
-      .exec();
+      .lean();
 
     const totalMinutes = timeLogs.reduce((sum, log) => sum + log.duration, 0);
     const totalHours = totalMinutes / 60;
@@ -261,37 +142,30 @@ export class ReportingService {
       .reduce((sum, log) => sum + log.duration, 0);
     const billableHours = billableMinutes / 60;
 
+    const hourlyRate = project.budget?.hourlyRate || 50;
+
     // Group by user
-    const byUser: { [userId: string]: any } = {};
+    const byUser: Record<string, { userId: string; hours: number; cost: number }> = {};
     timeLogs.forEach((log) => {
       if (!byUser[log.userId]) {
-        byUser[log.userId] = {
-          userId: log.userId,
-          hours: 0,
-          cost: 0,
-        };
+        byUser[log.userId] = { userId: log.userId, hours: 0, cost: 0 };
       }
       byUser[log.userId].hours += log.duration / 60;
-      byUser[log.userId].cost += (log.duration / 60) * (log.rate || 50);
+      byUser[log.userId].cost += (log.duration / 60) * (log.rate || hourlyRate);
     });
 
     return {
+      projectName: project.projectName,
+      period: { from: fromDate, to: toDate },
       totalHours: Math.round(totalHours * 10) / 10,
       billableHours: Math.round(billableHours * 10) / 10,
-      totalCost: Object.values(byUser).reduce((sum: number, u: any) => sum + u.cost, 0),
-      byUser: Object.values(byUser),
+      totalCost: Object.values(byUser).reduce((sum, u) => sum + u.cost, 0),
+      currency: project.budget?.currency || 'USD',
+      byUser: Object.values(byUser).map((u) => ({
+        ...u,
+        hours: Math.round(u.hours * 10) / 10,
+        cost: Math.round(u.cost * 100) / 100,
+      })),
     };
-  }
-
-  // ── Helper Methods ──
-
-  private getProjectColumns(project: IProject) {
-    // Default Kanban columns
-    return [
-      { name: 'To Do', color: '#e5e7eb' },
-      { name: 'In Progress', color: '#3b82f6' },
-      { name: 'In Review', color: '#f59e0b' },
-      { name: 'Done', color: '#10b981' },
-    ];
   }
 }

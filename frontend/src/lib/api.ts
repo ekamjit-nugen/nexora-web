@@ -1366,6 +1366,93 @@ export const projectApi = {
     request(`/projects/${projectId}/budget`, { method: "PUT", body: JSON.stringify({ spent }) }),
 };
 
+// ── Project Reporting API ──
+
+export interface VelocitySprint {
+  sprintId: string;
+  sprintName: string;
+  planned: number;
+  completed: number;
+  carryOver: number;
+  startDate: string;
+  endDate: string;
+  status: string;
+}
+
+export interface CumulativeFlowData {
+  dates: string[];
+  columns: Array<{ name: string; color: string; counts: number[] }>;
+}
+
+export interface CycleTimeData {
+  tasks: Array<{ key: string; title: string; completedDate: string; cycleTimeDays: number; storyPoints: number }>;
+  average: number;
+  median: number;
+  p90: number;
+  distribution: Array<{ range: string; count: number }>;
+}
+
+export interface BurndownData {
+  sprintName: string;
+  totalPoints?: number;
+  days: Array<{ date: string; ideal: number; actual: number | null }>;
+}
+
+export interface WorkloadMember {
+  userId: string;
+  logged: number;
+  estimated: number;
+  utilization: number;
+  taskCount: number;
+  completedTasks: number;
+  totalPoints: number;
+}
+
+export interface BudgetUtilization {
+  total: number;
+  spent: number;
+  remaining: number;
+  currency: string;
+  billingType: string;
+  burnRate: number;
+  projectedOverrun: number;
+  byUser: Array<{ userId: string; hours: number; cost: number }>;
+}
+
+export interface OverviewStats {
+  totalTasks: number;
+  completedTasks: number;
+  completionRate: number;
+  totalPoints: number;
+  completedPoints: number;
+  avgCycleTime: number;
+  statusBreakdown: Record<string, number>;
+}
+
+export const reportingApi = {
+  getVelocity: (projectId: string) =>
+    request<{ sprints: VelocitySprint[] }>(`/tasks/reports/${projectId}/velocity`),
+  getCumulativeFlow: (projectId: string, from?: string, to?: string) => {
+    const params = new URLSearchParams();
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return request<CumulativeFlowData>(`/tasks/reports/${projectId}/cumulative-flow${qs}`);
+  },
+  getCycleTime: (projectId: string) =>
+    request<CycleTimeData>(`/tasks/reports/${projectId}/cycle-time`),
+  getBurndown: (projectId: string, sprintId: string) =>
+    request<BurndownData>(`/tasks/reports/${projectId}/burndown/${sprintId}`),
+  getWorkload: (projectId: string) =>
+    request<{ members: WorkloadMember[] }>(`/tasks/reports/${projectId}/workload`),
+  getEpicProgress: (projectId: string) =>
+    request<{ epics: any[] }>(`/tasks/reports/${projectId}/epic-progress`),
+  getOverview: (projectId: string) =>
+    request<OverviewStats>(`/tasks/reports/${projectId}/overview`),
+  getBudget: (projectId: string) =>
+    request<BudgetUtilization>(`/projects/${projectId}/reports/budget`),
+};
+
 // ── Task API ──
 
 export interface Task {

@@ -7,10 +7,12 @@ import { Reflector } from '@nestjs/core';
 import { TaskController, TimesheetController } from './task.controller';
 import { BoardController } from './board.controller';
 import { SprintController } from './sprint.controller';
+import { TaskReportingController } from './reporting.controller';
 import { NotificationController } from './notification.controller';
 import { TaskService } from './task.service';
 import { BoardService } from './board.service';
 import { SprintService } from './sprint.service';
+import { TaskReportingService } from './reporting.service';
 import { NotificationService } from './notification.service';
 import { TaskSchema } from './schemas/task.schema';
 import { CounterSchema } from './schemas/counter.schema';
@@ -42,8 +44,8 @@ import { RolesGuard } from './guards/roles.guard';
       }),
     }),
   ],
-  controllers: [TaskController, TimesheetController, BoardController, SprintController, NotificationController],
-  providers: [TaskService, BoardService, SprintService, NotificationService, JwtAuthGuard, RolesGuard, Reflector],
-  exports: [TaskService, BoardService, SprintService, NotificationService],
+  controllers: [TaskController, TimesheetController, BoardController, SprintController, TaskReportingController, NotificationController],
+  providers: [TaskService, BoardService, SprintService, TaskReportingService, NotificationService, JwtAuthGuard, RolesGuard, Reflector],
+  exports: [TaskService, BoardService, SprintService, TaskReportingService, NotificationService],
 })
 export class TaskModule {}

@@ -40,46 +40,13 @@ export class ReportingController {
 
   constructor(private reportingService: ReportingService) {}
 
-  @Get('cumulative-flow')
-  async getCumulativeFlowDiagram(
-    @Param('projectId') projectId: string,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-  ) {
-    const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const toDate = to ? new Date(to) : new Date();
-
-    const data = await this.reportingService.getCumulativeFlowData(
-      projectId,
-      fromDate,
-      toDate,
-    );
+  @Get('budget')
+  async getBudgetUtilization(@Param('projectId') projectId: string) {
+    const data = await this.reportingService.getBudgetUtilization(projectId);
 
     return {
       success: true,
-      message: 'Cumulative flow data retrieved',
-      data,
-    };
-  }
-
-  @Get('cycle-time')
-  async getCycleTimeChart(@Param('projectId') projectId: string) {
-    const data = await this.reportingService.getCycleTimeData(projectId);
-
-    return {
-      success: true,
-      message: 'Cycle time data retrieved',
-      data,
-    };
-  }
-
-  @Get('epic-progress')
-  async getEpicProgressReport(@Param('projectId') projectId: string) {
-    const data = await this.reportingService.getEpicProgressData(projectId);
-
-    return {
-      success: true,
-      message: 'Epic progress data retrieved',
+      message: 'Budget utilization data retrieved',
       data,
     };
   }
