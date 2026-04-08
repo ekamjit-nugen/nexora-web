@@ -787,6 +787,159 @@ export class ProjectService {
     };
   }
 
+  // ── Manager Overview ──
+
+  async getManagerOverview(orgId?: string) {
+    const baseFilter: any = { isDeleted: false };
+    if (orgId) baseFilter.organizationId = orgId;
+
+    // Fetch all non-deleted projects
+    const projects = await this.projectModel.find(baseFilter).lean();
+
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    // ── Project Health ──
+    const activeStatuses = ['planning', 'active', 'on_hold'];
+    const activeProjects = projects.filter(p => activeStatuses.includes(p.status));
+
+    const projectHealth = activeProjects.map(project => {
+      // Find active sprint (project-level sprint info from milestones/settings)
+      const activeMilestones = (project.milestones || []).filter(
+        m => m.status === 'in_progress' || m.status === 'pending',
+      );
+      const nextMilestone = activeMilestones
+        .sort((a, b) => new Date(a.targetDate).getTime() - new Date(b.targetDate).getTime())[0];
+
+      const overdueMilestoneCount = (project.milestones || []).filter(
+        m => m.status !== 'completed' && m.status !== 'missed' && new Date(m.targetDate) < now,
+      ).length;
+
+      // Budget utilization
+      const budgetTotal = project.budget?.amount || 0;
+      const budgetSpent = project.budget?.spent || 0;
+      const budgetUtilization = budgetTotal > 0
+        ? Math.round((budgetSpent / budgetTotal) * 100)
+        : 0;
+
+      // Open high-impact risks as proxy for blocked count
+      const blockedTaskCount = (project.risks || []).filter(
+        r => r.status === 'open' && (r.impact === 'high' || r.probability === 'high'),
+      ).length;
+
+      return {
+        projectId: project._id.toString(),
+        name: project.projectName,
+        key: project.projectKey || '',
+        status: project.status,
+        healthScore: project.healthScore ?? 100,
+        progressPercentage: project.progressPercentage ?? 0,
+        activeSprint: nextMilestone ? {
+          name: nextMilestone.name,
+          daysRemaining: Math.ceil(
+            (new Date(nextMilestone.targetDate).getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+          ),
+          completionRate: project.milestones.length > 0
+            ? Math.round(
+                (project.milestones.filter(m => m.status === 'completed').length / project.milestones.length) * 100,
+              )
+            : 0,
+        } : null,
+        overdueTaskCount: overdueMilestoneCount,
+        blockedTaskCount,
+        budgetUtilization,
+      };
+    });
+
+    // ── Team Summary ──
+    // Collect all unique team members across all projects with their total allocation
+    const memberAllocation = new Map<string, number>();
+    for (const project of activeProjects) {
+      for (const member of project.team || []) {
+        const current = memberAllocation.get(member.userId) || 0;
+        memberAllocation.set(member.userId, current + (member.allocationPercentage || 0));
+      }
+    }
+
+    const totalMembers = memberAllocation.size;
+    let overAllocated = 0;
+    let underAllocated = 0;
+    for (const [, allocation] of memberAllocation) {
+      if (allocation > 100) overAllocated++;
+      if (allocation < 50) underAllocated++;
+    }
+
+    const teamSummary = { totalMembers, overAllocated, underAllocated };
+
+    // ── Pending Approvals ──
+    // Count is based on data available in project service (placeholder for cross-service)
+    const pendingApprovals = {
+      timesheets: 0,
+      leaveRequests: 0,
+    };
+
+    // ── Upcoming Milestones ──
+    const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const upcomingMilestones: Array<{
+      projectName: string;
+      milestoneName: string;
+      targetDate: string;
+      status: string;
+      daysUntil: number;
+    }> = [];
+
+    for (const project of projects) {
+      for (const milestone of project.milestones || []) {
+        const targetDate = new Date(milestone.targetDate);
+        if (
+          (milestone.status === 'pending' || milestone.status === 'in_progress') &&
+          targetDate >= now &&
+          targetDate <= thirtyDaysFromNow
+        ) {
+          upcomingMilestones.push({
+            projectName: project.projectName,
+            milestoneName: milestone.name,
+            targetDate: targetDate.toISOString(),
+            status: milestone.status,
+            daysUntil: Math.ceil((targetDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)),
+          });
+        }
+      }
+    }
+    upcomingMilestones.sort((a, b) => a.daysUntil - b.daysUntil);
+
+    // ── Weekly Metrics ──
+    // Computed from project activities within the last 7 days
+    let tasksCompleted = 0;
+    let tasksCreated = 0;
+    for (const project of projects) {
+      for (const activity of project.activities || []) {
+        if (new Date(activity.createdAt) >= weekAgo) {
+          if (activity.action === 'created') tasksCreated++;
+          if (activity.action === 'status_changed' && activity.description?.includes('completed')) {
+            tasksCompleted++;
+          }
+        }
+      }
+    }
+
+    // Hours logged and avg cycle time are placeholders until cross-service calls are available
+    const weeklyMetrics = {
+      tasksCompleted,
+      tasksCreated,
+      hoursLogged: 0,
+      avgCycleTime: 0,
+    };
+
+    return {
+      projectHealth,
+      teamSummary,
+      pendingApprovals,
+      upcomingMilestones,
+      weeklyMetrics,
+    };
+  }
+
   // ── Archive Project ──
 
   async archiveProject(projectId: string, userId: string, orgId?: string) {
