@@ -3,6 +3,30 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { INotification } from './schemas/notification.schema';
 
+export type NotificationType = 'mention' | 'assignment' | 'status_change' | 'comment' | 'due_date' | 'overdue' | 'sprint';
+
+/**
+ * Extract @mentioned user IDs from text content.
+ * Supports:
+ *   - Rich mention: @[Display Name](userId)
+ *   - Simple ObjectId mention: @64a1b2c3d4e5f6a7b8c9d0e1
+ */
+export function extractMentions(text: string): string[] {
+  const ids = new Set<string>();
+  // Rich mention pattern: @[name](userId)
+  const richRegex = /@\[([^\]]+)\]\(([^)]+)\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = richRegex.exec(text)) !== null) {
+    ids.add(match[2]);
+  }
+  // Simple ObjectId pattern: @64a1b2c3...
+  const simpleRegex = /@([a-f0-9]{24})\b/g;
+  while ((match = simpleRegex.exec(text)) !== null) {
+    ids.add(match[1]);
+  }
+  return Array.from(ids);
+}
+
 @Injectable()
 export class NotificationService {
   private readonly logger = new Logger(NotificationService.name);
@@ -16,7 +40,7 @@ export class NotificationService {
     userId: string;
     taskId: string;
     projectId: string;
-    type: 'mention' | 'assignment' | 'status_change' | 'comment' | 'due_date';
+    type: NotificationType;
     actor: { userId: string; userName: string; userEmail: string };
     title: string;
     message: string;
@@ -141,5 +165,174 @@ export class NotificationService {
       taskKey: data.taskKey,
       actionUrl: `/projects/${data.projectId}/items/${data.taskId}`,
     });
+  }
+
+  async createStatusChangeNotification(data: {
+    organizationId?: string;
+    userId: string;
+    taskId: string;
+    projectId: string;
+    taskKey?: string;
+    taskTitle: string;
+    fromStatus: string;
+    toStatus: string;
+    actor: { userId: string; userName: string; userEmail: string };
+  }): Promise<INotification | null> {
+    if (data.userId === data.actor.userId) return null;
+    return this.createNotification({
+      organizationId: data.organizationId,
+      userId: data.userId,
+      taskId: data.taskId,
+      projectId: data.projectId,
+      type: 'status_change',
+      actor: data.actor,
+      title: `${data.actor.userName} changed status of ${data.taskKey || data.taskTitle}`,
+      message: `Status changed from ${data.fromStatus} to ${data.toStatus}`,
+      taskKey: data.taskKey,
+      actionUrl: `/projects/${data.projectId}/items/${data.taskId}`,
+    });
+  }
+
+  async createCommentNotification(data: {
+    organizationId?: string;
+    recipientIds: string[];
+    taskId: string;
+    projectId: string;
+    taskKey?: string;
+    taskTitle: string;
+    actor: { userId: string; userName: string; userEmail: string };
+  }): Promise<INotification[]> {
+    const notifications = await Promise.all(
+      data.recipientIds
+        .filter((id) => id !== data.actor.userId)
+        .map((userId) =>
+          this.createNotification({
+            organizationId: data.organizationId,
+            userId,
+            taskId: data.taskId,
+            projectId: data.projectId,
+            type: 'comment',
+            actor: data.actor,
+            title: `${data.actor.userName} commented on ${data.taskKey || data.taskTitle}`,
+            message: `New comment on ${data.taskKey || data.taskTitle}`,
+            taskKey: data.taskKey,
+            actionUrl: `/projects/${data.projectId}/items/${data.taskId}`,
+          }),
+        ),
+    );
+    return notifications;
+  }
+
+  async createDueDateNotification(data: {
+    organizationId?: string;
+    userId: string;
+    taskId: string;
+    projectId: string;
+    taskKey?: string;
+    taskTitle: string;
+    dueLabel: string; // e.g. "tomorrow", "today"
+  }): Promise<INotification> {
+    const systemActor = { userId: 'system', userName: 'Nexora', userEmail: 'system@nexora.app' };
+    return this.createNotification({
+      organizationId: data.organizationId,
+      userId: data.userId,
+      taskId: data.taskId,
+      projectId: data.projectId,
+      type: 'due_date',
+      actor: systemActor,
+      title: `${data.taskKey || data.taskTitle} is due ${data.dueLabel}`,
+      message: `Task "${data.taskTitle}" is due ${data.dueLabel}. Make sure it's on track.`,
+      taskKey: data.taskKey,
+      actionUrl: `/projects/${data.projectId}/items/${data.taskId}`,
+    });
+  }
+
+  async createOverdueNotification(data: {
+    organizationId?: string;
+    userId: string;
+    taskId: string;
+    projectId: string;
+    taskKey?: string;
+    taskTitle: string;
+    daysOverdue: number;
+  }): Promise<INotification> {
+    const systemActor = { userId: 'system', userName: 'Nexora', userEmail: 'system@nexora.app' };
+    return this.createNotification({
+      organizationId: data.organizationId,
+      userId: data.userId,
+      taskId: data.taskId,
+      projectId: data.projectId,
+      type: 'overdue',
+      actor: systemActor,
+      title: `${data.taskKey || data.taskTitle} is overdue`,
+      message: `Task "${data.taskTitle}" is overdue by ${data.daysOverdue} day${data.daysOverdue === 1 ? '' : 's'}.`,
+      taskKey: data.taskKey,
+      actionUrl: `/projects/${data.projectId}/items/${data.taskId}`,
+    });
+  }
+
+  async createSprintNotification(data: {
+    organizationId?: string;
+    recipientIds: string[];
+    projectId: string;
+    sprintName: string;
+    event: 'started' | 'completed';
+    details?: string;
+    actor: { userId: string; userName: string; userEmail: string };
+  }): Promise<INotification[]> {
+    const notifications = await Promise.all(
+      data.recipientIds
+        .filter((id) => id !== data.actor.userId)
+        .map((userId) =>
+          this.createNotification({
+            organizationId: data.organizationId,
+            userId,
+            taskId: '', // sprint notifications don't have a specific taskId
+            projectId: data.projectId,
+            type: 'sprint',
+            actor: data.actor,
+            title: `Sprint "${data.sprintName}" ${data.event}`,
+            message: data.details || `Sprint "${data.sprintName}" has been ${data.event}.`,
+            actionUrl: `/projects/${data.projectId}`,
+          }),
+        ),
+    );
+    return notifications;
+  }
+
+  /**
+   * Notify watchers of a task (excluding the actor).
+   */
+  async notifyWatchers(data: {
+    organizationId?: string;
+    watchers: string[];
+    taskId: string;
+    projectId: string;
+    taskKey?: string;
+    taskTitle: string;
+    type: NotificationType;
+    title: string;
+    message: string;
+    actor: { userId: string; userName: string; userEmail: string };
+  }): Promise<INotification[]> {
+    const notifications = await Promise.all(
+      (data.watchers || [])
+        .filter((id) => id !== data.actor.userId)
+        .map((userId) =>
+          this.createNotification({
+            organizationId: data.organizationId,
+            userId,
+            taskId: data.taskId,
+            projectId: data.projectId,
+            type: data.type,
+            actor: data.actor,
+            title: data.title,
+            message: data.message,
+            taskKey: data.taskKey,
+            actionUrl: `/projects/${data.projectId}/items/${data.taskId}`,
+          }),
+        ),
+    );
+    return notifications;
   }
 }

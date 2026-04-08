@@ -14,6 +14,7 @@ import { BoardSwimlanes } from "@/components/board-swimlanes";
 import { BulkOperations } from "@/components/bulk-operations";
 import GanttChart, { GanttItem } from "@/components/projects/GanttChart";
 import RoadmapView, { RoadmapProject, RoadmapMilestone, RoadmapRelease, RoadmapEpic } from "@/components/projects/RoadmapView";
+import ActivityFeed from "@/components/projects/ActivityFeed";
 import { toast } from "sonner";
 
 // ── Constants ──
@@ -4130,7 +4131,7 @@ function RoadmapInlineView({ projectId, project }: { projectId: string; project:
 
 // ── Main Page ──
 
-type ViewTab = "summary" | "timeline" | "board" | "calendar" | "list" | "planning" | "hierarchy" | "reports" | "gantt" | "roadmap";
+type ViewTab = "summary" | "timeline" | "board" | "calendar" | "list" | "planning" | "hierarchy" | "reports" | "gantt" | "roadmap" | "activity";
 
 export default function ProjectDetailPage() {
   const { user, loading: authLoading, logout } = useAuth();
@@ -4581,6 +4582,7 @@ export default function ProjectDetailPage() {
                   { key: "planning", label: "Backlog", icon: "M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" },
                   { key: "reports", label: "Reports", icon: "M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
                   { key: "roadmap", label: "Roadmap", icon: "M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l5.447 2.724A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" },
+                  { key: "activity", label: "Activity", icon: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" },
                 ] as const).map(({ key, label, icon }) => (
                   <button
                     key={key}
@@ -4698,6 +4700,11 @@ export default function ProjectDetailPage() {
               </button>
             </div>
             <RoadmapInlineView projectId={projectId} project={project} />
+          </div>
+        )}
+        {activeView === "activity" && (
+          <div className="mt-2">
+            <ActivityFeed projectId={projectId} limit={30} />
           </div>
         )}
 

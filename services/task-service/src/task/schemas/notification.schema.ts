@@ -5,7 +5,7 @@ export interface INotification extends Document {
   userId: string; // recipient
   taskId: string;
   projectId: string;
-  type: 'mention' | 'assignment' | 'status_change' | 'comment' | 'due_date';
+  type: 'mention' | 'assignment' | 'status_change' | 'comment' | 'due_date' | 'overdue' | 'sprint';
   actor: {
     userId: string;
     userName: string;
@@ -24,11 +24,11 @@ export const NotificationSchema = new Schema<INotification>(
   {
     organizationId: { type: String, default: null, index: true },
     userId: { type: String, required: true, index: true },
-    taskId: { type: String, required: true, index: true },
+    taskId: { type: String, default: '', index: true },
     projectId: { type: String, required: true, index: true },
     type: {
       type: String,
-      enum: ['mention', 'assignment', 'status_change', 'comment', 'due_date'],
+      enum: ['mention', 'assignment', 'status_change', 'comment', 'due_date', 'overdue', 'sprint'],
       required: true,
     },
     actor: {

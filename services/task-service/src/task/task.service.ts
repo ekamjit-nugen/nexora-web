@@ -6,7 +6,7 @@ import { IBoard } from './schemas/board.schema';
 import { ICounter } from './schemas/counter.schema';
 import { ITimesheet } from './schemas/timesheet.schema';
 import { IActivity } from './schemas/activity.schema';
-import { NotificationService } from './notification.service';
+import { NotificationService, extractMentions } from './notification.service';
 import {
   CreateTaskDto, UpdateTaskDto, AddCommentDto,
   LogTimeDto, TaskQueryDto, UpdateStatusDto, BulkUpdateDto,
@@ -63,6 +63,21 @@ export class TaskService {
       entityTitle: task.title,
       details: { type: task.type, priority: task.priority, status: task.status },
     }).catch(() => {});
+
+    // Notification: assignment on creation
+    if (task.assigneeId && task.assigneeId !== userId) {
+      const actor = { userId, userName: userId, userEmail: userId };
+      this.notificationService.createAssignmentNotification({
+        organizationId: orgId,
+        userId: task.assigneeId,
+        taskId: task._id.toString(),
+        projectId: task.projectId,
+        taskKey: task.taskKey,
+        taskTitle: task.title,
+        actor,
+      }).catch((e) => this.logger.error(`Failed to create assignment notification: ${e.message}`));
+    }
+
     return task;
   }
 
@@ -139,6 +154,9 @@ export class TaskService {
       }
     }
 
+    const previousAssignee = task.assigneeId;
+    const previousStatus = task.status;
+
     const updated = await this.taskModel.findOneAndUpdate(
       filter,
       updatePayload,
@@ -156,6 +174,62 @@ export class TaskService {
       entityTitle: updated.title,
       details: { ...(dto.status ? { from: task.status, to: dto.status } : {}), ...Object.keys(dto).reduce((a, k) => ({ ...a, [k]: (dto as any)[k] }), {}) },
     }).catch(() => {});
+
+    // Notification triggers (fire-and-forget)
+    const actor = { userId, userName: userId, userEmail: userId };
+    try {
+      // Assignment change notification
+      if (dto.assigneeId && dto.assigneeId !== previousAssignee) {
+        await this.notificationService.createAssignmentNotification({
+          organizationId: orgId,
+          userId: dto.assigneeId,
+          taskId: updated._id.toString(),
+          projectId: updated.projectId,
+          taskKey: updated.taskKey,
+          taskTitle: updated.title,
+          actor,
+        });
+      }
+
+      // Status change notification — notify assignee + watchers
+      if (dto.status && dto.status !== previousStatus) {
+        if (updated.assigneeId) {
+          await this.notificationService.createStatusChangeNotification({
+            organizationId: orgId,
+            userId: updated.assigneeId,
+            taskId: updated._id.toString(),
+            projectId: updated.projectId,
+            taskKey: updated.taskKey,
+            taskTitle: updated.title,
+            fromStatus: previousStatus,
+            toStatus: dto.status,
+            actor,
+          });
+        }
+        // Notify watchers
+        if (updated.watchers?.length) {
+          const alreadyNotified = new Set([userId, updated.assigneeId].filter(Boolean));
+          const watcherIds = updated.watchers.filter((w) => !alreadyNotified.has(w));
+          if (watcherIds.length) {
+            await this.notificationService.notifyWatchers({
+              organizationId: orgId,
+              watchers: watcherIds,
+              taskId: updated._id.toString(),
+              projectId: updated.projectId,
+              taskKey: updated.taskKey,
+              taskTitle: updated.title,
+              type: 'status_change',
+              title: `${updated.taskKey || updated.title} status changed`,
+              message: `Status changed from ${previousStatus} to ${dto.status}`,
+              actor,
+            });
+          }
+        }
+      }
+    } catch (e) {
+      this.logger.error(`Failed to send update notifications: ${e.message}`);
+    }
+
     return updated;
   }
 
@@ -191,26 +265,75 @@ export class TaskService {
     if (!task) throw new NotFoundException('Task not found');
     this.logger.log(`Comment added to task: ${task._id}`);
 
-    // Create mention notifications if mentionedUserIds provided
-    if (dto.mentionedUserIds && dto.mentionedUserIds.length > 0) {
-      try {
+    const actor = { userId, userName: userId, userEmail: userId };
+    const alreadyNotified = new Set<string>([userId]);
+
+    // Create mention notifications — combine explicit + auto-detected mentions
+    try {
+      const autoMentionedIds = extractMentions(dto.content);
+      const explicitIds = dto.mentionedUserIds || [];
+      const allMentionIds = [...new Set([...explicitIds, ...autoMentionedIds])];
+      if (allMentionIds.length > 0) {
         await this.notificationService.createMentionNotification({
           organizationId: orgId,
-          mentionedUserIds: dto.mentionedUserIds,
+          mentionedUserIds: allMentionIds,
           taskId: task._id.toString(),
           projectId: task.projectId,
           taskKey: task.taskKey,
           taskTitle: task.title,
-          actor: {
-            userId: userId,
-            userName: userId, // In production, fetch from user service
-            userEmail: userId,
-          },
+          actor,
         });
-      } catch (error) {
-        this.logger.error(`Failed to create mention notifications: ${error.message}`);
+        allMentionIds.forEach((id) => alreadyNotified.add(id));
       }
+    } catch (error) {
+      this.logger.error(`Failed to create mention notifications: ${error.message}`);
     }
+
+    // Comment notification: notify assignee + watchers (excluding already-mentioned users)
+    try {
+      const commentRecipients: string[] = [];
+      if (task.assigneeId && !alreadyNotified.has(task.assigneeId)) {
+        commentRecipients.push(task.assigneeId);
+        alreadyNotified.add(task.assigneeId);
+      }
+      if (task.watchers?.length) {
+        for (const w of task.watchers) {
+          if (!alreadyNotified.has(w)) {
+            commentRecipients.push(w);
+            alreadyNotified.add(w);
+          }
+        }
+      }
+      // Also notify the reporter if different
+      if (task.reporterId && !alreadyNotified.has(task.reporterId)) {
+        commentRecipients.push(task.reporterId);
+      }
+      if (commentRecipients.length > 0) {
+        await this.notificationService.createCommentNotification({
+          organizationId: orgId,
+          recipientIds: commentRecipients,
+          taskId: task._id.toString(),
+          projectId: task.projectId,
+          taskKey: task.taskKey,
+          taskTitle: task.title,
+          actor,
+        });
+      }
+    } catch (error) {
+      this.logger.error(`Failed to create comment notifications: ${error.message}`);
+    }
+
+    // Activity log for comment
+    await this.logActivity({
+      projectId: task.projectId,
+      organizationId: orgId,
+      taskId: task._id.toString(),
+      action: 'task.comment_added',
+      actorId: userId,
+      entityType: 'task',
+      entityTitle: task.title,
+      details: { commentPreview: dto.content.substring(0, 100) },
+    }).catch(() => {});
 
     return task;
   }
@@ -476,6 +599,58 @@ export class TaskService {
       );
       if (!task) throw new NotFoundException('Task not found');
       this.logger.log(`Task ${taskId} status changed to ${dto.status}`);
+
+      // Notification + activity for status change
+      const actor = { userId, userName: userId, userEmail: userId };
+      try {
+        // Notify assignee
+        if (task.assigneeId) {
+          await this.notificationService.createStatusChangeNotification({
+            organizationId: orgId,
+            userId: task.assigneeId,
+            taskId: task._id.toString(),
+            projectId: task.projectId,
+            taskKey: task.taskKey,
+            taskTitle: task.title,
+            fromStatus: existingTask.status,
+            toStatus: dto.status,
+            actor,
+          });
+        }
+        // Notify watchers (excluding assignee and actor)
+        if (task.watchers?.length) {
+          const skip = new Set([userId, task.assigneeId].filter(Boolean));
+          const watcherIds = task.watchers.filter((w) => !skip.has(w));
+          if (watcherIds.length) {
+            await this.notificationService.notifyWatchers({
+              organizationId: orgId,
+              watchers: watcherIds,
+              taskId: task._id.toString(),
+              projectId: task.projectId,
+              taskKey: task.taskKey,
+              taskTitle: task.title,
+              type: 'status_change',
+              title: `${task.taskKey || task.title} status changed to ${dto.status}`,
+              message: `Status changed from ${existingTask.status} to ${dto.status}`,
+              actor,
+            });
+          }
+        }
+      } catch (e) {
+        this.logger.error(`Failed to send status change notifications: ${e.message}`);
+      }
+
+      await this.logActivity({
+        projectId: task.projectId,
+        organizationId: orgId,
+        taskId: task._id.toString(),
+        action: 'task.status_changed',
+        actorId: userId,
+        entityType: 'task',
+        entityTitle: task.title,
+        details: { from: existingTask.status, to: dto.status },
+      }).catch(() => {});
+
       return task;
     }
 
