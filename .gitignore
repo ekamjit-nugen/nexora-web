@@ -67,3 +67,4 @@ redis-data/
 # Media
 uploads/
 public/uploads/
+.claude/worktrees/
