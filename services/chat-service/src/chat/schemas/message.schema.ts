@@ -17,6 +17,14 @@ export interface IReadReceipt {
   readAt: Date;
 }
 
+export interface IClipData {
+  clipId: string;
+  mediaUrl: string;
+  thumbnailUrl: string;
+  duration: number;
+  transcription: string;
+}
+
 export interface IMessage extends Document {
   conversationId: string;
   senderId: string;
@@ -27,6 +35,7 @@ export interface IMessage extends Document {
   fileName?: string;
   fileSize?: number;
   fileMimeType?: string;
+  clip?: IClipData;
   reactions: IReaction[];
   attachments: IAttachment[];
   isEdited: boolean;
@@ -45,13 +54,23 @@ export const MessageSchema = new Schema<IMessage>(
     content: { type: String, required: false, default: '' },
     type: {
       type: String,
-      enum: ['text', 'file', 'image', 'video', 'system', 'poll', 'standup'],
+      enum: ['text', 'file', 'image', 'video', 'clip', 'system', 'poll', 'standup'],
       default: 'text',
     },
     fileUrl: { type: String, default: null },
     fileName: { type: String, default: null },
     fileSize: { type: Number, default: null },
     fileMimeType: { type: String, default: null },
+    clip: {
+      type: {
+        clipId: { type: String },
+        mediaUrl: { type: String },
+        thumbnailUrl: { type: String },
+        duration: { type: Number },
+        transcription: { type: String },
+      },
+      default: null,
+    },
     replyTo: { type: String, default: null },
     reactions: [
       {

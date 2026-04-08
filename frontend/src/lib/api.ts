@@ -826,6 +826,12 @@ export const chatApi = {
   deleteCustomEmoji: async (id: string) =>
     request<any>(`/chat/emoji/${id}`, { method: 'DELETE' }),
 
+  // Clips
+  createClip: async (data: { conversationId: string; mediaUrl: string; duration: number; fileSize: number; mimeType: string }) =>
+    request<any>('/chat/clips', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
+  getClip: async (clipId: string) => request<any>(`/chat/clips/${clipId}`),
+  getClipTranscription: async (clipId: string) => request<any>(`/chat/clips/${clipId}/transcription`),
+
   // Moderation
   getFlagged: () => request("/chat/moderation/flagged"),
   reviewFlagged: (id: string, data: { status: string }) =>

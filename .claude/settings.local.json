@@ -1,9 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(docker exec:*)",
-      "Bash(bash /Users/ekamjitsingh/Projects/Nexora/scripts/seed-roles.sh)",
-      "Bash(bash /Users/ekamjitsingh/Projects/Nexora/scripts/seed-policies.sh)"
+      "Bash(grep -r \"from ''@elastic/elasticsearch''\" src/ --include=\"*.ts\" -l)",
+      "Bash(curl:*)",
+      "Bash(ls /Users/ekamjitsingh/Projects/Nexora/frontend/.env*)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)"
     ]
   }
 }
