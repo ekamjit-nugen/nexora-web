@@ -12,6 +12,7 @@ import { BoardFilters } from "@/components/board-filters";
 import { BoardSwimlanes } from "@/components/board-swimlanes";
 import { BulkOperations } from "@/components/bulk-operations";
 import GanttChart, { GanttItem } from "@/components/projects/GanttChart";
+import RoadmapView, { RoadmapProject, RoadmapMilestone, RoadmapRelease, RoadmapEpic } from "@/components/projects/RoadmapView";
 import { toast } from "sonner";
 
 // ── Constants ──
@@ -4018,9 +4019,117 @@ function GanttChartView({
   );
 }
 
+// ── Roadmap Inline View ──
+
+function RoadmapInlineView({ projectId, project }: { projectId: string; project: Project | null }) {
+  const router = useRouter();
+  const [roadmapData, setRoadmapData] = useState<RoadmapProject | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchRoadmapData = useCallback(async () => {
+    if (!project) return;
+    try {
+      setLoading(true);
+      let epics: Task[] = [];
+      try {
+        const epicRes = await taskApi.getAll({ projectId, type: "epic" } as Record<string, string>);
+        epics = Array.isArray(epicRes.data) ? epicRes.data : [];
+      } catch {
+        // ignore
+      }
+
+      const epicItems: RoadmapEpic[] = await Promise.all(
+        epics.map(async (epic) => {
+          let childTotal = 0;
+          let childDone = 0;
+          try {
+            const childRes = await taskApi.getChildren(epic._id);
+            const children = Array.isArray(childRes.data) ? childRes.data : [];
+            childTotal = children.length;
+            childDone = children.filter((c) => c.status === "done").length;
+          } catch {
+            // ignore
+          }
+          return {
+            _id: epic._id,
+            title: epic.title,
+            status: epic.status,
+            createdAt: epic.createdAt,
+            dueDate: epic.dueDate,
+            projectId: epic.projectId,
+            childTotal,
+            childDone,
+          };
+        })
+      );
+
+      const milestones: RoadmapMilestone[] = (project.milestones || []).map((m) => ({
+        _id: m._id || crypto.randomUUID(),
+        name: m.name,
+        targetDate: m.targetDate,
+        completedDate: m.completedDate,
+        status: m.status as RoadmapMilestone["status"],
+        description: m.description,
+        phase: m.phase,
+        deliverables: m.deliverables,
+      }));
+
+      const releases: RoadmapRelease[] = (project.releases || []).map((r) => ({
+        _id: r._id || crypto.randomUUID(),
+        name: r.name,
+        status: r.status,
+        startDate: r.startDate,
+        releaseDate: r.releaseDate,
+        releasedDate: r.releasedDate,
+        description: r.description,
+      }));
+
+      setRoadmapData({
+        _id: project._id,
+        projectName: project.projectName,
+        milestones,
+        releases,
+        epics: epicItems,
+      });
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId, project]);
+
+  useEffect(() => {
+    fetchRoadmapData();
+  }, [fetchRoadmapData]);
+
+  if (loading) {
+    return (
+      <div className="animate-pulse space-y-3">
+        <div className="h-6 bg-[#F1F5F9] rounded w-full" />
+        {[1, 2, 3, 4].map((i) => (
+          <div key={i} className="flex gap-4">
+            <div className="h-10 bg-[#F1F5F9] rounded w-48 shrink-0" />
+            <div className="h-10 bg-[#F1F5F9] rounded flex-1" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (!roadmapData) return null;
+
+  return (
+    <RoadmapView
+      projects={[roadmapData]}
+      mode="single"
+      onEpicClick={(epicId, projId) => router.push(`/projects/${projId}/items/${epicId}`)}
+    />
+  );
+}
+
 // ── Main Page ──
 
-type ViewTab = "summary" | "timeline" | "board" | "calendar" | "list" | "planning" | "hierarchy" | "reports" | "gantt";
+type ViewTab = "summary" | "timeline" | "board" | "calendar" | "list" | "planning" | "hierarchy" | "reports" | "gantt" | "roadmap";
 
 export default function ProjectDetailPage() {
   const { user, loading: authLoading, logout, isProjectRole, hasOrgRole } = useAuth();
@@ -4469,6 +4578,7 @@ export default function ProjectDetailPage() {
                   { key: "list", label: "List", icon: "M4 6h16M4 10h16M4 14h16M4 18h16" },
                   { key: "planning", label: "Backlog", icon: "M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" },
                   { key: "reports", label: "Reports", icon: "M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
+                  { key: "roadmap", label: "Roadmap", icon: "M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l5.447 2.724A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" },
                 ] as const).map(({ key, label, icon }) => (
                   <button
                     key={key}
@@ -4570,6 +4680,23 @@ export default function ProjectDetailPage() {
         )}
         {activeView === "reports" && (
           <ReportsView tasks={tasks} sprints={sprints} employees={employees} project={project} activityLogs={activityLogs} />
+        )}
+        {activeView === "roadmap" && (
+          <div className="mt-2">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-[13px] text-[#64748B]">Strategic roadmap view for this project</p>
+              <button
+                onClick={() => router.push(`/projects/${projectId}/roadmap`)}
+                className="text-[12px] text-[#2E86C1] hover:text-[#2471A3] font-medium flex items-center gap-1"
+              >
+                Open Full View
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </button>
+            </div>
+            <RoadmapInlineView projectId={projectId} project={project} />
+          </div>
         )}
 
       </main>

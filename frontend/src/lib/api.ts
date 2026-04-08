@@ -1355,7 +1355,8 @@ export interface Project {
   startDate?: string;
   endDate?: string;
   team: Array<{ userId: string; role: string; name?: string; email?: string; avatar?: string; allocation?: number }>;
-  milestones?: Array<{ _id?: string; name: string; targetDate: string; status: string; description?: string }>;
+  milestones?: Array<{ _id?: string; name: string; targetDate: string; completedDate?: string; status: string; description?: string; phase?: string; deliverables?: string[]; ownerId?: string; linkedTaskIds?: string[]; order?: number }>;
+  releases?: Array<{ _id?: string; name: string; description?: string; releaseDate?: string; status: 'planned' | 'in_progress' | 'released' | 'archived'; startDate?: string; releasedDate?: string; releaseNotes?: string; issues?: string[] }>;
   budget?: { amount?: number; currency?: string; billingType?: string; spent?: number };
   settings?: {
     boardType?: 'scrum' | 'kanban' | 'custom';
@@ -1365,6 +1366,7 @@ export interface Project {
     enableSubtasks?: boolean;
     enableEpics?: boolean;
     enableSprints?: boolean;
+    enableReleases?: boolean;
   };
   healthScore?: number;
   progressPercentage?: number;
@@ -1433,6 +1435,12 @@ export const projectApi = {
     request<ProjectTemplate>(`/projects/templates/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteTemplate: (id: string) =>
     request(`/projects/templates/${id}`, { method: "DELETE" }),
+
+  // ── Releases ──
+  getReleases: (projectId: string) =>
+    request<Project['releases']>(`/projects/${projectId}/releases`),
+  getRelease: (projectId: string, releaseId: string) =>
+    request<NonNullable<Project['releases']>[number]>(`/projects/${projectId}/releases/${releaseId}`),
 };
 
 // ── Project Reporting API ──

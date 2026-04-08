@@ -5,7 +5,8 @@
       "Bash(curl:*)",
       "Bash(ls /Users/ekamjitsingh/Projects/Nexora/frontend/.env*)",
       "Bash(git checkout:*)",
-      "Bash(git merge:*)"
+      "Bash(git merge:*)",
+      "Bash(git rm:*)"
     ]
   }
 }

@@ -181,6 +181,12 @@ export default function ProjectsPage() {
               </svg>
               Templates
             </Button>
+            <Button variant="outline" onClick={() => router.push("/projects/roadmap")} className="gap-2 h-10 px-4 border-[#E2E8F0] text-[#475569] hover:bg-[#F8FAFC]">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l5.447 2.724A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+              </svg>
+              Roadmap
+            </Button>
             {canCreateProject && (
               <Button onClick={() => router.push("/projects/new")} className="gap-2 h-10 px-5 bg-[#2E86C1] hover:bg-[#2471A3]">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
