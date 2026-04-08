@@ -29,6 +29,8 @@ export interface ITimesheet extends Document {
   reviewedBy?: string;
   reviewedAt?: Date;
   reviewComment?: string;
+  approvedByDelegateId?: string;
+  delegatorId?: string;
   isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -82,6 +84,8 @@ export const TimesheetSchema = new Schema<ITimesheet>(
     reviewedBy: { type: String, default: null },
     reviewedAt: { type: Date, default: null },
     reviewComment: { type: String, default: '' },
+    approvedByDelegateId: { type: String, default: null },
+    delegatorId: { type: String, default: null },
     isDeleted: { type: Boolean, default: false },
   },
   { timestamps: true },

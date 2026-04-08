@@ -4,6 +4,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ITask } from './schemas/task.schema';
 import { NotificationService } from './notification.service';
+import { TaskService } from './task.service';
 
 @Injectable()
 export class TaskCronService {
@@ -12,6 +13,7 @@ export class TaskCronService {
   constructor(
     @InjectModel('Task') private taskModel: Model<ITask>,
     private notificationService: NotificationService,
+    private taskService: TaskService,
   ) {}
 
   /**
@@ -102,6 +104,21 @@ export class TaskCronService {
       }
     } catch (e) {
       this.logger.error(`Overdue notification cron failed: ${e.message}`);
+    }
+  }
+
+  /**
+   * Run daily at midnight — expire delegations whose endDate has passed.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async expireApprovalDelegations() {
+    try {
+      const count = await this.taskService.expireOldDelegations();
+      if (count > 0) {
+        this.logger.log(`Expired ${count} approval delegation(s)`);
+      }
+    } catch (e) {
+      this.logger.error(`Delegation expiration cron failed: ${e.message}`);
     }
   }
 }

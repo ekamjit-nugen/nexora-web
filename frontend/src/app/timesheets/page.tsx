@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { timesheetApi, billingApi, clientApi, Timesheet, InvoicePreview, Client } from "@/lib/api";
+import { timesheetApi, billingApi, clientApi, Timesheet, InvoicePreview, Client, ApprovalDelegation } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -80,9 +80,24 @@ export default function TimesheetsPage() {
   const [generatedInvoiceId, setGeneratedInvoiceId] = useState<string | null>(null);
   const [generatedInvoiceNumber, setGeneratedInvoiceNumber] = useState<string | null>(null);
 
+  // Delegation state
+  const [showDelegationModal, setShowDelegationModal] = useState(false);
+  const [myDelegations, setMyDelegations] = useState<ApprovalDelegation[]>([]);
+  const [delegatedToMe, setDelegatedToMe] = useState<ApprovalDelegation[]>([]);
+  const [delegateId, setDelegateId] = useState("");
+  const [delegationType, setDelegationType] = useState<string>("temporary");
+  const [delegationProjectId, setDelegationProjectId] = useState("");
+  const [delegationReason, setDelegationReason] = useState("");
+  const [delegationStartDate, setDelegationStartDate] = useState(new Date().toISOString().split("T")[0]);
+  const [delegationEndDate, setDelegationEndDate] = useState("");
+  const [creatingDelegation, setCreatingDelegation] = useState(false);
+  const [showDelegationPanel, setShowDelegationPanel] = useState(false);
+
   useEffect(() => {
     if (!authLoading && !user) router.push("/login");
   }, [user, authLoading, router]);
+
+  const isManager = user?.roles?.some((r: string) => ["admin", "super_admin", "manager", "hr"].includes(r)) || false;
 
   const fetchTimesheets = useCallback(async () => {
     if (!user) return;
@@ -108,6 +123,66 @@ export default function TimesheetsPage() {
   useEffect(() => {
     if (user) fetchTimesheets();
   }, [fetchTimesheets, user]);
+
+  const fetchDelegations = useCallback(async () => {
+    if (!user) return;
+    try {
+      const [myRes, toMeRes] = await Promise.all([
+        isManager ? timesheetApi.getMyDelegations() : Promise.resolve({ data: [] }),
+        timesheetApi.getDelegatedToMe(),
+      ]);
+      setMyDelegations(Array.isArray(myRes.data) ? myRes.data : []);
+      setDelegatedToMe(Array.isArray(toMeRes.data) ? toMeRes.data : []);
+    } catch {
+      // Silently fail — delegations are supplementary
+    }
+  }, [user, isManager]);
+
+  useEffect(() => {
+    if (user) fetchDelegations();
+  }, [fetchDelegations, user]);
+
+  const isDelegate = delegatedToMe.length > 0;
+
+  const handleCreateDelegation = async () => {
+    if (!delegateId) { toast.error("Select a delegate"); return; }
+    if (delegationType === "temporary" && !delegationEndDate) { toast.error("Select an end date for temporary delegation"); return; }
+    if (delegationType === "project_specific" && !delegationProjectId) { toast.error("Enter a project ID for project-specific delegation"); return; }
+    setCreatingDelegation(true);
+    try {
+      await timesheetApi.createDelegation({
+        delegateId,
+        type: delegationType,
+        projectId: delegationType === "project_specific" ? delegationProjectId : undefined,
+        reason: delegationReason || undefined,
+        startDate: delegationStartDate,
+        endDate: delegationType === "temporary" ? delegationEndDate : undefined,
+        autoExpire: delegationType === "temporary",
+      });
+      toast.success("Delegation created successfully");
+      setShowDelegationModal(false);
+      setDelegateId("");
+      setDelegationType("temporary");
+      setDelegationProjectId("");
+      setDelegationReason("");
+      setDelegationEndDate("");
+      fetchDelegations();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to create delegation");
+    } finally {
+      setCreatingDelegation(false);
+    }
+  };
+
+  const handleRevokeDelegation = async (id: string) => {
+    try {
+      await timesheetApi.revokeDelegation(id);
+      toast.success("Delegation revoked");
+      fetchDelegations();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to revoke delegation");
+    }
+  };
 
   const handleCreate = async () => {
     if (!createStart || !createEnd) { toast.error("Select period dates"); return; }
@@ -258,8 +333,6 @@ export default function TimesheetsPage() {
     return <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC]"><div className="animate-spin rounded-full h-8 w-8 border-2 border-[#2E86C1] border-t-transparent" /></div>;
   }
 
-  const isManager = user.roles?.some((r) => ["admin", "super_admin", "manager", "hr"].includes(r));
-
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
@@ -279,6 +352,21 @@ export default function TimesheetsPage() {
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" /></svg>
                 Generate Invoice ({selectedApproved.length})
               </Button>
+            )}
+            {isManager && (
+              <Button
+                variant="outline"
+                onClick={() => setShowDelegationPanel(!showDelegationPanel)}
+                className="h-9 gap-2 border-[#E2E8F0]"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                Delegation
+              </Button>
+            )}
+            {isDelegate && !isManager && (
+              <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-full">
+                Acting Approver
+              </span>
             )}
             <Button onClick={() => setShowCreate(true)} className="bg-[#2E86C1] hover:bg-[#2471A3] h-9 gap-2">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
@@ -332,11 +420,100 @@ export default function TimesheetsPage() {
             </Card>
           )}
 
+          {/* Delegate Banner */}
+          {isDelegate && !isManager && (
+            <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-5 py-3 flex items-center gap-3">
+              <svg className="w-5 h-5 text-indigo-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              <div>
+                <p className="text-[13px] font-semibold text-indigo-800">You are reviewing timesheets on behalf of a manager</p>
+                <p className="text-[11px] text-indigo-600 mt-0.5">
+                  {delegatedToMe.map((d) => `Delegated by ${d.delegatorId} (${d.type}${d.reason ? ` - ${d.reason}` : ""})`).join("; ")}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Delegation Management Panel */}
+          {showDelegationPanel && isManager && (
+            <Card className="border-[#E2E8F0] bg-white">
+              <CardContent className="p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[14px] font-semibold text-[#0F172A]">Approval Delegations</h3>
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={() => setShowDelegationModal(true)} className="bg-[#2E86C1] hover:bg-[#2471A3] h-8 text-[12px] gap-1">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+                      Delegate Approval
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setShowDelegationPanel(false)} className="h-8 text-[12px] border-[#E2E8F0]">Close</Button>
+                  </div>
+                </div>
+
+                {myDelegations.length === 0 ? (
+                  <p className="text-[12px] text-[#94A3B8] py-4 text-center">No active delegations. Click &quot;Delegate Approval&quot; to assign approval authority.</p>
+                ) : (
+                  <div className="border border-[#E2E8F0] rounded-xl overflow-hidden">
+                    <table className="w-full text-[12px]">
+                      <thead>
+                        <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
+                          <th className="text-left px-4 py-3 font-semibold text-[#475569]">Delegate</th>
+                          <th className="text-left px-4 py-3 font-semibold text-[#475569]">Type</th>
+                          <th className="text-left px-4 py-3 font-semibold text-[#475569]">Reason</th>
+                          <th className="text-left px-4 py-3 font-semibold text-[#475569]">Period</th>
+                          <th className="text-left px-4 py-3 font-semibold text-[#475569]">Status</th>
+                          <th className="text-right px-4 py-3 font-semibold text-[#475569]">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#F1F5F9]">
+                        {myDelegations.map((d) => (
+                          <tr key={d._id} className="hover:bg-[#F8FAFC]">
+                            <td className="px-4 py-3 font-medium text-[#0F172A]">{d.delegateId}</td>
+                            <td className="px-4 py-3">
+                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                                d.type === "permanent" ? "bg-purple-50 text-purple-700" :
+                                d.type === "temporary" ? "bg-blue-50 text-blue-700" :
+                                "bg-teal-50 text-teal-700"
+                              }`}>
+                                {d.type.replace("_", " ")}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-[#64748B]">{d.reason || "-"}</td>
+                            <td className="px-4 py-3 text-[#64748B]">
+                              {new Date(d.startDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                              {d.endDate && ` - ${new Date(d.endDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`}
+                              {!d.endDate && d.type === "permanent" && " - No end date"}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${d.isActive ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
+                                {d.isActive ? "Active" : "Revoked"}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              {d.isActive && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleRevokeDelegation(d._id)}
+                                  className="h-7 text-[11px] border-red-200 text-red-600 hover:bg-red-50"
+                                >
+                                  Revoke
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {/* Tabs */}
           <div className="flex gap-1 bg-[#F1F5F9] rounded-xl p-1 w-fit">
             {[
               { key: "my", label: "My Timesheets" },
-              ...(isManager ? [{ key: "pending", label: "Pending Review" }] : []),
+              ...((isManager || isDelegate) ? [{ key: "pending", label: "Pending Review" }] : []),
               ...(isManager ? [{ key: "all", label: "All Timesheets" }] : []),
             ].map((t) => (
               <button
@@ -434,7 +611,7 @@ export default function TimesheetsPage() {
                               </Button>
                             </>
                           )}
-                          {ts.status === "submitted" && activeTab !== "my" && (
+                          {ts.status === "submitted" && activeTab !== "my" && (isManager || isDelegate) && (
                             <Button
                               size="sm"
                               variant="outline"
@@ -561,6 +738,100 @@ export default function TimesheetsPage() {
             </div>
           )}
         </div>
+
+        {/* Delegation Creation Modal */}
+        {showDelegationModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto mx-4">
+              <div className="sticky top-0 bg-white border-b border-[#E2E8F0] px-6 py-4 flex items-center justify-between rounded-t-2xl">
+                <div>
+                  <h2 className="text-[16px] font-bold text-[#0F172A]">Delegate Approval Authority</h2>
+                  <p className="text-[12px] text-[#64748B] mt-0.5">Assign timesheet approval rights to another team member</p>
+                </div>
+                <button onClick={() => setShowDelegationModal(false)} className="text-[#94A3B8] hover:text-[#64748B] p-1">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="text-[11px] font-semibold text-[#475569] mb-1.5 block">Delegate (User ID) *</label>
+                  <Input
+                    value={delegateId}
+                    onChange={(e) => setDelegateId(e.target.value)}
+                    placeholder="Enter delegate user ID..."
+                    className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-[#475569] mb-1.5 block">Delegation Type *</label>
+                  <select
+                    value={delegationType}
+                    onChange={(e) => setDelegationType(e.target.value)}
+                    className="w-full h-10 text-sm bg-[#F8FAFC] border border-[#E2E8F0] rounded-md px-3 text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[#2E86C1]"
+                  >
+                    <option value="temporary">Temporary (date range)</option>
+                    <option value="permanent">Permanent</option>
+                    <option value="project_specific">Project-Specific</option>
+                  </select>
+                </div>
+                {delegationType === "project_specific" && (
+                  <div>
+                    <label className="text-[11px] font-semibold text-[#475569] mb-1.5 block">Project ID *</label>
+                    <Input
+                      value={delegationProjectId}
+                      onChange={(e) => setDelegationProjectId(e.target.value)}
+                      placeholder="Enter project ID..."
+                      className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0]"
+                    />
+                  </div>
+                )}
+                <div>
+                  <label className="text-[11px] font-semibold text-[#475569] mb-1.5 block">Reason</label>
+                  <Input
+                    value={delegationReason}
+                    onChange={(e) => setDelegationReason(e.target.value)}
+                    placeholder="e.g., On leave, Vacation, In meetings..."
+                    className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0]"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] font-semibold text-[#475569] mb-1.5 block">Start Date *</label>
+                    <Input
+                      type="date"
+                      value={delegationStartDate}
+                      onChange={(e) => setDelegationStartDate(e.target.value)}
+                      className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0]"
+                    />
+                  </div>
+                  {delegationType === "temporary" && (
+                    <div>
+                      <label className="text-[11px] font-semibold text-[#475569] mb-1.5 block">End Date *</label>
+                      <Input
+                        type="date"
+                        value={delegationEndDate}
+                        onChange={(e) => setDelegationEndDate(e.target.value)}
+                        className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0]"
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2 justify-end pt-2">
+                  <Button variant="outline" onClick={() => setShowDelegationModal(false)} className="h-9 border-[#E2E8F0]">
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleCreateDelegation}
+                    disabled={creatingDelegation}
+                    className="bg-[#2E86C1] hover:bg-[#2471A3] h-9"
+                  >
+                    {creatingDelegation ? "Creating..." : "Create Delegation"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Invoice Preview Modal */}
         {showInvoiceModal && (

@@ -1,5 +1,5 @@
 import {
-  IsString, IsOptional, IsNumber, IsArray,
+  IsString, IsOptional, IsNumber, IsArray, IsBoolean,
   IsDateString, IsIn, ValidateNested, Min, Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -84,6 +84,34 @@ export class ReviewTimesheetDto {
   @IsString()
   @IsOptional()
   reviewComment?: string;
+}
+
+export class CreateDelegationDto {
+  @IsString()
+  delegateId: string;
+
+  @IsString()
+  @IsIn(['temporary', 'permanent', 'project_specific'])
+  type: string;
+
+  @IsString()
+  @IsOptional()
+  projectId?: string;
+
+  @IsString()
+  @IsOptional()
+  reason?: string;
+
+  @IsDateString()
+  startDate: string;
+
+  @IsDateString()
+  @IsOptional()
+  endDate?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  autoExpire?: boolean;
 }
 
 export class TimesheetQueryDto {

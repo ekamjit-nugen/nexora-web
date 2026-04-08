@@ -5,6 +5,7 @@ import { ITask } from './schemas/task.schema';
 import { IBoard } from './schemas/board.schema';
 import { ICounter } from './schemas/counter.schema';
 import { ITimesheet } from './schemas/timesheet.schema';
+import { IApprovalDelegation } from './schemas/approval-delegation.schema';
 import { IActivity } from './schemas/activity.schema';
 import { ISprint } from './schemas/sprint.schema';
 import { NotificationService, extractMentions } from './notification.service';
@@ -15,6 +16,7 @@ import {
 import {
   CreateTimesheetDto, UpdateTimesheetDto,
   ReviewTimesheetDto, TimesheetQueryDto,
+  CreateDelegationDto,
 } from './dto/timesheet.dto';
 
 @Injectable()
@@ -26,6 +28,7 @@ export class TaskService {
     @InjectModel('Board') private boardModel: Model<IBoard>,
     @InjectModel('Counter') private counterModel: Model<ICounter>,
     @InjectModel('Timesheet') private timesheetModel: Model<ITimesheet>,
+    @InjectModel('ApprovalDelegation') private delegationModel: Model<IApprovalDelegation>,
     @InjectModel('Activity') private activityModel: Model<IActivity>,
     @InjectModel('Sprint') private sprintModel: Model<ISprint>,
     private notificationService: NotificationService,
@@ -924,16 +927,158 @@ export class TaskService {
     return ts;
   }
 
-  async reviewTimesheet(id: string, dto: ReviewTimesheetDto, reviewerId: string, orgId?: string) {
-    const filter: any = { _id: id, isDeleted: false, status: 'submitted' };
-    if (orgId) filter.organizationId = orgId;
-    const ts = await this.timesheetModel.findOneAndUpdate(
-      filter,
-      { status: dto.status, reviewedBy: reviewerId, reviewedAt: new Date(), reviewComment: dto.reviewComment || '' },
+  // ── Approval Delegation Methods ──
+
+  async createDelegation(dto: CreateDelegationDto, userId: string, orgId: string) {
+    if (dto.type === 'project_specific' && !dto.projectId) {
+      throw new ForbiddenException('projectId is required for project_specific delegation');
+    }
+    if (dto.type === 'temporary' && !dto.endDate) {
+      throw new ForbiddenException('endDate is required for temporary delegation');
+    }
+    // Prevent self-delegation
+    if (dto.delegateId === userId) {
+      throw new ForbiddenException('Cannot delegate approval authority to yourself');
+    }
+    const delegation = new this.delegationModel({
+      delegatorId: userId,
+      delegateId: dto.delegateId,
+      organizationId: orgId,
+      type: dto.type,
+      projectId: dto.projectId || null,
+      reason: dto.reason || '',
+      startDate: new Date(dto.startDate),
+      endDate: dto.endDate ? new Date(dto.endDate) : null,
+      isActive: true,
+      autoExpire: dto.autoExpire !== false,
+    });
+    await delegation.save();
+    this.logger.log(`Delegation created: ${userId} -> ${dto.delegateId} (${dto.type})`);
+    return delegation;
+  }
+
+  async getMyDelegations(userId: string, orgId: string) {
+    return this.delegationModel.find({
+      delegatorId: userId,
+      organizationId: orgId,
+    }).sort({ createdAt: -1 });
+  }
+
+  async getDelegatedToMe(userId: string, orgId: string) {
+    return this.delegationModel.find({
+      delegateId: userId,
+      organizationId: orgId,
+      isActive: true,
+      $or: [
+        { endDate: null },
+        { endDate: { $gte: new Date() } },
+      ],
+    }).sort({ createdAt: -1 });
+  }
+
+  async revokeDelegation(delegationId: string, userId: string) {
+    const delegation = await this.delegationModel.findOneAndUpdate(
+      { _id: delegationId, delegatorId: userId },
+      { isActive: false },
       { new: true },
     );
+    if (!delegation) throw new NotFoundException('Delegation not found or you are not the delegator');
+    this.logger.log(`Delegation revoked: ${delegationId}`);
+    return delegation;
+  }
+
+  async canApproveTimesheet(userId: string, orgId: string, timesheetOwnerId: string, projectId?: string): Promise<{ canApprove: boolean; delegatorId?: string }> {
+    // Check for active delegations where this user is the delegate
+    const now = new Date();
+    const filter: any = {
+      delegateId: userId,
+      organizationId: orgId,
+      isActive: true,
+      startDate: { $lte: now },
+      $or: [
+        { endDate: null },
+        { endDate: { $gte: now } },
+      ],
+    };
+
+    const delegations = await this.delegationModel.find(filter);
+    if (delegations.length === 0) return { canApprove: false };
+
+    for (const d of delegations) {
+      if (d.type === 'project_specific') {
+        if (projectId && d.projectId === projectId) {
+          return { canApprove: true, delegatorId: d.delegatorId };
+        }
+      } else {
+        // temporary or permanent — can approve any timesheet in the org
+        return { canApprove: true, delegatorId: d.delegatorId };
+      }
+    }
+    return { canApprove: false };
+  }
+
+  async expireOldDelegations() {
+    const result = await this.delegationModel.updateMany(
+      {
+        isActive: true,
+        autoExpire: true,
+        endDate: { $ne: null, $lt: new Date() },
+      },
+      { isActive: false },
+    );
+    if (result.modifiedCount > 0) {
+      this.logger.log(`Expired ${result.modifiedCount} delegation(s)`);
+    }
+    return result.modifiedCount;
+  }
+
+  async getAutoDelegationRules(orgId: string) {
+    return this.delegationModel.find({
+      organizationId: orgId,
+      isActive: true,
+      autoExpire: true,
+      endDate: { $ne: null },
+    }).sort({ endDate: 1 });
+  }
+
+  async reviewTimesheet(id: string, dto: ReviewTimesheetDto, reviewerId: string, orgId?: string, orgRole?: string) {
+    const filter: any = { _id: id, isDeleted: false, status: 'submitted' };
+    if (orgId) filter.organizationId = orgId;
+
+    // Determine if the reviewer is acting as a delegate
+    let approvedByDelegateId: string | null = null;
+    let delegatorId: string | null = null;
+    const isManager = orgRole && ['manager', 'admin', 'owner'].includes(orgRole);
+
+    if (!isManager && orgId) {
+      // Not a native manager — check delegation authority
+      const timesheet = await this.timesheetModel.findOne(filter);
+      if (!timesheet) throw new NotFoundException('Timesheet not found or not in submitted state');
+
+      // Determine the primary project from entries for project_specific check
+      const primaryProjectId = timesheet.entries?.[0]?.projectId || undefined;
+      const delegationCheck = await this.canApproveTimesheet(reviewerId, orgId, timesheet.userId, primaryProjectId);
+      if (!delegationCheck.canApprove) {
+        throw new ForbiddenException('You do not have authority to review this timesheet');
+      }
+      approvedByDelegateId = reviewerId;
+      delegatorId = delegationCheck.delegatorId || null;
+    }
+
+    const updateData: any = {
+      status: dto.status,
+      reviewedBy: delegatorId || reviewerId,
+      reviewedAt: new Date(),
+      reviewComment: dto.reviewComment || '',
+    };
+    if (approvedByDelegateId) {
+      updateData.approvedByDelegateId = approvedByDelegateId;
+      updateData.delegatorId = delegatorId;
+    }
+
+    const ts = await this.timesheetModel.findOneAndUpdate(filter, updateData, { new: true });
     if (!ts) throw new NotFoundException('Timesheet not found or not in submitted state');
-    this.logger.log(`Timesheet ${id} reviewed: ${dto.status}`);
+    this.logger.log(`Timesheet ${id} reviewed: ${dto.status}${approvedByDelegateId ? ` (by delegate ${approvedByDelegateId} on behalf of ${delegatorId})` : ''}`);
     return ts;
   }
 
