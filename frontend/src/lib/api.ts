@@ -819,6 +819,13 @@ export const chatApi = {
     return request<any>(`/chat/compliance/guest-access/${conversationId}/guests/${guestId}`, { method: 'DELETE' });
   },
 
+  // Custom Emoji
+  getCustomEmoji: async () => request<any>('/chat/emoji'),
+  uploadCustomEmoji: async (name: string, url: string) =>
+    request<any>('/chat/emoji', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, url }) }),
+  deleteCustomEmoji: async (id: string) =>
+    request<any>(`/chat/emoji/${id}`, { method: 'DELETE' }),
+
   // Moderation
   getFlagged: () => request("/chat/moderation/flagged"),
   reviewFlagged: (id: string, data: { status: string }) =>

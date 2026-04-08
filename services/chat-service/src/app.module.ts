@@ -36,8 +36,7 @@ import { MetricsModule } from './common/metrics/metrics.module';
 
 // Legacy — ChatModule provides REST endpoints (gateway consolidated into MessagesModule)
 import { ChatModule } from './chat/chat.module';
-
-// Health
+import { CustomEmojiModule } from './custom-emoji/custom-emoji.module';
 import { HealthModule } from './health/health.module';
 
 @Module({
@@ -76,6 +75,7 @@ import { HealthModule } from './health/health.module';
 
     // Legacy module (existing routes still work)
     ChatModule,
+<<<<<<< HEAD
 
     // New domain modules (Phase 1 enhancements)
     ConversationsModule,
@@ -112,6 +112,9 @@ import { HealthModule } from './health/health.module';
     // E3: Differentiating features
     AnalyticsModule,
     MetricsModule,
+
+    // Custom Emoji
+    CustomEmojiModule,
 
     // Health
     HealthModule,
