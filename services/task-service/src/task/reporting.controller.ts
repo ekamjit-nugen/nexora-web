@@ -58,6 +58,15 @@ export class TaskReportingController {
     return { success: true, message: 'Epic progress data retrieved', data };
   }
 
+  @Get(':projectId/capacity')
+  async getCapacity(
+    @Param('projectId') projectId: string,
+    @Query('sprintId') sprintId?: string,
+  ) {
+    const data = await this.reportingService.getCapacityData(projectId, sprintId);
+    return { success: true, message: 'Capacity data retrieved', data };
+  }
+
   @Get(':projectId/overview')
   async getOverview(@Param('projectId') projectId: string) {
     const data = await this.reportingService.getOverviewStats(projectId);
