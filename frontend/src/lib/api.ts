@@ -579,6 +579,12 @@ export interface Conversation {
   description?: string;
   participants: Array<{ userId: string; role: string; lastReadAt?: string; muted?: boolean }>;
   lastMessage?: { content: string; senderId: string; sentAt: string };
+  guestAccess?: {
+    enabled: boolean;
+    guestIds: string[];
+    inviteLink?: string;
+    linkExpiresAt?: string;
+  };
   isArchived: boolean;
   isPinned: boolean;
   createdBy: string;
@@ -671,6 +677,17 @@ export const chatApi = {
   getSettings: () => request<ChatSettings>("/chat/settings"),
   updateSettings: (data: Partial<ChatSettings>) =>
     request<ChatSettings>("/chat/settings", { method: "PUT", body: JSON.stringify(data) }),
+
+  // Guest Access
+  enableGuestAccess: async (conversationId: string) => {
+    return request<any>(`/chat/compliance/guest-access/${conversationId}/enable`, { method: 'POST' });
+  },
+  disableGuestAccess: async (conversationId: string) => {
+    return request<any>(`/chat/compliance/guest-access/${conversationId}/disable`, { method: 'POST' });
+  },
+  removeGuest: async (conversationId: string, guestId: string) => {
+    return request<any>(`/chat/compliance/guest-access/${conversationId}/guests/${guestId}`, { method: 'DELETE' });
+  },
 
   // Moderation
   getFlagged: () => request("/chat/moderation/flagged"),

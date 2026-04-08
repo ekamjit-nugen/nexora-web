@@ -10,6 +10,7 @@ import { useGlobalSocket } from "@/lib/socket-context";
 import { useWebRTC } from "@/lib/hooks/useWebRTC";
 import { useCallContext } from "@/lib/call-context";
 import { CallControls, VideoCallWindow } from "@/components/calling";
+import { GuestAccessPanel } from "@/components/chat/GuestAccessPanel";
 import { toast } from "sonner";
 
 // ── Helpers ──
@@ -116,6 +117,7 @@ export default function MessagesPage() {
   const [showAddPeopleModal, setShowAddPeopleModal] = useState(false);
   const [showMembersPanel, setShowMembersPanel] = useState(false);
   const [showConvoMenu, setShowConvoMenu] = useState(false);
+  const [showGuestPanel, setShowGuestPanel] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [chatSettings, setChatSettings] = useState<ChatSettings | null>(null);
   const settingsDebounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -1598,6 +1600,17 @@ export default function MessagesPage() {
                         <button onClick={handleMute} className="w-full text-left px-3 py-2 text-[12px] text-[#334155] hover:bg-[#F1F5F9] transition-colors">
                           Mute conversation
                         </button>
+                        {activeConvo.type === "channel" && (() => {
+                          const cp = activeConvo.participants.find((p) => p.userId === user._id);
+                          return cp?.role === "admin" || cp?.role === "owner";
+                        })() && (
+                          <button
+                            onClick={() => { setShowGuestPanel(true); setShowConvoMenu(false); }}
+                            className="w-full text-left px-3 py-2 text-[12px] text-[#334155] hover:bg-[#F1F5F9] transition-colors"
+                          >
+                            Guest Access
+                          </button>
+                        )}
                         {activeConvo.type !== "direct" && (
                           <button onClick={handleLeave} className="w-full text-left px-3 py-2 text-[12px] text-red-500 hover:bg-red-50 transition-colors">
                             Leave conversation
@@ -2929,6 +2942,23 @@ export default function MessagesPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Guest Access panel */}
+      {showGuestPanel && activeConvo && user && (
+        <div className="fixed top-0 right-0 h-full z-40 shadow-2xl">
+          <GuestAccessPanel
+            conversation={activeConvo}
+            employeeMap={employeeMap}
+            currentUserId={user._id}
+            onClose={() => setShowGuestPanel(false)}
+            onConversationUpdate={(updated) => {
+              setConversations((prev) =>
+                prev.map((c) => (c._id === updated._id ? updated : c))
+              );
+            }}
+          />
         </div>
       )}
 
