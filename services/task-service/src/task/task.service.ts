@@ -1195,4 +1195,259 @@ export class TaskService {
       completedPoints: doneTasks.reduce((s, t) => s + (t.storyPoints || 0), 0),
     };
   }
+
+  /**
+   * Personal productivity stats — private to the requesting user.
+   */
+  async getPersonalStats(userId: string, orgId?: string) {
+    const now = new Date();
+
+    // --- Week boundaries (Monday-Sunday) ---
+    const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon...
+    const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const thisWeekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMonday);
+    const lastWeekStart = new Date(thisWeekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const lastWeekEnd = new Date(thisWeekStart.getTime() - 1); // Sunday 23:59:59
+
+    const baseFilter: any = { assigneeId: userId, isDeleted: false };
+    if (orgId) baseFilter.organizationId = orgId;
+
+    // Fetch all completed tasks for this + last week, plus all-time completed tasks
+    const [thisWeekDone, lastWeekDone, allDone, allAssigned] = await Promise.all([
+      this.taskModel.find({
+        ...baseFilter,
+        status: 'done',
+        completedAt: { $gte: thisWeekStart },
+      }).lean(),
+      this.taskModel.find({
+        ...baseFilter,
+        status: 'done',
+        completedAt: { $gte: lastWeekStart, $lt: thisWeekStart },
+      }).lean(),
+      this.taskModel.find({
+        ...baseFilter,
+        status: 'done',
+      }).lean(),
+      this.taskModel.find(baseFilter).lean(),
+    ]);
+
+    // Tasks created this week by user
+    const createdFilter: any = { createdBy: userId, isDeleted: false };
+    if (orgId) createdFilter.organizationId = orgId;
+    const thisWeekCreated = await this.taskModel.countDocuments({
+      ...createdFilter,
+      createdAt: { $gte: thisWeekStart },
+    });
+
+    // --- Helper: compute hours logged by this user in a date range ---
+    const hoursInRange = (tasks: any[], from: Date, to?: Date) => {
+      let total = 0;
+      for (const task of tasks) {
+        for (const entry of task.timeEntries || []) {
+          if (entry.userId !== userId) continue;
+          const d = new Date(entry.date);
+          if (d >= from && (!to || d <= to)) {
+            total += entry.hours || 0;
+          }
+        }
+      }
+      return Math.round(total * 100) / 100;
+    };
+
+    // --- Helper: average cycle time (days) from statusHistory ---
+    const avgCycleTime = (tasks: any[]) => {
+      const cycleTimes: number[] = [];
+      for (const task of tasks) {
+        if (!task.statusHistory?.length || !task.completedAt) continue;
+        // Find when task first entered in_progress (or todo as fallback)
+        const startEntry = task.statusHistory.find(
+          (h: any) => h.status === 'in_progress',
+        ) || task.statusHistory.find(
+          (h: any) => h.status === 'todo',
+        );
+        if (startEntry) {
+          const startDate = new Date(startEntry.changedAt);
+          const endDate = new Date(task.completedAt);
+          const days = (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
+          if (days >= 0) cycleTimes.push(days);
+        }
+      }
+      if (cycleTimes.length === 0) return 0;
+      return Math.round((cycleTimes.reduce((a, b) => a + b, 0) / cycleTimes.length) * 10) / 10;
+    };
+
+    // --- This Week ---
+    const thisWeekPoints = thisWeekDone.reduce((s, t) => s + (t.storyPoints || 0), 0);
+    const thisWeekHours = hoursInRange(allAssigned, thisWeekStart);
+    const thisWeekCycle = avgCycleTime(thisWeekDone);
+
+    // --- Last Week ---
+    const lastWeekPoints = lastWeekDone.reduce((s, t) => s + (t.storyPoints || 0), 0);
+    const lastWeekHours = hoursInRange(allAssigned, lastWeekStart, lastWeekEnd);
+    const lastWeekCycle = avgCycleTime(lastWeekDone);
+
+    // --- Trends (% change) ---
+    const pctChange = (curr: number, prev: number) => {
+      if (prev === 0) return curr > 0 ? 100 : 0;
+      return Math.round(((curr - prev) / prev) * 100);
+    };
+
+    // --- Streak (consecutive workdays with at least 1 task completed) ---
+    const completionDates = new Set<string>();
+    for (const t of allDone) {
+      if (t.completedAt) {
+        const d = new Date(t.completedAt);
+        completionDates.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
+      }
+    }
+
+    const isWorkday = (d: Date) => d.getDay() >= 1 && d.getDay() <= 5;
+    const dateKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+
+    // Walk backwards from today to compute current streak
+    let currentStreak = 0;
+    let checkDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    // If today is a workday and nothing completed yet, start checking from previous workday
+    if (isWorkday(checkDate) && !completionDates.has(dateKey(checkDate))) {
+      // Today is still ongoing, check if yesterday was active
+      checkDate.setDate(checkDate.getDate() - 1);
+      while (!isWorkday(checkDate)) {
+        checkDate.setDate(checkDate.getDate() - 1);
+      }
+    }
+    // Now count consecutive workdays
+    while (true) {
+      if (!isWorkday(checkDate)) {
+        checkDate.setDate(checkDate.getDate() - 1);
+        continue;
+      }
+      if (completionDates.has(dateKey(checkDate))) {
+        currentStreak++;
+        checkDate.setDate(checkDate.getDate() - 1);
+      } else {
+        break;
+      }
+    }
+
+    // Compute longest streak from all completion dates
+    let longestStreak = 0;
+    if (allDone.length > 0) {
+      const sortedDates = Array.from(completionDates).map((k) => {
+        const [y, m, d] = k.split('-').map(Number);
+        return new Date(y, m, d);
+      }).sort((a, b) => a.getTime() - b.getTime());
+
+      let streak = 1;
+      for (let i = 1; i < sortedDates.length; i++) {
+        // Count workdays between consecutive dates
+        let prev = new Date(sortedDates[i - 1]);
+        let next = new Date(sortedDates[i]);
+        // Move prev to next workday
+        prev.setDate(prev.getDate() + 1);
+        while (!isWorkday(prev) && prev < next) {
+          prev.setDate(prev.getDate() + 1);
+        }
+        if (prev.getTime() === next.getTime()) {
+          streak++;
+        } else {
+          longestStreak = Math.max(longestStreak, streak);
+          streak = 1;
+        }
+      }
+      longestStreak = Math.max(longestStreak, streak);
+    }
+
+    // Last active date
+    const lastActiveDate = allDone.length > 0
+      ? allDone.reduce((latest, t) =>
+          t.completedAt && new Date(t.completedAt) > new Date(latest)
+            ? t.completedAt.toISOString()
+            : latest,
+        allDone[0].completedAt?.toISOString() || '',
+      )
+      : null;
+
+    // --- Sprint Stats ---
+    // Find active sprints from this user's assigned tasks
+    const sprintIds = [...new Set(allAssigned.filter(t => t.sprintId).map(t => t.sprintId))];
+    let thisSprint = { assignedTasks: 0, completedTasks: 0, assignedPoints: 0, completedPoints: 0, completionRate: 0, sprintName: '' };
+    if (sprintIds.length > 0) {
+      const activeSprints = await this.sprintModel.find({
+        _id: { $in: sprintIds },
+        status: 'active',
+      }).lean();
+
+      if (activeSprints.length > 0) {
+        const sprint = activeSprints[0]; // Use the first active sprint
+        const sprintTasks = allAssigned.filter(t => t.sprintId === sprint._id.toString());
+        const sprintDone = sprintTasks.filter(t => t.status === 'done');
+        thisSprint = {
+          assignedTasks: sprintTasks.length,
+          completedTasks: sprintDone.length,
+          assignedPoints: sprintTasks.reduce((s, t) => s + (t.storyPoints || 0), 0),
+          completedPoints: sprintDone.reduce((s, t) => s + (t.storyPoints || 0), 0),
+          completionRate: sprintTasks.length > 0
+            ? Math.round((sprintDone.length / sprintTasks.length) * 100)
+            : 0,
+          sprintName: sprint.name,
+        };
+      }
+    }
+
+    // --- All Time ---
+    const allTimePoints = allDone.reduce((s, t) => s + (t.storyPoints || 0), 0);
+    let allTimeHours = 0;
+    for (const task of allAssigned) {
+      for (const entry of task.timeEntries || []) {
+        if (entry.userId === userId) allTimeHours += entry.hours || 0;
+      }
+    }
+    allTimeHours = Math.round(allTimeHours * 100) / 100;
+
+    // Top project by tasks completed
+    const projectCounts: Record<string, number> = {};
+    for (const t of allDone) {
+      projectCounts[t.projectId] = (projectCounts[t.projectId] || 0) + 1;
+    }
+    let topProject = { projectId: '', tasksCompleted: 0 };
+    for (const [pid, count] of Object.entries(projectCounts)) {
+      if (count > topProject.tasksCompleted) {
+        topProject = { projectId: pid, tasksCompleted: count };
+      }
+    }
+
+    return {
+      thisWeek: {
+        tasksCompleted: thisWeekDone.length,
+        tasksCreated: thisWeekCreated,
+        storyPointsDelivered: thisWeekPoints,
+        hoursLogged: thisWeekHours,
+        avgCycleTimeDays: thisWeekCycle,
+      },
+      lastWeek: {
+        tasksCompleted: lastWeekDone.length,
+        storyPointsDelivered: lastWeekPoints,
+        hoursLogged: lastWeekHours,
+        avgCycleTimeDays: lastWeekCycle,
+      },
+      trends: {
+        tasksCompletedChange: pctChange(thisWeekDone.length, lastWeekDone.length),
+        pointsDeliveredChange: pctChange(thisWeekPoints, lastWeekPoints),
+        cycleTimeChange: pctChange(thisWeekCycle, lastWeekCycle),
+      },
+      streak: {
+        currentDays: currentStreak,
+        longestDays: longestStreak,
+        lastActiveDate,
+      },
+      thisSprint,
+      allTime: {
+        totalTasksCompleted: allDone.length,
+        totalPointsDelivered: allTimePoints,
+        totalHoursLogged: allTimeHours,
+        avgCycleTimeDays: avgCycleTime(allDone),
+        topProject,
+      },
+    };
+  }
 }

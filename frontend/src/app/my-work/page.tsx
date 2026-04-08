@@ -8,6 +8,7 @@ import { Sidebar } from "@/components/sidebar";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import { RouteGuard } from "@/components/route-guard";
+import PersonalStatsPanel from "@/components/PersonalStatsPanel";
 
 const priorityColors: Record<string, string> = {
   critical: "bg-red-100 text-red-700",
@@ -220,6 +221,9 @@ export default function MyWorkPage() {
               </button>
             </div>
           </div>
+
+          {/* Personal Stats */}
+          <PersonalStatsPanel />
 
           {/* Summary Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">

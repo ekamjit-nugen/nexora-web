@@ -1649,6 +1649,46 @@ export const taskApi = {
   delete: (id: string) =>
     request(`/tasks/${id}`, { method: "DELETE" }),
   getMyTasks: () => request<Task[]>("/tasks/my"),
+  getMyStats: () => request<{
+    thisWeek: {
+      tasksCompleted: number;
+      tasksCreated: number;
+      storyPointsDelivered: number;
+      hoursLogged: number;
+      avgCycleTimeDays: number;
+    };
+    lastWeek: {
+      tasksCompleted: number;
+      storyPointsDelivered: number;
+      hoursLogged: number;
+      avgCycleTimeDays: number;
+    };
+    trends: {
+      tasksCompletedChange: number;
+      pointsDeliveredChange: number;
+      cycleTimeChange: number;
+    };
+    streak: {
+      currentDays: number;
+      longestDays: number;
+      lastActiveDate: string | null;
+    };
+    thisSprint: {
+      assignedTasks: number;
+      completedTasks: number;
+      assignedPoints: number;
+      completedPoints: number;
+      completionRate: number;
+      sprintName: string;
+    };
+    allTime: {
+      totalTasksCompleted: number;
+      totalPointsDelivered: number;
+      totalHoursLogged: number;
+      avgCycleTimeDays: number;
+      topProject: { projectId: string; tasksCompleted: number };
+    };
+  }>("/tasks/my-stats"),
   getMyWork: () => request<{
     overdue: Task[];
     dueToday: Task[];

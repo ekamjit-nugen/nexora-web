@@ -77,6 +77,13 @@ export class TaskController {
     return { success: true, message: 'Recurring tasks retrieved', data };
   }
 
+  @Get('my-stats')
+  @UseGuards(JwtAuthGuard)
+  async getMyStats(@Req() req) {
+    const data = await this.taskService.getPersonalStats(req.user.userId, req.user?.organizationId);
+    return { success: true, message: 'Personal stats retrieved', data };
+  }
+
   @Get('my-work')
   @UseGuards(JwtAuthGuard)
   async getMyWork(@Req() req) {
