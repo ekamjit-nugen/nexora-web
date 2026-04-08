@@ -435,6 +435,193 @@ export class TaskReportingService {
   }
 
   /**
+   * Team Capacity — Detailed per-member workload, utilization, and sprint capacity
+   */
+  async getCapacityData(projectId: string, sprintId?: string) {
+    // Find the target sprint (active sprint if not specified)
+    let sprint: ISprint | null = null;
+    if (sprintId) {
+      sprint = await this.sprintModel.findById(sprintId).lean();
+    } else {
+      sprint = await this.sprintModel
+        .findOne({ projectId, status: 'active' })
+        .lean();
+    }
+
+    // Determine date boundaries for "this week"
+    const now = new Date();
+    const dayOfWeek = now.getDay();
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+    weekStart.setHours(0, 0, 0, 0);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+    weekEnd.setHours(23, 59, 59, 999);
+
+    // Get sprint tasks
+    const taskFilter: Record<string, any> = { projectId, isDeleted: false };
+    if (sprint) {
+      taskFilter.sprintId = sprint._id.toString();
+    }
+
+    const tasks = await this.taskModel
+      .find(taskFilter)
+      .select('assigneeId storyPoints estimatedHours loggedHours status timeEntries sprintId title taskKey')
+      .lean();
+
+    // Build per-member data
+    const memberMap = new Map<string, {
+      userId: string;
+      assignedPoints: number;
+      completedPoints: number;
+      assignedTasks: number;
+      completedTasks: number;
+      loggedHoursThisWeek: number;
+      loggedHoursThisSprint: number;
+      dailyHoursThisWeek: number[];
+      todo: number;
+      inProgress: number;
+      inReview: number;
+      blocked: number;
+      done: number;
+    }>();
+
+    // Unassigned sprint tasks
+    const unassignedTasks: Array<{ _id: string; taskKey?: string; title: string; storyPoints: number; status: string }> = [];
+
+    for (const task of tasks) {
+      if (!task.assigneeId) {
+        if (task.status !== 'done' && task.status !== 'cancelled') {
+          unassignedTasks.push({
+            _id: task._id.toString(),
+            taskKey: task.taskKey,
+            title: task.title,
+            storyPoints: task.storyPoints || 0,
+            status: task.status,
+          });
+        }
+        continue;
+      }
+
+      const entry = memberMap.get(task.assigneeId) || {
+        userId: task.assigneeId,
+        assignedPoints: 0,
+        completedPoints: 0,
+        assignedTasks: 0,
+        completedTasks: 0,
+        loggedHoursThisWeek: 0,
+        loggedHoursThisSprint: 0,
+        dailyHoursThisWeek: [0, 0, 0, 0, 0, 0, 0], // Mon-Sun
+        todo: 0,
+        inProgress: 0,
+        inReview: 0,
+        blocked: 0,
+        done: 0,
+      };
+
+      entry.assignedTasks++;
+      entry.assignedPoints += task.storyPoints || 0;
+
+      // Task status breakdown
+      switch (task.status) {
+        case 'todo': entry.todo++; break;
+        case 'in_progress': entry.inProgress++; break;
+        case 'in_review': entry.inReview++; break;
+        case 'blocked': entry.blocked++; break;
+        case 'done':
+          entry.done++;
+          entry.completedTasks++;
+          entry.completedPoints += task.storyPoints || 0;
+          break;
+      }
+
+      // Time tracking from time entries
+      if (task.timeEntries && task.timeEntries.length > 0) {
+        for (const te of task.timeEntries) {
+          const teDate = new Date(te.date);
+          // This sprint
+          entry.loggedHoursThisSprint += te.hours || 0;
+          // This week
+          if (teDate >= weekStart && teDate <= weekEnd) {
+            entry.loggedHoursThisWeek += te.hours || 0;
+            // Daily breakdown (0=Mon, 6=Sun)
+            const teDay = teDate.getDay();
+            const idx = teDay === 0 ? 6 : teDay - 1;
+            entry.dailyHoursThisWeek[idx] += te.hours || 0;
+          }
+        }
+      } else {
+        // Fallback: distribute loggedHours evenly for sprint
+        entry.loggedHoursThisSprint += task.loggedHours || 0;
+      }
+
+      memberMap.set(task.assigneeId, entry);
+    }
+
+    // Compute sprint capacity
+    const totalPoints = tasks.reduce((s, t) => s + (t.storyPoints || 0), 0);
+    const committedPoints = tasks
+      .filter((t) => t.status !== 'backlog' && t.status !== 'cancelled')
+      .reduce((s, t) => s + (t.storyPoints || 0), 0);
+    const completedPoints = tasks
+      .filter((t) => t.status === 'done')
+      .reduce((s, t) => s + (t.storyPoints || 0), 0);
+
+    let remainingDays = 0;
+    if (sprint && sprint.endDate) {
+      const endDate = new Date(sprint.endDate);
+      const diff = endDate.getTime() - now.getTime();
+      remainingDays = Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
+    }
+
+    // Build member results
+    const members = Array.from(memberMap.values()).map((m) => {
+      // Default capacity: 40 hours/week worth of points, roughly 1 point per 4 hours
+      // Use assigned points as denominator for utilization when we don't have allocation data
+      const capacity = m.assignedPoints > 0 ? m.assignedPoints : 1;
+      const utilizationPercent = Math.round(
+        ((m.assignedPoints - m.completedPoints) / Math.max(capacity, 1)) * 100,
+      );
+
+      return {
+        userId: m.userId,
+        currentSprint: {
+          assignedPoints: m.assignedPoints,
+          completedPoints: m.completedPoints,
+          assignedTasks: m.assignedTasks,
+          completedTasks: m.completedTasks,
+        },
+        timeTracking: {
+          loggedHoursThisWeek: Math.round(m.loggedHoursThisWeek * 10) / 10,
+          loggedHoursThisSprint: Math.round(m.loggedHoursThisSprint * 10) / 10,
+          dailyHoursThisWeek: m.dailyHoursThisWeek.map((h) => Math.round(h * 10) / 10),
+        },
+        taskBreakdown: {
+          todo: m.todo,
+          inProgress: m.inProgress,
+          inReview: m.inReview,
+          blocked: m.blocked,
+          done: m.done,
+        },
+        utilizationPercent: Math.max(0, utilizationPercent),
+      };
+    });
+
+    return {
+      members: members.sort((a, b) => b.currentSprint.assignedPoints - a.currentSprint.assignedPoints),
+      sprintCapacity: {
+        totalPoints,
+        committedPoints,
+        completedPoints,
+        remainingDays,
+        sprintName: sprint?.name || null,
+        sprintId: sprint?._id?.toString() || null,
+      },
+      unassignedTasks,
+    };
+  }
+
+  /**
    * Overview Stats — Key metrics for dashboard cards
    */
   async getOverviewStats(projectId: string) {

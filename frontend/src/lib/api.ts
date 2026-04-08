@@ -1497,6 +1497,48 @@ export interface BudgetUtilization {
   byUser: Array<{ userId: string; hours: number; cost: number }>;
 }
 
+export interface CapacityMember {
+  userId: string;
+  currentSprint: {
+    assignedPoints: number;
+    completedPoints: number;
+    assignedTasks: number;
+    completedTasks: number;
+  };
+  timeTracking: {
+    loggedHoursThisWeek: number;
+    loggedHoursThisSprint: number;
+    dailyHoursThisWeek: number[];
+  };
+  taskBreakdown: {
+    todo: number;
+    inProgress: number;
+    inReview: number;
+    blocked: number;
+    done: number;
+  };
+  utilizationPercent: number;
+}
+
+export interface CapacityData {
+  members: CapacityMember[];
+  sprintCapacity: {
+    totalPoints: number;
+    committedPoints: number;
+    completedPoints: number;
+    remainingDays: number;
+    sprintName: string | null;
+    sprintId: string | null;
+  };
+  unassignedTasks: Array<{
+    _id: string;
+    taskKey?: string;
+    title: string;
+    storyPoints: number;
+    status: string;
+  }>;
+}
+
 export interface OverviewStats {
   totalTasks: number;
   completedTasks: number;
@@ -1525,6 +1567,10 @@ export const reportingApi = {
     request<{ members: WorkloadMember[] }>(`/tasks/reports/${projectId}/workload`),
   getEpicProgress: (projectId: string) =>
     request<{ epics: any[] }>(`/tasks/reports/${projectId}/epic-progress`),
+  getCapacity: (projectId: string, sprintId?: string) => {
+    const qs = sprintId ? `?sprintId=${sprintId}` : '';
+    return request<CapacityData>(`/tasks/reports/${projectId}/capacity${qs}`);
+  },
   getOverview: (projectId: string) =>
     request<OverviewStats>(`/tasks/reports/${projectId}/overview`),
   getBudget: (projectId: string) =>
