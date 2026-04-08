@@ -1,4 +1,5 @@
 import { Schema, Document } from 'mongoose';
+import { IGitLink, GitLinkSubSchema } from './git-integration.schema';
 
 export interface IComment {
   _id?: any;
@@ -79,6 +80,7 @@ export interface ITask extends Document {
   recurrence?: IRecurrence;
   isRecurringInstance?: boolean;
   recurringParentId?: string;
+  gitLinks?: IGitLink[];
   isDeleted: boolean;
   deletedAt?: Date;
   createdBy: string;
@@ -186,6 +188,7 @@ export const TaskSchema = new Schema<ITask>(
     },
     isRecurringInstance: { type: Boolean, default: false },
     recurringParentId: { type: String, default: null, index: true },
+    gitLinks: [GitLinkSubSchema],
     statusHistory: [{
       status: { type: String },
       changedAt: { type: Date, default: Date.now },

@@ -9,8 +9,10 @@ import { BoardController } from './board.controller';
 import { SprintController } from './sprint.controller';
 import { TaskReportingController } from './reporting.controller';
 import { NotificationController } from './notification.controller';
+import { GitWebhookController, GitIntegrationController, TaskGitLinksController } from './git-integration.controller';
 import { TaskService } from './task.service';
 import { RecurrenceService } from './recurrence.service';
+import { GitIntegrationService } from './git-integration.service';
 import { BoardService } from './board.service';
 import { SprintService } from './sprint.service';
 import { TaskReportingService } from './reporting.service';
@@ -23,6 +25,7 @@ import { BoardSchema } from './schemas/board.schema';
 import { SprintSchema } from './schemas/sprint.schema';
 import { ActivitySchema } from './schemas/activity.schema';
 import { NotificationSchema } from './schemas/notification.schema';
+import { GitIntegrationConfigSchema } from './schemas/git-integration.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 
@@ -37,6 +40,7 @@ import { RolesGuard } from './guards/roles.guard';
       { name: 'Sprint', schema: SprintSchema },
       { name: 'Activity', schema: ActivitySchema },
       { name: 'Notification', schema: NotificationSchema },
+      { name: 'GitIntegrationConfig', schema: GitIntegrationConfigSchema },
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -46,8 +50,8 @@ import { RolesGuard } from './guards/roles.guard';
       }),
     }),
   ],
-  controllers: [TaskController, TimesheetController, BoardController, SprintController, TaskReportingController, NotificationController],
-  providers: [TaskService, RecurrenceService, BoardService, SprintService, TaskReportingService, NotificationService, TaskCronService, JwtAuthGuard, RolesGuard, Reflector],
-  exports: [TaskService, RecurrenceService, BoardService, SprintService, TaskReportingService, NotificationService],
+  controllers: [TaskController, TimesheetController, BoardController, SprintController, TaskReportingController, NotificationController, GitWebhookController, GitIntegrationController, TaskGitLinksController],
+  providers: [TaskService, RecurrenceService, BoardService, SprintService, TaskReportingService, NotificationService, TaskCronService, GitIntegrationService, JwtAuthGuard, RolesGuard, Reflector],
+  exports: [TaskService, RecurrenceService, BoardService, SprintService, TaskReportingService, NotificationService, GitIntegrationService],
 })
 export class TaskModule {}

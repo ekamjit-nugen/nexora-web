@@ -1631,6 +1631,22 @@ export interface Task {
   recurringParentId?: string;
   organizationId?: string;
   dependencies?: Array<{ itemId: string; type: string }>;
+  gitLinks?: Array<{
+    _id?: string;
+    type: 'commit' | 'pull_request' | 'branch';
+    provider: 'github' | 'gitlab' | 'bitbucket';
+    url: string;
+    title: string;
+    status?: string;
+    author: string;
+    authorAvatar?: string;
+    sha?: string;
+    number?: number;
+    repository: string;
+    branch?: string;
+    createdAt: string;
+    updatedAt: string;
+  }>;
   completedAt?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -1709,6 +1725,8 @@ export const taskApi = {
   },
   getRecurringInstances: (id: string) =>
     request<Task[]>(`/tasks/${id}/recurrence/instances`),
+  getGitLinks: (id: string) =>
+    request<Task['gitLinks']>(`/tasks/${id}/git-links`),
 };
 
 // ── Timesheet Types & API ──
@@ -2270,4 +2288,26 @@ export const webhookApi = {
     request(`/chat/webhooks/${id}`, { method: 'DELETE' }),
   toggleWebhook: (id: string) =>
     request<any>(`/chat/webhooks/${id}/toggle`, { method: 'POST' }),
+};
+
+// ── Git Integration API ──
+
+export interface GitIntegrationConfig {
+  provider: 'github' | 'gitlab' | 'bitbucket';
+  webhookUrl: string;
+  webhookSecret: string;
+  isActive: boolean;
+  autoTransition: boolean;
+  autoTransitionTarget: string;
+  lastWebhookAt?: string;
+  createdAt: string;
+}
+
+export const integrationApi = {
+  setupGit: (data: { provider: string; autoTransition?: boolean; autoTransitionTarget?: string }) =>
+    request<GitIntegrationConfig>('/integrations/git/setup', { method: 'POST', body: JSON.stringify(data) }),
+  getGitConfig: () =>
+    request<GitIntegrationConfig[]>('/integrations/git/config'),
+  removeGitConfig: (provider?: string) =>
+    request('/integrations/git/config' + (provider ? `?provider=${provider}` : ''), { method: 'DELETE' }),
 };

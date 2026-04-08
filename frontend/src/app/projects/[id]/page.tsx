@@ -15,6 +15,7 @@ import { BulkOperations } from "@/components/bulk-operations";
 import GanttChart, { GanttItem } from "@/components/projects/GanttChart";
 import RoadmapView, { RoadmapProject, RoadmapMilestone, RoadmapRelease, RoadmapEpic } from "@/components/projects/RoadmapView";
 import ActivityFeed from "@/components/projects/ActivityFeed";
+import { GitLinksBadge } from "@/components/git/GitActivitySection";
 import { toast } from "sonner";
 
 // ── Constants ──
@@ -172,6 +173,7 @@ function TaskCard({
               {task.storyPoints}
             </span>
           )}
+          <GitLinksBadge gitLinks={task.gitLinks} />
         </div>
         {assignee ? (
           <div className="relative group/avatar">

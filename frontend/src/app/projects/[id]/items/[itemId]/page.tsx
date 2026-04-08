@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { projectApi, taskApi, hrApi, Project, Task, Employee } from "@/lib/api";
+import { GitActivitySection } from "@/components/git/GitActivitySection";
 import { Sidebar } from "@/components/sidebar";
 import { RichTextEditor, CommentEditor, CommentContent } from "@/components/rich-text-editor";
 import { Input } from "@/components/ui/input";
@@ -98,6 +99,9 @@ export default function ItemDetailPage() {
   const [logCategory, setLogCategory] = useState("development");
   const [loggingTime, setLoggingTime] = useState(false);
 
+  // Git Links
+  const [gitLinks, setGitLinks] = useState<Task['gitLinks']>([]);
+
   // Recurrence
   const [showRecurrenceModal, setShowRecurrenceModal] = useState(false);
   const [recurFrequency, setRecurFrequency] = useState<string>("weekly");
@@ -116,12 +120,14 @@ export default function ItemDetailPage() {
     if (!user) return;
     setLoading(true);
     try {
-      const [pRes, tRes, eRes, childRes] = await Promise.all([
+      const [pRes, tRes, eRes, childRes, gitRes] = await Promise.all([
         projectApi.getById(projectId),
         taskApi.getById(itemId),
         hrApi.getEmployees(),
         taskApi.getChildren(itemId).catch(() => ({ data: [] })),
+        taskApi.getGitLinks(itemId).catch(() => ({ data: [] })),
       ]);
+      setGitLinks(Array.isArray(gitRes.data) ? gitRes.data : []);
       setProject(pRes.data || null);
       setEmployees(Array.isArray(eRes.data) ? eRes.data : []);
       setChildren(Array.isArray(childRes.data) ? childRes.data : []);
@@ -412,6 +418,9 @@ export default function ItemDetailPage() {
                 </div>
               )}
             </div>
+
+            {/* Development / Git Activity */}
+            <GitActivitySection gitLinks={gitLinks || []} />
 
             {/* Dependencies */}
             {(() => {
