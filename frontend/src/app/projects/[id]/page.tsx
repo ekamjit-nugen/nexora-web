@@ -3888,6 +3888,8 @@ export default function ProjectDetailPage() {
   const [showMenu, setShowMenu] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false);
+  const [saveTemplateForm, setSaveTemplateForm] = useState({ name: "", description: "" });
   const [showCompleteSprintModal, setShowCompleteSprintModal] = useState(false);
   const [completingSprintId, setCompletingSprintId] = useState<string | null>(null);
   const [completeSprintOption, setCompleteSprintOption] = useState<"backlog" | "next_sprint">("backlog");
@@ -4084,6 +4086,23 @@ export default function ProjectDetailPage() {
     }
   };
 
+  const handleSaveAsTemplate = async () => {
+    if (!saveTemplateForm.name.trim()) return;
+    try {
+      setSaving(true);
+      await projectApi.saveAsTemplate(projectId, {
+        name: saveTemplateForm.name,
+        description: saveTemplateForm.description || undefined,
+      });
+      toast.success("Project saved as template");
+      setShowSaveTemplateModal(false);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to save as template");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="min-h-screen flex bg-[#F8FAFC] overflow-hidden">
       <Sidebar user={user} onLogout={logout} />
@@ -4155,7 +4174,22 @@ export default function ProjectDetailPage() {
                         Edit Project
                       </button>
                     )}
-                    {canManageProject && canDeleteProject && <div className="border-t border-[#F1F5F9] my-1" />}
+                    {canManageProject && (
+                      <button
+                        onClick={() => {
+                          setSaveTemplateForm({ name: `${project.projectName} Template`, description: project.description || "" });
+                          setShowSaveTemplateModal(true);
+                          setShowMenu(false);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3.5 py-2 text-[13px] text-[#334155] hover:bg-[#F8FAFC] transition-colors"
+                      >
+                        <svg className="w-4 h-4 text-[#64748B]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                        </svg>
+                        Save as Template
+                      </button>
+                    )}
+                    {(canManageProject || canDeleteProject) && <div className="border-t border-[#F1F5F9] my-1" />}
                     {canDeleteProject && (
                       <button
                         onClick={() => { setShowDeleteConfirm(true); setShowMenu(false); }}
@@ -4464,6 +4498,61 @@ export default function ProjectDetailPage() {
               <Button variant="outline" onClick={() => setShowDeleteConfirm(false)} className="flex-1 h-10 text-[13px]">Cancel</Button>
               <Button onClick={handleDelete} disabled={saving} className="flex-1 h-10 text-[13px] bg-red-600 hover:bg-red-700 text-white">
                 {saving ? "Deleting..." : "Delete"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save as Template Modal */}
+      {showSaveTemplateModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowSaveTemplateModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-[#F1F5F9] flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-[#0F172A]">Save as Template</h2>
+                <p className="text-[12px] text-[#94A3B8] mt-0.5">From: {project.projectName}</p>
+              </div>
+              <button onClick={() => setShowSaveTemplateModal(false)} className="p-1.5 rounded-lg hover:bg-[#F1F5F9] text-[#94A3B8]">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <div>
+                <label className="block text-[12px] font-semibold text-[#475569] mb-1.5">Template Name *</label>
+                <Input
+                  value={saveTemplateForm.name}
+                  onChange={(e) => setSaveTemplateForm({ ...saveTemplateForm, name: e.target.value })}
+                  className="h-10 border-[#E2E8F0] rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-[12px] font-semibold text-[#475569] mb-1.5">Description</label>
+                <textarea
+                  value={saveTemplateForm.description}
+                  onChange={(e) => setSaveTemplateForm({ ...saveTemplateForm, description: e.target.value })}
+                  rows={3}
+                  className="w-full rounded-lg border border-[#E2E8F0] px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[#2E86C1] focus:border-transparent resize-none"
+                />
+              </div>
+              <div className="bg-[#F8FAFC] rounded-lg p-3">
+                <p className="text-[11px] font-semibold text-[#475569] mb-1">What will be saved:</p>
+                <ul className="text-[11px] text-[#64748B] space-y-0.5">
+                  <li>Project settings (board type, sprint duration, estimation)</li>
+                  <li>Milestones (converted to relative day offsets)</li>
+                  <li>Team role structure</li>
+                  <li>Category and methodology</li>
+                </ul>
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-[#F1F5F9] flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowSaveTemplateModal(false)} className="h-9 px-4 text-[13px]">Cancel</Button>
+              <Button
+                onClick={handleSaveAsTemplate}
+                disabled={saving || !saveTemplateForm.name.trim()}
+                className="h-9 px-5 text-[13px] bg-[#2E86C1] hover:bg-[#2471A3]"
+              >
+                {saving ? "Saving..." : "Save Template"}
               </Button>
             </div>
           </div>

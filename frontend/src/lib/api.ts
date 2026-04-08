@@ -1292,6 +1292,57 @@ export const invoiceApi = {
 
 // ── Project API ──
 
+export interface ProjectTemplate {
+  _id: string;
+  name: string;
+  description?: string;
+  organizationId: string;
+  category?: string;
+  methodology?: string;
+  createdBy: string;
+  isPublic: boolean;
+  defaultSettings?: {
+    boardType?: string;
+    sprintDuration?: number;
+    estimationUnit?: string;
+    enableTimeTracking?: boolean;
+    enableSubtasks?: boolean;
+    enableEpics?: boolean;
+    enableSprints?: boolean;
+    enableReleases?: boolean;
+  };
+  milestoneTemplates?: Array<{
+    name: string;
+    description?: string;
+    phase?: string;
+    offsetDays: number;
+    deliverables?: string[];
+  }>;
+  taskTemplates?: Array<{
+    title: string;
+    description?: string;
+    type?: string;
+    priority?: string;
+    storyPoints?: number;
+    labels?: string[];
+    milestoneIndex?: number;
+  }>;
+  boardColumns?: Array<{
+    name: string;
+    statusMapping: string;
+    wipLimit?: number;
+    order: number;
+  }>;
+  teamRoles?: Array<{
+    role: string;
+    count: number;
+    skills?: string[];
+  }>;
+  usageCount: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface Project {
   _id: string;
   projectName: string;
@@ -1364,6 +1415,24 @@ export const projectApi = {
     request(`/projects/${projectId}/team/${userId}`, { method: "PUT", body: JSON.stringify(data) }),
   updateBudget: (projectId: string, spent: number) =>
     request(`/projects/${projectId}/budget`, { method: "PUT", body: JSON.stringify({ spent }) }),
+
+  // ── Templates ──
+  getTemplates: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request<ProjectTemplate[]>(`/projects/templates${qs}`);
+  },
+  getTemplate: (id: string) =>
+    request<ProjectTemplate>(`/projects/templates/${id}`),
+  createTemplate: (data: Partial<ProjectTemplate>) =>
+    request<ProjectTemplate>("/projects/templates", { method: "POST", body: JSON.stringify(data) }),
+  saveAsTemplate: (projectId: string, data: { name: string; description?: string; isPublic?: boolean }) =>
+    request<ProjectTemplate>(`/projects/templates/from-project/${projectId}`, { method: "POST", body: JSON.stringify(data) }),
+  applyTemplate: (templateId: string, data: { projectName: string; startDate?: string; description?: string; category?: string; priority?: string }) =>
+    request<Project>(`/projects/templates/${templateId}/apply`, { method: "POST", body: JSON.stringify(data) }),
+  updateTemplate: (id: string, data: Partial<ProjectTemplate>) =>
+    request<ProjectTemplate>(`/projects/templates/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteTemplate: (id: string) =>
+    request(`/projects/templates/${id}`, { method: "DELETE" }),
 };
 
 // ── Task API ──
