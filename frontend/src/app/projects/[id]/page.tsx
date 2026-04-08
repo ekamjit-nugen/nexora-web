@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { projectApi, taskApi, boardApi, sprintApi, hrApi, Project, Task, Board, Sprint, Employee, ActivityLog } from "@/lib/api";
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { BoardFilters } from "@/components/board-filters";
 import { BoardSwimlanes } from "@/components/board-swimlanes";
 import { BulkOperations } from "@/components/bulk-operations";
+import GanttChart, { GanttItem } from "@/components/projects/GanttChart";
 import { toast } from "sonner";
 
 // ── Constants ──
@@ -3864,9 +3865,162 @@ function PlanningView({
   );
 }
 
+// ── Gantt Chart View ──
+
+function computeGanttProgress(task: Task): number {
+  if (task.status === "done") return 100;
+  if (task.status === "cancelled") return 0;
+  if (task.status === "in_review") return 80;
+  if (task.status === "in_progress") return 50;
+  if (task.status === "todo") return 10;
+  return 0;
+}
+
+function buildGanttItems(
+  tasks: Task[],
+  employees: Array<{ _id: string; userId?: string; firstName: string; lastName: string }>,
+  projectStartDate?: Date,
+): GanttItem[] {
+  const empMap = new Map<string, string>();
+  for (const emp of employees) {
+    const name = `${emp.firstName} ${emp.lastName}`.trim();
+    if (emp.userId) empMap.set(emp.userId, name);
+    empMap.set(emp._id, name);
+  }
+
+  const taskMap = new Map<string, Task>();
+  for (const t of tasks) taskMap.set(t._id, t);
+
+  const childrenOf = new Map<string, Task[]>();
+  const roots: Task[] = [];
+
+  for (const t of tasks) {
+    if (t.parentTaskId && taskMap.has(t.parentTaskId)) {
+      const siblings = childrenOf.get(t.parentTaskId) || [];
+      siblings.push(t);
+      childrenOf.set(t.parentTaskId, siblings);
+    } else {
+      roots.push(t);
+    }
+  }
+
+  const now = new Date();
+  const fallbackStart = projectStartDate || new Date(now.getTime() - 7 * 86400000);
+
+  function toItem(task: Task, level: number): GanttItem {
+    const children = childrenOf.get(task._id) || [];
+    const childItems = children.map((c) => toItem(c, level + 1));
+
+    let startDate = task.createdAt ? new Date(task.createdAt) : fallbackStart;
+    let endDate = task.dueDate
+      ? new Date(task.dueDate)
+      : task.completedAt
+        ? new Date(task.completedAt)
+        : new Date(startDate.getTime() + 7 * 86400000);
+
+    if (childItems.length > 0) {
+      const cs = Math.min(...childItems.map((c) => c.startDate.getTime()));
+      const ce = Math.max(...childItems.map((c) => c.endDate.getTime()));
+      if (cs < startDate.getTime()) startDate = new Date(cs);
+      if (ce > endDate.getTime()) endDate = new Date(ce);
+    }
+
+    if (endDate.getTime() <= startDate.getTime()) {
+      endDate = new Date(startDate.getTime() + 86400000);
+    }
+
+    const deps = (task.dependencies || [])
+      .filter((d) => d.type === "blocked_by")
+      .map((d) => d.itemId);
+
+    return {
+      id: task._id,
+      title: task.title,
+      taskKey: task.taskKey,
+      type: task.type as GanttItem["type"],
+      startDate,
+      endDate,
+      status: task.status,
+      progress: computeGanttProgress(task),
+      assignee: task.assigneeId,
+      assigneeName: task.assigneeId ? empMap.get(task.assigneeId) : undefined,
+      priority: task.priority,
+      dependencies: deps.length > 0 ? deps : undefined,
+      children: childItems.length > 0 ? childItems : undefined,
+      level,
+      parentId: task.parentTaskId || undefined,
+    };
+  }
+
+  const typeOrder: Record<string, number> = { epic: 0, story: 1, task: 2, bug: 3, improvement: 4, spike: 5, sub_task: 6 };
+  roots.sort((a, b) => {
+    const ta = typeOrder[a.type] ?? 9;
+    const tb = typeOrder[b.type] ?? 9;
+    if (ta !== tb) return ta - tb;
+    const da = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+    const db = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+    return da - db;
+  });
+
+  return roots.map((t) => toItem(t, 0));
+}
+
+function GanttChartView({
+  tasks,
+  projectId,
+  employees,
+  project,
+}: {
+  tasks: Task[];
+  projectId: string;
+  employees: Array<{ _id: string; userId?: string; firstName: string; lastName: string }>;
+  project: Project | null;
+}) {
+  const ganttItems = useMemo(
+    () => buildGanttItems(tasks, employees, project?.startDate ? new Date(project.startDate) : undefined),
+    [tasks, employees, project],
+  );
+
+  const milestones = useMemo(() => {
+    if (!project?.milestones) return [];
+    return (project.milestones as Array<any>).map((m: any) => ({
+      id: m._id || m.name,
+      name: m.name,
+      targetDate: new Date(m.targetDate),
+      status: m.status,
+    }));
+  }, [project]);
+
+  if (tasks.length === 0) {
+    return (
+      <Card className="border-0 shadow-sm">
+        <CardContent className="p-12 text-center">
+          <div className="w-16 h-16 mx-auto rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4">
+            <svg className="w-8 h-8 text-[#94A3B8]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 4h18M3 8h12M3 12h16M3 16h8M3 20h14" />
+            </svg>
+          </div>
+          <h3 className="text-sm font-semibold text-[#334155] mb-1">No tasks to display</h3>
+          <p className="text-[13px] text-[#94A3B8]">Create tasks with dates to see them on the Gantt chart.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <GanttChart
+      items={ganttItems}
+      projectId={projectId}
+      projectStartDate={project?.startDate ? new Date(project.startDate) : undefined}
+      projectEndDate={project?.endDate ? new Date(project.endDate) : undefined}
+      milestones={milestones}
+    />
+  );
+}
+
 // ── Main Page ──
 
-type ViewTab = "summary" | "timeline" | "board" | "calendar" | "list" | "planning" | "hierarchy" | "reports";
+type ViewTab = "summary" | "timeline" | "board" | "calendar" | "list" | "planning" | "hierarchy" | "reports" | "gantt";
 
 export default function ProjectDetailPage() {
   const { user, loading: authLoading, logout, isProjectRole, hasOrgRole } = useAuth();
@@ -4309,6 +4463,7 @@ export default function ProjectDetailPage() {
                 {([
                   { key: "summary", label: "Summary", icon: "M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7" },
                   { key: "timeline", label: "Timeline", icon: "M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" },
+                  { key: "gantt", label: "Gantt", icon: "M3 4h18M3 8h12M3 12h16M3 16h8M3 20h14" },
                   { key: "board", label: "Board", icon: "M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7" },
                   { key: "calendar", label: "Calendar", icon: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" },
                   { key: "list", label: "List", icon: "M4 6h16M4 10h16M4 14h16M4 18h16" },
@@ -4406,6 +4561,9 @@ export default function ProjectDetailPage() {
         )}
         {activeView === "timeline" && (
           <TimelineView tasks={filteredTasks} sprints={sprints} projectId={projectId} employees={employees} />
+        )}
+        {activeView === "gantt" && (
+          <GanttChartView tasks={filteredTasks} projectId={projectId} employees={employees} project={project} />
         )}
         {activeView === "calendar" && (
           <CalendarView tasks={filteredTasks} projectId={projectId} />

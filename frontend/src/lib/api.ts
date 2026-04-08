@@ -1571,6 +1571,8 @@ export interface Task {
   isRecurringInstance?: boolean;
   recurringParentId?: string;
   organizationId?: string;
+  dependencies?: Array<{ itemId: string; type: string }>;
+  completedAt?: string;
   createdAt?: string;
   updatedAt?: string;
 }
