@@ -5,6 +5,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import { TaskController, TimesheetController } from './task.controller';
+import { ImportExportController } from './import-export.controller';
 import { BoardController } from './board.controller';
 import { SprintController } from './sprint.controller';
 import { TaskReportingController } from './reporting.controller';
@@ -46,7 +47,7 @@ import { RolesGuard } from './guards/roles.guard';
       }),
     }),
   ],
-  controllers: [TaskController, TimesheetController, BoardController, SprintController, TaskReportingController, NotificationController],
+  controllers: [ImportExportController, TaskController, TimesheetController, BoardController, SprintController, TaskReportingController, NotificationController],
   providers: [TaskService, RecurrenceService, BoardService, SprintService, TaskReportingService, NotificationService, TaskCronService, JwtAuthGuard, RolesGuard, Reflector],
   exports: [TaskService, RecurrenceService, BoardService, SprintService, TaskReportingService, NotificationService],
 })
