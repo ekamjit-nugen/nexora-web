@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { HrController } from './hr.controller';
+import { HrController, BillingController } from './hr.controller';
 import { HrService } from './hr.service';
 import { EmployeeSchema } from './schemas/employee.schema';
 import { DepartmentSchema } from './schemas/department.schema';
@@ -12,6 +12,7 @@ import { ClientSchema } from './schemas/client.schema';
 import { InvoiceSchema } from './schemas/invoice.schema';
 import { InvoiceTemplateSchema } from './schemas/invoice-template.schema';
 import { CallLogSchema } from './schemas/call-log.schema';
+import { BillingRateSchema } from './schemas/billing-rate.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @Module({
@@ -25,6 +26,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
       { name: 'Invoice', schema: InvoiceSchema },
       { name: 'InvoiceTemplate', schema: InvoiceTemplateSchema },
       { name: 'CallLog', schema: CallLogSchema },
+      { name: 'BillingRate', schema: BillingRateSchema },
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -34,7 +36,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
       }),
     }),
   ],
-  controllers: [HrController],
+  controllers: [HrController, BillingController],
   providers: [HrService, JwtAuthGuard],
   exports: [HrService],
 })

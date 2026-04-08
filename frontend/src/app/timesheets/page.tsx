@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { timesheetApi, Timesheet } from "@/lib/api";
+import { timesheetApi, billingApi, clientApi, Timesheet, InvoicePreview, Client } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,6 +66,19 @@ export default function TimesheetsPage() {
 
   // Stats
   const [stats, setStats] = useState<any>(null);
+
+  // Invoice generation
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [invoicePreview, setInvoicePreview] = useState<InvoicePreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState("");
+  const [invoiceDueDate, setInvoiceDueDate] = useState("");
+  const [invoiceNotes, setInvoiceNotes] = useState("");
+  const [generatedInvoiceId, setGeneratedInvoiceId] = useState<string | null>(null);
+  const [generatedInvoiceNumber, setGeneratedInvoiceNumber] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) router.push("/login");
@@ -151,6 +164,96 @@ export default function TimesheetsPage() {
     }
   };
 
+  const approvedTimesheets = timesheets.filter(ts => ts.status === "approved");
+  const selectedApproved = Array.from(selectedIds).filter(id => approvedTimesheets.some(ts => ts._id === id));
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedApproved.length === approvedTimesheets.length && approvedTimesheets.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(approvedTimesheets.map(ts => ts._id)));
+    }
+  };
+
+  const handlePreviewInvoice = async () => {
+    if (selectedApproved.length === 0) {
+      toast.error("Select at least one approved timesheet");
+      return;
+    }
+    setPreviewLoading(true);
+    setShowInvoiceModal(true);
+    setGeneratedInvoiceId(null);
+    setGeneratedInvoiceNumber(null);
+    try {
+      const [previewRes, clientsRes] = await Promise.all([
+        billingApi.previewInvoice(selectedApproved),
+        clientApi.getClients(),
+      ]);
+      setInvoicePreview(previewRes.data || null);
+      setClients(Array.isArray(clientsRes.data) ? clientsRes.data : []);
+      if (previewRes.data?.suggestedClientId) {
+        setSelectedClientId(previewRes.data.suggestedClientId);
+      }
+      // Default due date: 30 days from now
+      const due = new Date();
+      due.setDate(due.getDate() + 30);
+      setInvoiceDueDate(due.toISOString().split("T")[0]);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to generate preview");
+      setShowInvoiceModal(false);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleGenerateInvoice = async () => {
+    if (!invoicePreview) return;
+    if (!selectedClientId) {
+      toast.error("Please select a client");
+      return;
+    }
+    setGenerating(true);
+    try {
+      const res = await billingApi.generateInvoice({
+        timesheetIds: selectedApproved,
+        clientId: selectedClientId,
+        dueDate: invoiceDueDate || undefined,
+        notes: invoiceNotes || undefined,
+      });
+      const result = res.data;
+      setGeneratedInvoiceId(result?.invoice?._id || null);
+      setGeneratedInvoiceNumber(result?.invoice?.invoiceNumber || null);
+      toast.success(`Invoice ${result?.invoice?.invoiceNumber || ""} created`);
+      setSelectedIds(new Set());
+      fetchTimesheets();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to generate invoice");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const closeInvoiceModal = () => {
+    setShowInvoiceModal(false);
+    setInvoicePreview(null);
+    setGeneratedInvoiceId(null);
+    setGeneratedInvoiceNumber(null);
+    setInvoiceNotes("");
+  };
+
+  const formatCurrency = (amount: number, currency: string = "USD") => {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount);
+  };
+
   if (authLoading || !user) {
     return <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC]"><div className="animate-spin rounded-full h-8 w-8 border-2 border-[#2E86C1] border-t-transparent" /></div>;
   }
@@ -167,10 +270,21 @@ export default function TimesheetsPage() {
             <h1 className="text-[20px] font-bold text-[#0F172A]">Timesheets</h1>
             <p className="text-[13px] text-[#64748B] mt-0.5">Track and manage time entries</p>
           </div>
-          <Button onClick={() => setShowCreate(true)} className="bg-[#2E86C1] hover:bg-[#2471A3] h-9 gap-2">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
-            New Timesheet
-          </Button>
+          <div className="flex items-center gap-2">
+            {selectedApproved.length > 0 && (
+              <Button
+                onClick={handlePreviewInvoice}
+                className="bg-emerald-600 hover:bg-emerald-700 h-9 gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" /></svg>
+                Generate Invoice ({selectedApproved.length})
+              </Button>
+            )}
+            <Button onClick={() => setShowCreate(true)} className="bg-[#2E86C1] hover:bg-[#2471A3] h-9 gap-2">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+              New Timesheet
+            </Button>
+          </div>
         </div>
 
         <div className="flex-1 p-8 space-y-6">
@@ -235,6 +349,26 @@ export default function TimesheetsPage() {
             ))}
           </div>
 
+          {/* Select all for approved timesheets */}
+          {approvedTimesheets.length > 0 && !loading && (
+            <div className="flex items-center gap-3 px-1">
+              <label className="flex items-center gap-2 cursor-pointer text-[12px] text-[#64748B] select-none">
+                <input
+                  type="checkbox"
+                  checked={selectedApproved.length === approvedTimesheets.length && approvedTimesheets.length > 0}
+                  onChange={toggleSelectAll}
+                  className="rounded border-[#CBD5E1] text-[#2E86C1] focus:ring-[#2E86C1] h-4 w-4"
+                />
+                Select all approved ({approvedTimesheets.length})
+              </label>
+              {selectedApproved.length > 0 && (
+                <span className="text-[11px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                  {selectedApproved.length} selected for invoicing
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Timesheet list */}
           {loading ? (
             <div className="flex items-center justify-center py-20"><div className="animate-spin rounded-full h-8 w-8 border-2 border-[#2E86C1] border-t-transparent" /></div>
@@ -259,6 +393,15 @@ export default function TimesheetsPage() {
                         onClick={() => setExpandedId(isExpanded ? null : ts._id)}
                       >
                         <div className="flex items-center gap-4">
+                          {ts.status === "approved" && (
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(ts._id)}
+                              onChange={(e) => { e.stopPropagation(); toggleSelect(ts._id); }}
+                              onClick={(e) => e.stopPropagation()}
+                              className="rounded border-[#CBD5E1] text-[#2E86C1] focus:ring-[#2E86C1] h-4 w-4 flex-shrink-0"
+                            />
+                          )}
                           <div className="flex items-center gap-2">
                             <div className={`w-2 h-2 rounded-full ${sc.dot}`} />
                             <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${sc.color}`}>{sc.label}</span>
@@ -418,6 +561,170 @@ export default function TimesheetsPage() {
             </div>
           )}
         </div>
+
+        {/* Invoice Preview Modal */}
+        {showInvoiceModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto mx-4">
+              <div className="sticky top-0 bg-white border-b border-[#E2E8F0] px-6 py-4 flex items-center justify-between rounded-t-2xl">
+                <div>
+                  <h2 className="text-[16px] font-bold text-[#0F172A]">
+                    {generatedInvoiceId ? "Invoice Created" : "Invoice Preview"}
+                  </h2>
+                  <p className="text-[12px] text-[#64748B] mt-0.5">
+                    {generatedInvoiceId
+                      ? `Invoice ${generatedInvoiceNumber} has been created as a draft`
+                      : `Preview based on ${selectedApproved.length} approved timesheet(s)`}
+                  </p>
+                </div>
+                <button onClick={closeInvoiceModal} className="text-[#94A3B8] hover:text-[#64748B] p-1">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+
+              <div className="p-6 space-y-5">
+                {previewLoading ? (
+                  <div className="flex items-center justify-center py-16">
+                    <div className="animate-spin rounded-full h-8 w-8 border-2 border-[#2E86C1] border-t-transparent" />
+                  </div>
+                ) : generatedInvoiceId ? (
+                  /* Success state */
+                  <div className="text-center py-8 space-y-4">
+                    <div className="w-16 h-16 mx-auto rounded-full bg-emerald-50 flex items-center justify-center">
+                      <svg className="w-8 h-8 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                    </div>
+                    <div>
+                      <p className="text-[16px] font-semibold text-[#0F172A]">Invoice {generatedInvoiceNumber} Created</p>
+                      <p className="text-[13px] text-[#64748B] mt-1">The invoice has been saved as a draft. You can review, edit, and send it from the Invoices page.</p>
+                    </div>
+                    <div className="flex gap-3 justify-center mt-4">
+                      <Button
+                        onClick={() => router.push("/invoices")}
+                        className="bg-[#2E86C1] hover:bg-[#2471A3] h-9"
+                      >
+                        View in Invoices
+                      </Button>
+                      <Button variant="outline" onClick={closeInvoiceModal} className="h-9 border-[#E2E8F0]">
+                        Close
+                      </Button>
+                    </div>
+                  </div>
+                ) : invoicePreview ? (
+                  <>
+                    {/* Line items table */}
+                    <div className="border border-[#E2E8F0] rounded-xl overflow-hidden">
+                      <table className="w-full text-[12px]">
+                        <thead>
+                          <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
+                            <th className="text-left px-4 py-3 font-semibold text-[#475569]">Project</th>
+                            <th className="text-left px-4 py-3 font-semibold text-[#475569]">Person</th>
+                            <th className="text-right px-4 py-3 font-semibold text-[#475569]">Hours</th>
+                            <th className="text-right px-4 py-3 font-semibold text-[#475569]">Rate</th>
+                            <th className="text-right px-4 py-3 font-semibold text-[#475569]">Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#F1F5F9]">
+                          {invoicePreview.lineItems.map((li, i) => (
+                            <tr key={i} className="hover:bg-[#F8FAFC]">
+                              <td className="px-4 py-3 font-medium text-[#0F172A]">{li.projectName}</td>
+                              <td className="px-4 py-3 text-[#64748B]">{li.personName}</td>
+                              <td className="px-4 py-3 text-right text-[#0F172A]">{li.hours}h</td>
+                              <td className="px-4 py-3 text-right text-[#64748B]">{formatCurrency(li.rate, li.currency)}/h</td>
+                              <td className="px-4 py-3 text-right font-semibold text-[#0F172A]">{formatCurrency(li.amount, li.currency)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          {/* Project subtotals */}
+                          {invoicePreview.projectSubtotals.length > 1 && invoicePreview.projectSubtotals.map((ps, i) => (
+                            <tr key={`sub-${i}`} className="bg-[#FAFBFC] border-t border-[#F1F5F9]">
+                              <td colSpan={2} className="px-4 py-2 text-[11px] font-semibold text-[#64748B]">{ps.projectName} subtotal</td>
+                              <td className="px-4 py-2 text-right text-[11px] text-[#64748B]">{ps.hours}h</td>
+                              <td />
+                              <td className="px-4 py-2 text-right text-[11px] font-semibold text-[#475569]">{formatCurrency(ps.amount, invoicePreview.currency)}</td>
+                            </tr>
+                          ))}
+                          <tr className="bg-[#F8FAFC] border-t border-[#E2E8F0]">
+                            <td colSpan={2} className="px-4 py-3 text-right font-bold text-[#0F172A]">Grand Total</td>
+                            <td className="px-4 py-3 text-right font-bold text-[#0F172A]">{invoicePreview.totalHours}h</td>
+                            <td />
+                            <td className="px-4 py-3 text-right font-bold text-[#0F172A] text-[14px]">{formatCurrency(invoicePreview.grandTotal, invoicePreview.currency)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+
+                    {invoicePreview.grandTotal === 0 && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+                        <p className="text-[12px] text-amber-800 font-medium">No billing rates configured for these projects. Set up billing rates in project settings before generating an invoice.</p>
+                      </div>
+                    )}
+
+                    {/* Invoice configuration */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[11px] font-semibold text-[#475569] mb-1.5 block">Client *</label>
+                        <select
+                          value={selectedClientId}
+                          onChange={(e) => setSelectedClientId(e.target.value)}
+                          className="w-full h-10 text-sm bg-[#F8FAFC] border border-[#E2E8F0] rounded-md px-3 text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[#2E86C1]"
+                        >
+                          <option value="">Select client...</option>
+                          {clients.map(c => (
+                            <option key={c._id} value={c._id}>{c.displayName || c.companyName}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-[#475569] mb-1.5 block">Due Date</label>
+                        <Input
+                          type="date"
+                          value={invoiceDueDate}
+                          onChange={(e) => setInvoiceDueDate(e.target.value)}
+                          className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0]"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-semibold text-[#475569] mb-1.5 block">Notes (optional)</label>
+                      <Input
+                        value={invoiceNotes}
+                        onChange={(e) => setInvoiceNotes(e.target.value)}
+                        placeholder="Add notes to the invoice..."
+                        className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0]"
+                      />
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex gap-3 justify-end pt-2">
+                      <Button variant="outline" onClick={closeInvoiceModal} className="h-9 border-[#E2E8F0]">
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={handleGenerateInvoice}
+                        disabled={generating || !selectedClientId || invoicePreview.grandTotal === 0}
+                        className="bg-emerald-600 hover:bg-emerald-700 h-9 gap-2"
+                      >
+                        {generating ? (
+                          <>
+                            <div className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-white border-t-transparent" />
+                            Creating...
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" /></svg>
+                            Create Invoice
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

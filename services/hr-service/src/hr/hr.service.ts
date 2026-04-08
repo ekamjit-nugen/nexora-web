@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { IEmployee } from './schemas/employee.schema';
@@ -9,6 +9,7 @@ import { IClient } from './schemas/client.schema';
 import { IInvoice } from './schemas/invoice.schema';
 import { IInvoiceTemplate } from './schemas/invoice-template.schema';
 import { ICallLog } from './schemas/call-log.schema';
+import { IBillingRate } from './schemas/billing-rate.schema';
 import {
   CreateEmployeeDto, UpdateEmployeeDto, EmployeeQueryDto,
   CreateDepartmentDto, UpdateDepartmentDto,
@@ -18,6 +19,8 @@ import {
   ClientContactPersonDto, LinkProjectDto,
   CreateInvoiceDto, UpdateInvoiceDto, UpdateInvoiceStatusDto, InvoiceQueryDto, SendInvoiceDto, MarkPaidDto,
   CreateInvoiceTemplateDto,
+  CreateBillingRateDto, UpdateBillingRateDto, BillingRateQueryDto,
+  PreviewInvoiceDto, GenerateInvoiceDto,
   CreateCallLogDto, UpdateCallLogDto, CallLogQueryDto,
 } from './dto/index';
 
@@ -34,6 +37,7 @@ export class HrService {
     @InjectModel('Invoice') private invoiceModel: Model<IInvoice>,
     @InjectModel('InvoiceTemplate') private invoiceTemplateModel: Model<IInvoiceTemplate>,
     @InjectModel('CallLog') private callLogModel: Model<ICallLog>,
+    @InjectModel('BillingRate') private billingRateModel: Model<IBillingRate>,
   ) {}
 
   // ── Employees ──
@@ -1203,5 +1207,344 @@ export class HrService {
     if (!template) throw new NotFoundException('Invoice template not found');
     this.logger.log(`Invoice template deleted: ${template.name}`);
     return { message: 'Invoice template deleted successfully' };
+  }
+
+  // ── Billing Rates ──
+
+  async createBillingRate(dto: CreateBillingRateDto, userId: string, orgId?: string) {
+    // Validate: role_based needs role, user_specific needs userId
+    if (dto.type === 'role_based' && !dto.role) {
+      throw new BadRequestException('role is required for role_based billing rate');
+    }
+    if (dto.type === 'user_specific' && !dto.userId) {
+      throw new BadRequestException('userId is required for user_specific billing rate');
+    }
+
+    // Check for duplicate active rate
+    const dupFilter: any = {
+      projectId: dto.projectId,
+      type: dto.type,
+      isDeleted: false,
+      effectiveTo: null,
+    };
+    if (orgId) dupFilter.organizationId = orgId;
+    if (dto.type === 'role_based') dupFilter.role = dto.role;
+    if (dto.type === 'user_specific') dupFilter.userId = dto.userId;
+
+    const existing = await this.billingRateModel.findOne(dupFilter);
+    if (existing) {
+      // End the existing rate
+      existing.effectiveTo = new Date(dto.effectiveFrom);
+      existing.updatedBy = userId;
+      await existing.save();
+    }
+
+    const rate = new this.billingRateModel({
+      ...dto,
+      effectiveFrom: new Date(dto.effectiveFrom),
+      effectiveTo: dto.effectiveTo ? new Date(dto.effectiveTo) : null,
+      currency: dto.currency || 'USD',
+      isDeleted: false,
+      createdBy: userId,
+      organizationId: orgId,
+    });
+    await rate.save();
+    this.logger.log(`Billing rate created: ${rate._id} for project ${dto.projectId}`);
+    return rate;
+  }
+
+  async getBillingRates(query: BillingRateQueryDto, orgId?: string) {
+    const filter: any = { isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+    if (query.projectId) filter.projectId = query.projectId;
+    if (query.type) filter.type = query.type;
+    return this.billingRateModel.find(filter).sort({ type: 1, createdAt: -1 });
+  }
+
+  async updateBillingRate(id: string, dto: UpdateBillingRateDto, userId: string, orgId?: string) {
+    const filter: any = { _id: id, isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+
+    const rate = await this.billingRateModel.findOne(filter);
+    if (!rate) throw new NotFoundException('Billing rate not found');
+
+    if (dto.hourlyRate !== undefined) rate.hourlyRate = dto.hourlyRate;
+    if (dto.currency) rate.currency = dto.currency;
+    if (dto.effectiveFrom) rate.effectiveFrom = new Date(dto.effectiveFrom);
+    if (dto.effectiveTo) rate.effectiveTo = new Date(dto.effectiveTo);
+    if (dto.role !== undefined) rate.role = dto.role;
+    if (dto.userName !== undefined) rate.userName = dto.userName;
+    rate.updatedBy = userId;
+    await rate.save();
+    return rate;
+  }
+
+  async deleteBillingRate(id: string, orgId?: string) {
+    const filter: any = { _id: id, isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+    const rate = await this.billingRateModel.findOneAndUpdate(filter, { isDeleted: true }, { new: true });
+    if (!rate) throw new NotFoundException('Billing rate not found');
+    this.logger.log(`Billing rate deleted: ${id}`);
+    return { message: 'Billing rate deleted successfully' };
+  }
+
+  // ── Billing Rate Resolution ──
+
+  private async resolveRate(projectId: string, userId: string, role: string | null, orgId?: string): Promise<{ rate: number; currency: string }> {
+    const now = new Date();
+    const baseFilter: any = {
+      projectId,
+      isDeleted: false,
+      effectiveFrom: { $lte: now },
+      $or: [{ effectiveTo: null }, { effectiveTo: { $gte: now } }],
+    };
+    if (orgId) baseFilter.organizationId = orgId;
+
+    // Priority 1: user_specific
+    const userRate = await this.billingRateModel.findOne({ ...baseFilter, type: 'user_specific', userId }).sort({ effectiveFrom: -1 });
+    if (userRate) return { rate: userRate.hourlyRate, currency: userRate.currency };
+
+    // Priority 2: role_based
+    if (role) {
+      const roleRate = await this.billingRateModel.findOne({ ...baseFilter, type: 'role_based', role }).sort({ effectiveFrom: -1 });
+      if (roleRate) return { rate: roleRate.hourlyRate, currency: roleRate.currency };
+    }
+
+    // Priority 3: project_default
+    const defaultRate = await this.billingRateModel.findOne({ ...baseFilter, type: 'project_default' }).sort({ effectiveFrom: -1 });
+    if (defaultRate) return { rate: defaultRate.hourlyRate, currency: defaultRate.currency };
+
+    return { rate: 0, currency: 'USD' };
+  }
+
+  // ── Timesheet-to-Invoice Bridge ──
+
+  async previewInvoiceFromTimesheets(dto: PreviewInvoiceDto, authToken?: string, orgId?: string) {
+    if (!dto.timesheetIds || dto.timesheetIds.length === 0) {
+      throw new BadRequestException('At least one timesheet ID is required');
+    }
+
+    // Fetch timesheets from task-service via HTTP
+    const timesheets = await this.fetchTimesheets(dto.timesheetIds, authToken);
+
+    // Only approved timesheets can be invoiced
+    const nonApproved = timesheets.filter(ts => ts.status !== 'approved');
+    if (nonApproved.length > 0) {
+      throw new BadRequestException(`${nonApproved.length} timesheet(s) are not approved. Only approved timesheets can be invoiced.`);
+    }
+
+    return this.buildInvoicePreview(timesheets, orgId);
+  }
+
+  async generateInvoiceFromTimesheets(dto: GenerateInvoiceDto, userId: string, authToken?: string, orgId?: string) {
+    if (!dto.timesheetIds || dto.timesheetIds.length === 0) {
+      throw new BadRequestException('At least one timesheet ID is required');
+    }
+
+    const timesheets = await this.fetchTimesheets(dto.timesheetIds, authToken);
+    const nonApproved = timesheets.filter(ts => ts.status !== 'approved');
+    if (nonApproved.length > 0) {
+      throw new BadRequestException(`${nonApproved.length} timesheet(s) are not approved. Only approved timesheets can be invoiced.`);
+    }
+
+    const preview = await this.buildInvoicePreview(timesheets, orgId);
+
+    if (preview.lineItems.length === 0) {
+      throw new BadRequestException('No billable line items found in the selected timesheets');
+    }
+
+    // Determine client
+    const clientId = dto.clientId || preview.suggestedClientId;
+    if (!clientId) {
+      throw new BadRequestException('clientId is required — could not auto-detect client from projects');
+    }
+
+    // Verify client exists
+    const clientFilter: any = { _id: clientId, isDeleted: false };
+    if (orgId) clientFilter.organizationId = orgId;
+    const client = await this.clientModel.findOne(clientFilter);
+    if (!client) throw new NotFoundException('Client not found');
+
+    // Build invoice items
+    const items = preview.lineItems.map(li => ({
+      description: `${li.projectName} — ${li.personName} (${li.hours}h)`,
+      quantity: li.hours,
+      rate: li.rate,
+      amount: li.amount,
+      taxRate: 0,
+      taxAmount: 0,
+    }));
+
+    const dueDate = dto.dueDate
+      ? new Date(dto.dueDate)
+      : new Date(Date.now() + (client.paymentTerms || 30) * 24 * 60 * 60 * 1000);
+
+    const invoiceNumber = await this.generateInvoiceNumber(orgId);
+    const { items: calcItems, subtotal, taxTotal, total } = this.calculateInvoiceTotals(items, 0, 'fixed');
+
+    const invoice = new this.invoiceModel({
+      organizationId: orgId,
+      invoiceNumber,
+      clientId,
+      issueDate: new Date(),
+      dueDate,
+      items: calcItems,
+      subtotal,
+      taxTotal,
+      discount: 0,
+      discountType: 'fixed',
+      total,
+      amountPaid: 0,
+      balanceDue: total,
+      currency: dto.currency || preview.currency || client.currency || 'USD',
+      status: 'draft',
+      paymentTerms: client.paymentTerms || 30,
+      notes: dto.notes || `Generated from ${dto.timesheetIds.length} timesheet(s)`,
+      emailCount: 0,
+      isDeleted: false,
+      createdBy: userId,
+    });
+
+    await invoice.save();
+    this.logger.log(`Invoice ${invoice.invoiceNumber} generated from ${dto.timesheetIds.length} timesheets`);
+
+    // Update client lastInvoiceDate
+    await this.clientModel.updateOne({ _id: clientId }, { $set: { lastInvoiceDate: new Date() } });
+
+    return { invoice, preview };
+  }
+
+  private async fetchTimesheets(timesheetIds: string[], authToken?: string): Promise<any[]> {
+    // Fetch timesheets via internal HTTP call to task-service
+    const taskServiceUrl = process.env.TASK_SERVICE_URL || 'http://task-service:3021';
+    const timesheets: any[] = [];
+
+    for (const id of timesheetIds) {
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (authToken) headers['Authorization'] = authToken;
+
+        const response = await fetch(`${taskServiceUrl}/api/v1/timesheets/${id}`, { headers });
+        if (!response.ok) {
+          throw new NotFoundException(`Timesheet ${id} not found or inaccessible`);
+        }
+        const body = await response.json();
+        timesheets.push(body.data || body);
+      } catch (err) {
+        if (err instanceof NotFoundException) throw err;
+        this.logger.error(`Failed to fetch timesheet ${id}: ${err.message}`);
+        throw new BadRequestException(`Failed to fetch timesheet ${id}`);
+      }
+    }
+
+    return timesheets;
+  }
+
+  private async buildInvoicePreview(timesheets: any[], orgId?: string) {
+    // Group all entries by projectId + employeeId
+    const groups: Map<string, {
+      projectId: string;
+      projectName: string;
+      personId: string;
+      personName: string;
+      hours: number;
+      entries: any[];
+    }> = new Map();
+
+    for (const ts of timesheets) {
+      const personId = ts.employeeId || ts.userId || ts.createdBy;
+      const personName = ts.employeeName || personId;
+
+      for (const entry of (ts.entries || [])) {
+        const key = `${entry.projectId || 'unknown'}_${personId}`;
+        if (!groups.has(key)) {
+          groups.set(key, {
+            projectId: entry.projectId || 'unknown',
+            projectName: entry.projectName || 'General',
+            personId,
+            personName,
+            hours: 0,
+            entries: [],
+          });
+        }
+        const g = groups.get(key)!;
+        g.hours += entry.hours || 0;
+        g.entries.push(entry);
+      }
+    }
+
+    // Resolve rates and build line items
+    const lineItems: Array<{
+      projectId: string;
+      projectName: string;
+      personId: string;
+      personName: string;
+      hours: number;
+      rate: number;
+      currency: string;
+      amount: number;
+    }> = [];
+
+    let suggestedClientId: string | null = null;
+    let currency = 'USD';
+
+    // Try to detect clientId from projects via client schema
+    const projectIds = [...new Set([...groups.values()].map(g => g.projectId).filter(id => id !== 'unknown'))];
+    if (projectIds.length > 0) {
+      // Check clients that have these projectIds linked
+      const clients = await this.clientModel.find({
+        projectIds: { $in: projectIds },
+        isDeleted: false,
+        ...(orgId ? { organizationId: orgId } : {}),
+      }).lean();
+      if (clients.length === 1) {
+        suggestedClientId = clients[0]._id.toString();
+        currency = clients[0].currency || 'USD';
+      }
+    }
+
+    for (const [, group] of groups) {
+      const resolved = await this.resolveRate(group.projectId, group.personId, null, orgId);
+      const hours = Math.round(group.hours * 100) / 100;
+      const amount = Math.round(hours * resolved.rate * 100) / 100;
+
+      lineItems.push({
+        projectId: group.projectId,
+        projectName: group.projectName,
+        personId: group.personId,
+        personName: group.personName,
+        hours,
+        rate: resolved.rate,
+        currency: resolved.currency || currency,
+        amount,
+      });
+
+      if (resolved.currency && resolved.currency !== 'USD') {
+        currency = resolved.currency;
+      }
+    }
+
+    // Build project subtotals
+    const projectSubtotals: Record<string, { projectName: string; hours: number; amount: number }> = {};
+    for (const li of lineItems) {
+      if (!projectSubtotals[li.projectId]) {
+        projectSubtotals[li.projectId] = { projectName: li.projectName, hours: 0, amount: 0 };
+      }
+      projectSubtotals[li.projectId].hours += li.hours;
+      projectSubtotals[li.projectId].amount += li.amount;
+    }
+
+    const grandTotal = Math.round(lineItems.reduce((sum, li) => sum + li.amount, 0) * 100) / 100;
+    const totalHours = Math.round(lineItems.reduce((sum, li) => sum + li.hours, 0) * 100) / 100;
+
+    return {
+      timesheetIds: timesheets.map(ts => ts._id),
+      lineItems,
+      projectSubtotals: Object.values(projectSubtotals),
+      grandTotal,
+      totalHours,
+      currency,
+      suggestedClientId,
+    };
   }
 }

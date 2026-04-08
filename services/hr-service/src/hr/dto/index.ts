@@ -672,6 +672,87 @@ export class CreateInvoiceTemplateDto {
   isDefault?: boolean;
 }
 
+// ── Billing Rate DTOs ──
+
+export class CreateBillingRateDto {
+  @IsString()
+  projectId: string;
+
+  @IsEnum(['project_default', 'role_based', 'user_specific'])
+  type: string;
+
+  @IsOptional() @IsString()
+  role?: string;
+
+  @IsOptional() @IsString()
+  userId?: string;
+
+  @IsOptional() @IsString()
+  userName?: string;
+
+  @IsNumber() @Min(0)
+  hourlyRate: number;
+
+  @IsOptional() @IsString()
+  currency?: string;
+
+  @IsDateString()
+  effectiveFrom: string;
+
+  @IsOptional() @IsDateString()
+  effectiveTo?: string;
+}
+
+export class UpdateBillingRateDto {
+  @IsOptional() @IsNumber() @Min(0)
+  hourlyRate?: number;
+
+  @IsOptional() @IsString()
+  currency?: string;
+
+  @IsOptional() @IsDateString()
+  effectiveFrom?: string;
+
+  @IsOptional() @IsDateString()
+  effectiveTo?: string;
+
+  @IsOptional() @IsString()
+  role?: string;
+
+  @IsOptional() @IsString()
+  userName?: string;
+}
+
+export class BillingRateQueryDto {
+  @IsOptional() @IsString()
+  projectId?: string;
+
+  @IsOptional() @IsEnum(['project_default', 'role_based', 'user_specific'])
+  type?: string;
+}
+
+export class PreviewInvoiceDto {
+  @IsArray() @IsString({ each: true })
+  timesheetIds: string[];
+}
+
+export class GenerateInvoiceDto {
+  @IsArray() @IsString({ each: true })
+  timesheetIds: string[];
+
+  @IsOptional() @IsString()
+  clientId?: string;
+
+  @IsOptional() @IsDateString()
+  dueDate?: string;
+
+  @IsOptional() @IsString()
+  currency?: string;
+
+  @IsOptional() @IsString()
+  notes?: string;
+}
+
 // ── Call Log DTOs ──
 
 export class CreateCallLogDto {

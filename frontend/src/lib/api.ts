@@ -1711,6 +1711,86 @@ export const timesheetApi = {
   getStats: () => request<any>("/timesheets/stats"),
 };
 
+// ── Billing Rate & Timesheet-to-Invoice Bridge ──
+
+export interface BillingRate {
+  _id: string;
+  organizationId?: string;
+  projectId: string;
+  type: 'project_default' | 'role_based' | 'user_specific';
+  role?: string;
+  userId?: string;
+  userName?: string;
+  hourlyRate: number;
+  currency: string;
+  effectiveFrom: string;
+  effectiveTo?: string;
+  isDeleted: boolean;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InvoicePreviewLineItem {
+  projectId: string;
+  projectName: string;
+  personId: string;
+  personName: string;
+  hours: number;
+  rate: number;
+  currency: string;
+  amount: number;
+}
+
+export interface InvoicePreview {
+  timesheetIds: string[];
+  lineItems: InvoicePreviewLineItem[];
+  projectSubtotals: Array<{ projectName: string; hours: number; amount: number }>;
+  grandTotal: number;
+  totalHours: number;
+  currency: string;
+  suggestedClientId: string | null;
+}
+
+export interface GenerateInvoiceResult {
+  invoice: Invoice;
+  preview: InvoicePreview;
+}
+
+export const billingApi = {
+  // Billing rates
+  getRates: (projectId?: string) => {
+    const qs = projectId ? `?projectId=${projectId}` : "";
+    return request<BillingRate[]>(`/billing/rates${qs}`);
+  },
+  createRate: (data: {
+    projectId: string;
+    type: string;
+    role?: string;
+    userId?: string;
+    userName?: string;
+    hourlyRate: number;
+    currency?: string;
+    effectiveFrom: string;
+    effectiveTo?: string;
+  }) => request<BillingRate>("/billing/rates", { method: "POST", body: JSON.stringify(data) }),
+  updateRate: (id: string, data: Partial<BillingRate>) =>
+    request<BillingRate>(`/billing/rates/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteRate: (id: string) =>
+    request(`/billing/rates/${id}`, { method: "DELETE" }),
+
+  // Invoice preview & generation from timesheets
+  previewInvoice: (timesheetIds: string[]) =>
+    request<InvoicePreview>("/billing/preview", { method: "POST", body: JSON.stringify({ timesheetIds }) }),
+  generateInvoice: (data: {
+    timesheetIds: string[];
+    clientId?: string;
+    dueDate?: string;
+    currency?: string;
+    notes?: string;
+  }) => request<GenerateInvoiceResult>("/billing/generate-invoice", { method: "POST", body: JSON.stringify(data) }),
+};
+
 // ── Activity Log ──
 
 export interface ActivityLog {
