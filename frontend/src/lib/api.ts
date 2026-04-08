@@ -1401,6 +1401,8 @@ export interface Task {
   originalEstimate?: number;
   remainingEstimate?: number;
   organizationId?: string;
+  dependencies?: Array<{ itemId: string; type: string }>;
+  completedAt?: string;
   createdAt?: string;
   updatedAt?: string;
 }
