@@ -46,8 +46,10 @@ class ChatSocketService {
           if (res.data) {
             await SecureStore.setItemAsync("accessToken", res.data.accessToken);
             await SecureStore.setItemAsync("refreshToken", res.data.refreshToken);
-            this.socket?.io.opts.auth = { token: res.data.accessToken };
-            this.socket?.connect();
+            if (this.socket) {
+              this.socket.io.opts.auth = { token: res.data.accessToken };
+              this.socket.connect();
+            }
           }
         }
       } catch {
