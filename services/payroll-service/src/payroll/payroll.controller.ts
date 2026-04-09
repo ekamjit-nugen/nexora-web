@@ -18,6 +18,9 @@ import {
   CreateJobPostingDto, UpdateJobPostingDto, UpdateJobStatusDto, JobQueryDto,
   AddCandidateDto, CandidateQueryDto, ScheduleInterviewDto, InterviewFeedbackDto,
   CreateOfferDto, RejectCandidateDto,
+  RejectSalaryStructureDto, VerifyInvestmentDto, UploadDocumentDto,
+  UpdateOnboardingStatusDto, UpdateOffboardingStatusDto,
+  OnboardingQueryDto, OffboardingQueryDto,
 } from './dto/index';
 
 @Controller()
@@ -92,10 +95,10 @@ export class PayrollController {
   @Post('salary-structures/:id/reject')
   @UseGuards(JwtAuthGuard)
   @Roles('admin', 'super_admin')
-  async rejectSalaryStructure(@Param('id') id: string, @Body() body: { reason?: string }, @Req() req) {
+  async rejectSalaryStructure(@Param('id') id: string, @Body() dto: RejectSalaryStructureDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
-    const result = await this.payrollService.rejectSalaryStructure(id, body, userId, orgId);
+    const result = await this.payrollService.rejectSalaryStructure(id, dto, userId, orgId);
     return { success: true, message: 'Salary structure rejected', data: result };
   }
 
@@ -294,10 +297,10 @@ export class PayrollController {
   @Post('investment-declarations/:id/verify')
   @UseGuards(JwtAuthGuard)
   @Roles('admin', 'hr', 'super_admin')
-  async verifyDeclaration(@Param('id') id: string, @Body() body: { verified: boolean; remarks?: string }, @Req() req) {
+  async verifyDeclaration(@Param('id') id: string, @Body() dto: VerifyInvestmentDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
-    const result = await this.payrollService.verifyDeclaration(id, body, userId, orgId);
+    const result = await this.payrollService.verifyDeclaration(id, dto, userId, orgId);
     return { success: true, message: 'Investment declaration verification updated', data: result };
   }
 
@@ -414,7 +417,7 @@ export class PayrollController {
   @Get('onboarding')
   @UseGuards(JwtAuthGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
-  async getAllOnboardings(@Query() query: { status?: string; page?: number; limit?: number }, @Req() req) {
+  async getAllOnboardings(@Query() query: OnboardingQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
     const result = await this.payrollService.getAllOnboardings(query, userId, orgId);
@@ -450,12 +453,12 @@ export class PayrollController {
   async uploadDocument(
     @Param('employeeId') employeeId: string,
     @Param('docIndex') docIndex: number,
-    @Body() body: { url: string },
+    @Body() dto: UploadDocumentDto,
     @Req() req,
   ) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
-    const result = await this.payrollService.uploadOnboardingDocument(employeeId, +docIndex, body.url, userId, orgId);
+    const result = await this.payrollService.uploadOnboardingDocument(employeeId, +docIndex, dto.url, userId, orgId);
     return { success: true, message: 'Document uploaded', data: result };
   }
 
@@ -489,13 +492,13 @@ export class PayrollController {
   @Roles('admin', 'hr', 'super_admin')
   async updateOnboardingStatus(
     @Param('employeeId') employeeId: string,
-    @Body() body: { status: string },
+    @Body() dto: UpdateOnboardingStatusDto,
     @Req() req,
   ) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
-    const result = await this.payrollService.updateOnboardingStatus(employeeId, body.status, userId, orgId);
-    return { success: true, message: `Onboarding status updated to ${body.status}`, data: result };
+    const result = await this.payrollService.updateOnboardingStatus(employeeId, dto.status, userId, orgId);
+    return { success: true, message: `Onboarding status updated to ${dto.status}`, data: result };
   }
 
   // ── Offboarding ──
@@ -514,7 +517,7 @@ export class PayrollController {
   @Get('offboarding')
   @UseGuards(JwtAuthGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
-  async getAllOffboardings(@Query() query: { status?: string; page?: number; limit?: number }, @Req() req) {
+  async getAllOffboardings(@Query() query: OffboardingQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
     const result = await this.payrollService.getAllOffboardings(query, userId, orgId);
@@ -598,13 +601,13 @@ export class PayrollController {
   @Roles('admin', 'hr', 'super_admin')
   async updateOffboardingStatus(
     @Param('employeeId') employeeId: string,
-    @Body() body: { status: string },
+    @Body() dto: UpdateOffboardingStatusDto,
     @Req() req,
   ) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
-    const result = await this.payrollService.updateOffboardingStatus(employeeId, body.status, userId, orgId);
-    return { success: true, message: `Offboarding status updated to ${body.status}`, data: result };
+    const result = await this.payrollService.updateOffboardingStatus(employeeId, dto.status, userId, orgId);
+    return { success: true, message: `Offboarding status updated to ${dto.status}`, data: result };
   }
 
   // ── Analytics ──

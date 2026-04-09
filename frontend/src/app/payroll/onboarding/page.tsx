@@ -75,7 +75,7 @@ const categoryConfig: Record<string, { label: string; color: string }> = {
 // ---------------------------------------------------------------------------
 const formatDate = (d?: string) => {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return new Date(d).toLocaleDateString("en-IN", { month: "short", day: "numeric", year: "numeric" });
 };
 
 const getDefaultTarget = () => {
@@ -109,7 +109,8 @@ export default function OnboardingPage() {
   // Auth guard
   useEffect(() => {
     if (!authLoading && !user) router.push("/login");
-  }, [user, authLoading, router]);
+    if (!authLoading && user && !hasOrgRole("manager")) router.push("/dashboard");
+  }, [user, authLoading, router, hasOrgRole]);
 
   // ---------------------------------------------------------------------------
   // Data fetching

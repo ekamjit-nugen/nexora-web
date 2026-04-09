@@ -228,8 +228,17 @@ export default function ExpenseClaimsPage() {
 
     setSaving(true);
     try {
-      const items = newItems
-        .filter((i) => i.description.trim())
+      const validItems = newItems.filter((i) => i.description.trim());
+
+      // Validate amounts are positive
+      const invalidItem = validItems.find(i => parseFloat(i.amount || "0") <= 0);
+      if (invalidItem) {
+        toast.error("All expense amounts must be greater than zero");
+        setSaving(false);
+        return;
+      }
+
+      const items = validItems
         .map((i) => ({
           description: i.description.trim(),
           amount: Math.round(parseFloat(i.amount || "0") * 100),

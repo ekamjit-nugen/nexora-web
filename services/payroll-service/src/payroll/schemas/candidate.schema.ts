@@ -170,7 +170,10 @@ export const CandidateSchema = new Schema<ICandidate>(
   { timestamps: true },
 );
 
-CandidateSchema.index({ organizationId: 1, jobPostingId: 1, email: 1 }, { unique: true });
+CandidateSchema.index(
+  { organizationId: 1, jobPostingId: 1, email: 1 },
+  { unique: true, partialFilterExpression: { isDeleted: false } },
+);
 CandidateSchema.index({ organizationId: 1, status: 1 });
 CandidateSchema.index({ jobPostingId: 1, currentStage: 1 });
 CandidateSchema.index({ isDeleted: 1 });

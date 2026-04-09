@@ -501,3 +501,38 @@ export class CandidateQueryDto {
   @IsOptional() @IsNumber() @Min(1) page?: number;
   @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
 }
+
+// ── Missing DTOs for raw @Body() parameters ──
+
+export class RejectSalaryStructureDto {
+  @IsOptional() @IsString() reason?: string;
+}
+
+export class VerifyInvestmentDto {
+  @IsBoolean() verified: boolean;
+  @IsOptional() @IsString() remarks?: string;
+}
+
+export class UploadDocumentDto {
+  @IsString() url: string;
+}
+
+export class UpdateOnboardingStatusDto {
+  @IsEnum(['pending', 'in_progress', 'completed', 'cancelled']) status: string;
+}
+
+export class UpdateOffboardingStatusDto {
+  @IsEnum(['initiated', 'notice_period', 'clearance', 'fnf_processing', 'fnf_approved', 'completed', 'cancelled']) status: string;
+}
+
+export class OnboardingQueryDto {
+  @IsOptional() @IsString() status?: string;
+  @IsOptional() @IsNumber() @Min(1) page?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
+}
+
+export class OffboardingQueryDto {
+  @IsOptional() @IsString() status?: string;
+  @IsOptional() @IsNumber() @Min(1) page?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
+}

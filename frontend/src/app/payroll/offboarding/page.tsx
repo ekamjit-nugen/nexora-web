@@ -143,10 +143,15 @@ export default function OffboardingPage() {
     wouldRecommend: false,
   });
 
+  // Reset interview form when selected record changes
+  useEffect(() => {
+    setInterviewForm({ rating: 0, feedback: "", reason: "", wouldRecommend: false });
+  }, [selectedRecord]);
+
   // Redirect unauthenticated or unauthorized users
   useEffect(() => {
     if (!authLoading && !user) router.push("/login");
-    if (!authLoading && user && !hasOrgRole("manager")) router.push("/dashboard");
+    if (!authLoading && user && !hasOrgRole("manager") && !hasOrgRole("hr") && !hasOrgRole("admin")) router.push("/dashboard");
   }, [user, authLoading, router, hasOrgRole]);
 
   // ---------------------------------------------------------------------------
@@ -212,10 +217,13 @@ export default function OffboardingPage() {
     try {
       await payrollApi.updateClearance(empId, { department: dept, status: "cleared" });
       toast.success(`${dept} department cleared`);
-      fetchRecords();
-      if (selectedRecord && selectedRecord.employeeId === empId) {
-        const updated = records.find((r) => r.employeeId === empId);
-        if (updated) setSelectedRecord({ ...updated });
+      await fetchRecords();
+      // Refetch the individual record to get fresh data
+      if (selectedRecord) {
+        try {
+          const freshRes = await payrollApi.getOffboarding(selectedRecord.employeeId);
+          if (freshRes.data) setSelectedRecord(freshRes.data);
+        } catch { /* ignore, list already refreshed */ }
       }
     } catch (err: any) {
       toast.error(err.message || "Failed to update clearance");
@@ -459,8 +467,11 @@ export default function OffboardingPage() {
         {/* Initiate Offboarding Modal                                        */}
         {/* ----------------------------------------------------------------- */}
         {showInitiateModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => {
+            setShowInitiateModal(false);
+            setInitiateForm({ employeeId: "", exitType: "resignation", resignationDate: "", lastWorkingDay: "", noticePeriodDays: 30, noticePeriodWaived: false });
+          }}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6" onClick={(e) => e.stopPropagation()}>
               <h2 className="text-[17px] font-bold text-[#0F172A] mb-4">Initiate Offboarding</h2>
 
               <div className="space-y-4">
@@ -540,7 +551,10 @@ export default function OffboardingPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setShowInitiateModal(false)}
+                  onClick={() => {
+                    setShowInitiateModal(false);
+                    setInitiateForm({ employeeId: "", exitType: "resignation", resignationDate: "", lastWorkingDay: "", noticePeriodDays: 30, noticePeriodWaived: false });
+                  }}
                   className="h-9"
                 >
                   Cancel

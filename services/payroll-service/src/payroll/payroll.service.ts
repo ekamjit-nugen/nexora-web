@@ -2758,6 +2758,20 @@ export class PayrollService {
   ): Promise<IEmployeeLoan> {
     if (!orgId) throw new ForbiddenException('Organization context required');
 
+    // Check for existing active/pending loans of the same type
+    const existingLoan = await this.employeeLoanModel.findOne({
+      organizationId: orgId,
+      employeeId: userId,
+      type: dto.type,
+      status: { $in: ['applied', 'approved', 'disbursed', 'active'] },
+      isDeleted: false,
+    });
+    if (existingLoan) {
+      throw new ConflictException(
+        `You already have an active ${dto.type.replace(/_/g, ' ')} (${existingLoan.loanNumber}). Please close it before applying for a new one.`,
+      );
+    }
+
     // Generate loan number: LOAN-YYYY-NNN (with atomic retry on duplicate)
     const year = new Date().getFullYear();
     let loanNumber: string;
@@ -2912,6 +2926,7 @@ export class PayrollService {
     id: string,
     userId: string,
     orgId: string,
+    checkOwnership = true,
   ): Promise<IEmployeeLoan> {
     if (!orgId) throw new ForbiddenException('Organization context required');
 
@@ -2922,6 +2937,13 @@ export class PayrollService {
     }).exec();
 
     if (!loan) throw new NotFoundException('Loan not found');
+
+    // Ownership check: employees can only view their own loans
+    // Admin/HR/Manager endpoints use their own @Roles-guarded methods
+    if (checkOwnership !== false && loan.employeeId !== userId) {
+      throw new ForbiddenException('You can only view your own loan details');
+    }
+
     return loan;
   }
 
@@ -2933,7 +2955,7 @@ export class PayrollService {
   ): Promise<IEmployeeLoan> {
     if (!orgId) throw new ForbiddenException('Organization context required');
 
-    const loan = await this.getLoan(id, userId, orgId);
+    const loan = await this.getLoan(id, userId, orgId, false);
 
     // Prevent self-approval (segregation of duties)
     if (loan.employeeId === userId) {
@@ -2973,7 +2995,7 @@ export class PayrollService {
   ): Promise<IEmployeeLoan> {
     if (!orgId) throw new ForbiddenException('Organization context required');
 
-    const loan = await this.getLoan(id, userId, orgId);
+    const loan = await this.getLoan(id, userId, orgId, false);
 
     if (loan.status !== 'approved') {
       throw new BadRequestException(`Cannot disburse loan with status '${loan.status}'. Must be 'approved'.`);
@@ -2994,7 +3016,7 @@ export class PayrollService {
   ): Promise<IEmployeeLoan> {
     if (!orgId) throw new ForbiddenException('Organization context required');
 
-    const loan = await this.getLoan(id, userId, orgId);
+    const loan = await this.getLoan(id, userId, orgId, false);
 
     if (loan.status !== 'active' && loan.status !== 'disbursed') {
       throw new BadRequestException(`Cannot close loan with status '${loan.status}'`);
@@ -3360,7 +3382,10 @@ export class PayrollService {
       departmentBreakdown: [],
       attritionData: {
         monthlyRate: activeCount > 0 ? (offboardingCount / activeCount) * 100 : 0,
-        annualizedRate: activeCount > 0 ? (offboardingCount / activeCount) * 100 * 12 : 0,
+        annualizedRate: (() => {
+          const mRate = activeCount > 0 ? offboardingCount / activeCount : 0;
+          return Math.round((1 - Math.pow(1 - mRate, 12)) * 10000) / 100;
+        })(),
         voluntaryExits: 0,
         involuntaryExits: 0,
       },
@@ -3707,6 +3732,15 @@ export class PayrollService {
 
     const candidate = await this.candidateModel.findOne({ _id: id, organizationId: orgId, isDeleted: false });
     if (!candidate) throw new NotFoundException('Candidate not found');
+
+    if (['rejected', 'withdrawn', 'hired'].includes(candidate.status)) {
+      throw new BadRequestException(`Cannot schedule interviews for a candidate with status '${candidate.status}'`);
+    }
+
+    const existingRound = candidate.interviews.find((i: any) => i.round === dto.round);
+    if (existingRound) {
+      throw new ConflictException(`Interview round ${dto.round} already exists for this candidate`);
+    }
 
     candidate.interviews.push({
       round: dto.round,
