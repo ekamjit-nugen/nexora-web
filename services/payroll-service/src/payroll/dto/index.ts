@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsDateString, IsNumber, Min, Max, IsBoolean, IsArray, ValidateNested } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsDateString, IsNumber, Min, Max, IsBoolean, IsArray, ValidateNested, IsEmail } from 'class-validator';
 import { Type } from 'class-transformer';
 
 // ── Salary Component DTO ──
@@ -375,4 +375,129 @@ export class ExitInterviewDto {
 
 export class ApproveFnFDto {
   @IsOptional() @IsString() notes?: string;
+}
+
+// ── Analytics ──
+
+export class AnalyticsQueryDto {
+  @IsOptional() @IsNumber() year?: number;
+  @IsOptional() @IsNumber() month?: number;
+  @IsOptional() @IsString() department?: string;
+}
+
+// ── Employee Loans DTOs ──
+
+export class ApplyLoanDto {
+  @IsEnum(['salary_advance', 'personal_loan', 'emergency_loan', 'festival_advance'])
+  type: string;
+
+  @IsNumber() @Min(100)
+  amount: number;
+
+  @IsNumber() @Min(1) @Max(60)
+  tenure: number;
+
+  @IsString()
+  reason: string;
+
+  @IsOptional() @IsNumber() @Min(0)
+  interestRate?: number;
+}
+
+export class ApproveLoanDto {
+  @IsEnum(['approved', 'rejected'])
+  status: string;
+
+  @IsOptional() @IsString()
+  comments?: string;
+}
+
+export class LoanQueryDto {
+  @IsOptional() @IsString()
+  status?: string;
+
+  @IsOptional() @IsString()
+  employeeId?: string;
+
+  @IsOptional() @IsNumber() @Min(1)
+  page?: number;
+
+  @IsOptional() @IsNumber() @Min(1) @Max(100)
+  limit?: number;
+}
+
+// ── Recruitment DTOs ──
+
+export class CreateJobPostingDto {
+  @IsString() title: string;
+  @IsOptional() @IsString() departmentId?: string;
+  @IsString() location: string;
+  @IsEnum(['full_time', 'part_time', 'contract', 'intern']) employmentType: string;
+  @IsString() description: string;
+  @IsOptional() @IsArray() requirements?: string[];
+  @IsOptional() @IsArray() skills?: string[];
+  @IsOptional() @IsNumber() openings?: number;
+  @IsString() hiringManagerId: string;
+}
+
+export class UpdateJobPostingDto {
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsString() location?: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsArray() requirements?: string[];
+  @IsOptional() @IsArray() skills?: string[];
+  @IsOptional() @IsNumber() openings?: number;
+}
+
+export class UpdateJobStatusDto {
+  @IsEnum(['open', 'on_hold', 'closed', 'cancelled']) status: string;
+}
+
+export class AddCandidateDto {
+  @IsString() name: string;
+  @IsEmail() email: string;
+  @IsOptional() @IsString() phone?: string;
+  @IsOptional() @IsString() resumeUrl?: string;
+  @IsOptional() @IsString() linkedinUrl?: string;
+  @IsOptional() @IsEnum(['portal', 'referral', 'linkedin', 'naukri', 'agency', 'direct', 'other']) source?: string;
+  @IsOptional() @IsString() referredBy?: string;
+}
+
+export class ScheduleInterviewDto {
+  @IsNumber() round: number;
+  @IsEnum(['phone', 'video', 'onsite', 'panel', 'technical']) type: string;
+  @IsDateString() scheduledAt: string;
+  @IsArray() @IsString({ each: true }) interviewerIds: string[];
+}
+
+export class InterviewFeedbackDto {
+  @IsNumber() @Min(1) @Max(5) rating: number;
+  @IsString() strengths: string;
+  @IsString() weaknesses: string;
+  @IsEnum(['strong_hire', 'hire', 'no_hire', 'strong_no_hire']) recommendation: string;
+}
+
+export class CreateOfferDto {
+  @IsNumber() @Min(0) ctc: number;
+  @IsDateString() joiningDate: string;
+  @IsString() designation: string;
+}
+
+export class RejectCandidateDto {
+  @IsString() reason: string;
+}
+
+export class JobQueryDto {
+  @IsOptional() @IsString() status?: string;
+  @IsOptional() @IsString() department?: string;
+  @IsOptional() @IsNumber() @Min(1) page?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
+}
+
+export class CandidateQueryDto {
+  @IsOptional() @IsString() jobId?: string;
+  @IsOptional() @IsString() stage?: string;
+  @IsOptional() @IsString() status?: string;
+  @IsOptional() @IsNumber() @Min(1) page?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
 }

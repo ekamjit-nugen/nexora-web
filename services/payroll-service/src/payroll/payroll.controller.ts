@@ -13,6 +13,11 @@ import {
   CreateExpenseClaimDto, UpdateExpenseClaimDto, ApproveExpenseDto, ExpenseQueryDto,
   InitiateOnboardingDto, CompleteChecklistItemDto, VerifyDocumentDto,
   InitiateOffboardingDto, UpdateClearanceDto, ExitInterviewDto, ApproveFnFDto,
+  AnalyticsQueryDto,
+  ApplyLoanDto, ApproveLoanDto, LoanQueryDto,
+  CreateJobPostingDto, UpdateJobPostingDto, UpdateJobStatusDto, JobQueryDto,
+  AddCandidateDto, CandidateQueryDto, ScheduleInterviewDto, InterviewFeedbackDto,
+  CreateOfferDto, RejectCandidateDto,
 } from './dto/index';
 
 @Controller()
@@ -600,5 +605,325 @@ export class PayrollController {
     const userId = req.user.userId;
     const result = await this.payrollService.updateOffboardingStatus(employeeId, body.status, userId, orgId);
     return { success: true, message: `Offboarding status updated to ${body.status}`, data: result };
+  }
+
+  // ── Analytics ──
+
+  @Get('analytics/dashboard')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async getDashboardMetrics(@Query() query: AnalyticsQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getDashboardMetrics(query, userId, orgId);
+    return { success: true, message: 'Dashboard metrics retrieved', data: result };
+  }
+
+  @Get('analytics/headcount')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async getHeadcountTrends(@Query() query: AnalyticsQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getHeadcountTrends(query, userId, orgId);
+    return { success: true, message: 'Headcount trends retrieved', data: result };
+  }
+
+  @Get('analytics/attrition')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async getAttritionTrends(@Query() query: AnalyticsQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getAttritionTrends(query, userId, orgId);
+    return { success: true, message: 'Attrition trends retrieved', data: result };
+  }
+
+  @Get('analytics/attrition/predictions')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async getAttritionPredictions(@Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getAttritionPredictions(userId, orgId);
+    return { success: true, message: 'Attrition predictions retrieved', data: result };
+  }
+
+  @Get('analytics/cost')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'super_admin')
+  async getCostAnalytics(@Query() query: AnalyticsQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getCostAnalytics(query, userId, orgId);
+    return { success: true, message: 'Cost analytics retrieved', data: result };
+  }
+
+  @Get('analytics/attendance-trends')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async getAttendanceTrends(@Query() query: AnalyticsQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getAttendanceTrends(query, userId, orgId);
+    return { success: true, message: 'Attendance trends retrieved', data: result };
+  }
+
+  @Get('analytics/headcount-forecast')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async getHeadcountForecast(@Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getHeadcountForecast(userId, orgId);
+    return { success: true, message: 'Headcount forecast retrieved', data: result };
+  }
+
+  @Post('analytics/snapshots/generate')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'super_admin')
+  @HttpCode(HttpStatus.CREATED)
+  async generateSnapshot(@Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.generateSnapshot(userId, orgId);
+    return { success: true, message: 'Analytics snapshot generated', data: result };
+  }
+
+  // ── Employee Loans ──
+
+  @Post('loans')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.CREATED)
+  async applyLoan(@Body() dto: ApplyLoanDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.applyLoan(dto, userId, orgId);
+    return { success: true, message: 'Loan application submitted successfully', data: result };
+  }
+
+  @Get('loans/my')
+  @UseGuards(JwtAuthGuard)
+  async getMyLoans(@Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getMyLoans(userId, orgId);
+    return { success: true, message: 'My loans retrieved', data: result };
+  }
+
+  @Get('loans')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin', 'manager')
+  async getLoans(@Query() query: LoanQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getLoans(query, userId, orgId);
+    return { success: true, message: 'Loans retrieved', data: result };
+  }
+
+  @Get('loans/:id')
+  @UseGuards(JwtAuthGuard)
+  async getLoan(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getLoan(id, userId, orgId);
+    return { success: true, message: 'Loan retrieved', data: result };
+  }
+
+  @Post('loans/:id/approve')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin', 'manager')
+  async approveLoan(@Param('id') id: string, @Body() dto: ApproveLoanDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.approveLoan(id, dto, userId, orgId);
+    return { success: true, message: `Loan ${dto.status}`, data: result };
+  }
+
+  @Post('loans/:id/disburse')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'super_admin')
+  async disburseLoan(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.disburseLoan(id, userId, orgId);
+    return { success: true, message: 'Loan disbursed successfully', data: result };
+  }
+
+  @Post('loans/:id/close')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'super_admin')
+  async closeLoan(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.closeLoan(id, userId, orgId);
+    return { success: true, message: 'Loan closed successfully', data: result };
+  }
+
+  // ── Recruitment - Job Postings ──
+
+  @Post('jobs')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  @HttpCode(HttpStatus.CREATED)
+  async createJobPosting(@Body() dto: CreateJobPostingDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.createJobPosting(dto, userId, orgId);
+    return { success: true, message: 'Job posting created successfully', data: result };
+  }
+
+  @Get('jobs')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin', 'manager')
+  async getJobPostings(@Query() query: JobQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getJobPostings(query, userId, orgId);
+    return { success: true, message: 'Job postings retrieved', data: result };
+  }
+
+  @Get('jobs/:id')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin', 'manager')
+  async getJobPosting(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getJobPosting(id, userId, orgId);
+    return { success: true, message: 'Job posting retrieved', data: result };
+  }
+
+  @Put('jobs/:id')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async updateJobPosting(@Param('id') id: string, @Body() dto: UpdateJobPostingDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.updateJobPosting(id, dto, userId, orgId);
+    return { success: true, message: 'Job posting updated successfully', data: result };
+  }
+
+  @Put('jobs/:id/status')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async updateJobStatus(@Param('id') id: string, @Body() dto: UpdateJobStatusDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.updateJobStatus(id, dto, userId, orgId);
+    return { success: true, message: `Job status updated to ${dto.status}`, data: result };
+  }
+
+  // ── Recruitment - Candidates ──
+
+  @Post('candidates')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  @HttpCode(HttpStatus.CREATED)
+  async addCandidate(@Body() dto: AddCandidateDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.addCandidate(dto, userId, orgId);
+    return { success: true, message: 'Candidate added successfully', data: result };
+  }
+
+  @Get('candidates')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin', 'manager')
+  async getCandidates(@Query() query: CandidateQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getCandidates(query, userId, orgId);
+    return { success: true, message: 'Candidates retrieved', data: result };
+  }
+
+  @Get('candidates/:id')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin', 'manager')
+  async getCandidate(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getCandidate(id, userId, orgId);
+    return { success: true, message: 'Candidate retrieved', data: result };
+  }
+
+  @Post('candidates/:id/advance')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async advanceCandidate(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.advanceCandidate(id, userId, orgId);
+    return { success: true, message: 'Candidate advanced to next stage', data: result };
+  }
+
+  @Post('candidates/:id/reject')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async rejectCandidate(@Param('id') id: string, @Body() dto: RejectCandidateDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.rejectCandidate(id, dto, userId, orgId);
+    return { success: true, message: 'Candidate rejected', data: result };
+  }
+
+  @Post('candidates/:id/schedule-interview')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async scheduleInterview(@Param('id') id: string, @Body() dto: ScheduleInterviewDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.scheduleInterview(id, dto, userId, orgId);
+    return { success: true, message: 'Interview scheduled successfully', data: result };
+  }
+
+  @Post('candidates/:id/interview-feedback')
+  @UseGuards(JwtAuthGuard)
+  async interviewFeedback(@Param('id') id: string, @Body() dto: InterviewFeedbackDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.interviewFeedback(id, dto, userId, orgId);
+    return { success: true, message: 'Interview feedback submitted', data: result };
+  }
+
+  @Post('candidates/:id/offer')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async createOffer(@Param('id') id: string, @Body() dto: CreateOfferDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.createOffer(id, dto, userId, orgId);
+    return { success: true, message: 'Offer created successfully', data: result };
+  }
+
+  @Post('candidates/:id/send-offer')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async sendOffer(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.sendOffer(id, userId, orgId);
+    return { success: true, message: 'Offer sent to candidate', data: result };
+  }
+
+  @Post('candidates/:id/convert-to-employee')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async convertToEmployee(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.convertToEmployee(id, userId, orgId);
+    return { success: true, message: 'Candidate converted to employee', data: result };
+  }
+
+  // ── Recruitment Analytics ──
+
+  @Get('recruitment/analytics')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async getRecruitmentAnalytics(@Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getRecruitmentAnalytics(userId, orgId);
+    return { success: true, message: 'Recruitment analytics retrieved', data: result };
   }
 }

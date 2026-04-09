@@ -2554,4 +2554,80 @@ export const payrollApi = {
     request(`/offboarding/${employeeId}/approve-fnf`, { method: "POST", body: JSON.stringify(data || {}) }),
   generateLetters: (employeeId: string) =>
     request(`/offboarding/${employeeId}/generate-letters`, { method: "POST" }),
+
+  // Loans
+  applyLoan: (data: Record<string, unknown>) =>
+    request("/loans", { method: "POST", body: JSON.stringify(data) }),
+  getLoans: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/loans${qs}`);
+  },
+  getMyLoans: () => request("/loans/my"),
+  getLoan: (id: string) => request(`/loans/${id}`),
+  approveLoan: (id: string, data: { status: string; comments?: string }) =>
+    request(`/loans/${id}/approve`, { method: "POST", body: JSON.stringify(data) }),
+  disburseLoan: (id: string) =>
+    request(`/loans/${id}/disburse`, { method: "POST" }),
+  closeLoan: (id: string) =>
+    request(`/loans/${id}/close`, { method: "POST" }),
+
+  // Analytics
+  getDashboardMetrics: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/analytics/dashboard${qs}`);
+  },
+  getHeadcountTrends: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/analytics/headcount${qs}`);
+  },
+  getAttritionTrends: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/analytics/attrition${qs}`);
+  },
+  getAttritionPredictions: () => request("/analytics/attrition/predictions"),
+  getCostAnalytics: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/analytics/cost${qs}`);
+  },
+  getAttendanceTrends: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/analytics/attendance-trends${qs}`);
+  },
+  getHeadcountForecast: () => request("/analytics/headcount-forecast"),
+  generateSnapshot: () => request("/analytics/snapshots/generate", { method: "POST" }),
+
+  // Recruitment
+  createJobPosting: (data: Record<string, unknown>) =>
+    request("/jobs", { method: "POST", body: JSON.stringify(data) }),
+  getJobPostings: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/jobs${qs}`);
+  },
+  getJobPosting: (id: string) => request(`/jobs/${id}`),
+  updateJobPosting: (id: string, data: Record<string, unknown>) =>
+    request(`/jobs/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  updateJobStatus: (id: string, status: string) =>
+    request(`/jobs/${id}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
+  addCandidate: (data: Record<string, unknown>) =>
+    request("/candidates", { method: "POST", body: JSON.stringify(data) }),
+  getCandidates: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/candidates${qs}`);
+  },
+  getCandidate: (id: string) => request(`/candidates/${id}`),
+  advanceCandidate: (id: string) =>
+    request(`/candidates/${id}/advance`, { method: "POST" }),
+  rejectCandidate: (id: string, reason: string) =>
+    request(`/candidates/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) }),
+  scheduleInterview: (id: string, data: Record<string, unknown>) =>
+    request(`/candidates/${id}/schedule-interview`, { method: "POST", body: JSON.stringify(data) }),
+  submitInterviewFeedback: (id: string, data: Record<string, unknown>) =>
+    request(`/candidates/${id}/interview-feedback`, { method: "POST", body: JSON.stringify(data) }),
+  createOffer: (id: string, data: Record<string, unknown>) =>
+    request(`/candidates/${id}/offer`, { method: "POST", body: JSON.stringify(data) }),
+  sendOffer: (id: string) =>
+    request(`/candidates/${id}/send-offer`, { method: "POST" }),
+  convertToEmployee: (id: string) =>
+    request(`/candidates/${id}/convert-to-employee`, { method: "POST" }),
+  getRecruitmentAnalytics: () => request("/recruitment/analytics"),
 };

@@ -12,8 +12,12 @@ import { PayrollEntrySchema } from './schemas/payroll-entry.schema';
 import { PayslipSchema } from './schemas/payslip.schema';
 import { InvestmentDeclarationSchema } from './schemas/investment-declaration.schema';
 import { ExpenseClaimSchema } from './schemas/expense-claim.schema';
+import { EmployeeLoanSchema } from './schemas/employee-loan.schema';
 import { OnboardingSchema } from './schemas/onboarding.schema';
 import { OffboardingSchema } from './schemas/offboarding.schema';
+import { AnalyticsSnapshotSchema } from './schemas/analytics-snapshot.schema';
+import { JobPostingSchema } from './schemas/job-posting.schema';
+import { CandidateSchema } from './schemas/candidate.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { ExternalServicesService } from './external-services.service';
 
@@ -26,8 +30,12 @@ import { ExternalServicesService } from './external-services.service';
       { name: 'Payslip', schema: PayslipSchema },
       { name: 'InvestmentDeclaration', schema: InvestmentDeclarationSchema },
       { name: 'ExpenseClaim', schema: ExpenseClaimSchema },
+      { name: 'EmployeeLoan', schema: EmployeeLoanSchema },
       { name: 'Onboarding', schema: OnboardingSchema },
       { name: 'Offboarding', schema: OffboardingSchema },
+      { name: 'AnalyticsSnapshot', schema: AnalyticsSnapshotSchema },
+      { name: 'JobPosting', schema: JobPostingSchema },
+      { name: 'Candidate', schema: CandidateSchema },
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],

@@ -14,8 +14,12 @@ import { IPayrollEntry } from './schemas/payroll-entry.schema';
 import { IPayslip } from './schemas/payslip.schema';
 import { IInvestmentDeclaration } from './schemas/investment-declaration.schema';
 import { IExpenseClaim } from './schemas/expense-claim.schema';
+import { IEmployeeLoan } from './schemas/employee-loan.schema';
 import { IOnboarding } from './schemas/onboarding.schema';
 import { IOffboarding } from './schemas/offboarding.schema';
+import { IAnalyticsSnapshot } from './schemas/analytics-snapshot.schema';
+import { IJobPosting } from './schemas/job-posting.schema';
+import { ICandidate } from './schemas/candidate.schema';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { ExternalServicesService } from './external-services.service';
 import {
@@ -40,6 +44,20 @@ import {
   UpdateClearanceDto,
   ExitInterviewDto,
   ApproveFnFDto,
+  AnalyticsQueryDto,
+  ApplyLoanDto,
+  ApproveLoanDto,
+  LoanQueryDto,
+  CreateJobPostingDto,
+  UpdateJobPostingDto,
+  UpdateJobStatusDto,
+  JobQueryDto,
+  AddCandidateDto,
+  CandidateQueryDto,
+  ScheduleInterviewDto,
+  InterviewFeedbackDto,
+  CreateOfferDto,
+  RejectCandidateDto,
 } from './dto/index';
 
 @Injectable()
@@ -53,8 +71,12 @@ export class PayrollService {
     @InjectModel('Payslip') private payslipModel: Model<IPayslip>,
     @InjectModel('InvestmentDeclaration') private investmentDeclarationModel: Model<IInvestmentDeclaration>,
     @InjectModel('ExpenseClaim') private expenseClaimModel: Model<IExpenseClaim>,
+    @InjectModel('EmployeeLoan') private employeeLoanModel: Model<IEmployeeLoan>,
     @InjectModel('Onboarding') private onboardingModel: Model<IOnboarding>,
     @InjectModel('Offboarding') private offboardingModel: Model<IOffboarding>,
+    @InjectModel('AnalyticsSnapshot') private analyticsSnapshotModel: Model<IAnalyticsSnapshot>,
+    @InjectModel('JobPosting') private jobPostingModel: Model<IJobPosting>,
+    @InjectModel('Candidate') private candidateModel: Model<ICandidate>,
     private calculationService: PayrollCalculationService,
     private externalServices: ExternalServicesService,
   ) {}
@@ -2723,5 +2745,1160 @@ export class PayrollService {
     });
 
     return offboarding.save();
+  }
+
+  // ===========================================================================
+  // EMPLOYEE LOANS
+  // ===========================================================================
+
+  async applyLoan(
+    dto: ApplyLoanDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IEmployeeLoan> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    // Generate loan number: LOAN-YYYY-NNN
+    const year = new Date().getFullYear();
+    const count = await this.employeeLoanModel.countDocuments({
+      organizationId: orgId,
+      loanNumber: { $regex: `^LOAN-${year}-` },
+    });
+    const loanNumber = `LOAN-${year}-${String(count + 1).padStart(3, '0')}`;
+
+    const amount = dto.amount;
+    const tenure = dto.tenure;
+    const interestRate = dto.interestRate ?? 0;
+
+    // Calculate EMI
+    let emiAmount: number;
+    if (interestRate === 0) {
+      emiAmount = Math.round(amount / tenure);
+    } else {
+      const monthlyRate = interestRate / 12 / 100;
+      emiAmount = Math.round(
+        (amount * monthlyRate * Math.pow(1 + monthlyRate, tenure)) /
+          (Math.pow(1 + monthlyRate, tenure) - 1),
+      );
+    }
+
+    const totalInterest = emiAmount * tenure - amount;
+
+    // Generate schedule
+    const now = new Date();
+    let currentMonth = now.getMonth() + 2; // start next month
+    let currentYear = now.getFullYear();
+    if (currentMonth > 12) {
+      currentMonth = 1;
+      currentYear++;
+    }
+
+    const schedule: Array<{
+      installmentNumber: number;
+      dueMonth: number;
+      dueYear: number;
+      principal: number;
+      interest: number;
+      emiAmount: number;
+      status: string;
+    }> = [];
+
+    let remainingPrincipal = amount;
+    for (let i = 1; i <= tenure; i++) {
+      let interest: number;
+      let principal: number;
+
+      if (interestRate === 0) {
+        interest = 0;
+        principal = i === tenure ? remainingPrincipal : emiAmount;
+      } else {
+        const monthlyRate = interestRate / 12 / 100;
+        interest = Math.round(remainingPrincipal * monthlyRate);
+        principal = emiAmount - interest;
+        if (i === tenure) {
+          principal = remainingPrincipal;
+          interest = emiAmount - principal;
+        }
+      }
+
+      schedule.push({
+        installmentNumber: i,
+        dueMonth: currentMonth,
+        dueYear: currentYear,
+        principal,
+        interest,
+        emiAmount,
+        status: 'pending',
+      });
+
+      remainingPrincipal -= principal;
+      currentMonth++;
+      if (currentMonth > 12) {
+        currentMonth = 1;
+        currentYear++;
+      }
+    }
+
+    const loan = new this.employeeLoanModel({
+      organizationId: orgId,
+      employeeId: userId,
+      loanNumber,
+      type: dto.type,
+      amount,
+      interestRate,
+      tenure,
+      emiAmount,
+      disbursedAmount: 0,
+      outstandingBalance: amount,
+      totalInterest,
+      schedule,
+      reason: dto.reason,
+      approvalChain: [{ level: 1, status: 'pending' }],
+      status: 'applied',
+      isDeleted: false,
+      createdBy: userId,
+    });
+
+    this.logger.log(`Loan ${loanNumber} applied by employee ${userId} in org ${orgId}`);
+    return loan.save();
+  }
+
+  async getLoans(
+    query: LoanQueryDto,
+    userId: string,
+    orgId: string,
+  ): Promise<{ loans: IEmployeeLoan[]; total: number; page: number; limit: number }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const filter: Record<string, unknown> = { organizationId: orgId, isDeleted: false };
+    if (query.status) filter.status = query.status;
+    if (query.employeeId) filter.employeeId = query.employeeId;
+
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [loans, total] = await Promise.all([
+      this.employeeLoanModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),
+      this.employeeLoanModel.countDocuments(filter).exec(),
+    ]);
+
+    return { loans, total, page, limit };
+  }
+
+  async getMyLoans(
+    userId: string,
+    orgId: string,
+  ): Promise<IEmployeeLoan[]> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    return this.employeeLoanModel
+      .find({ organizationId: orgId, employeeId: userId, isDeleted: false })
+      .sort({ createdAt: -1 })
+      .exec();
+  }
+
+  async getLoan(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<IEmployeeLoan> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const loan = await this.employeeLoanModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    }).exec();
+
+    if (!loan) throw new NotFoundException('Loan not found');
+    return loan;
+  }
+
+  async approveLoan(
+    id: string,
+    dto: ApproveLoanDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IEmployeeLoan> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const loan = await this.getLoan(id, userId, orgId);
+
+    if (loan.status === 'rejected' || loan.status === 'cancelled') {
+      throw new BadRequestException(`Cannot approve/reject a loan with status '${loan.status}'`);
+    }
+
+    // Find first pending entry in approval chain
+    const pendingEntry = loan.approvalChain.find((e) => e.status === 'pending');
+    if (!pendingEntry) {
+      throw new BadRequestException('No pending approval found in the approval chain');
+    }
+
+    pendingEntry.approverId = userId;
+    pendingEntry.status = dto.status;
+    pendingEntry.comments = dto.comments || null;
+    pendingEntry.actedAt = new Date();
+
+    if (dto.status === 'approved') {
+      loan.status = 'approved';
+      this.logger.log(`Loan ${loan.loanNumber} approved by ${userId}`);
+    } else {
+      loan.status = 'rejected';
+      this.logger.log(`Loan ${loan.loanNumber} rejected by ${userId}`);
+    }
+
+    return loan.save();
+  }
+
+  async disburseLoan(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<IEmployeeLoan> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const loan = await this.getLoan(id, userId, orgId);
+
+    if (loan.status !== 'approved') {
+      throw new BadRequestException(`Cannot disburse loan with status '${loan.status}'. Must be 'approved'.`);
+    }
+
+    loan.disbursedAmount = loan.amount;
+    loan.disbursedAt = new Date();
+    loan.status = 'active';
+
+    this.logger.log(`Loan ${loan.loanNumber} disbursed by ${userId}`);
+    return loan.save();
+  }
+
+  async closeLoan(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<IEmployeeLoan> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const loan = await this.getLoan(id, userId, orgId);
+
+    if (loan.status !== 'active' && loan.status !== 'disbursed') {
+      throw new BadRequestException(`Cannot close loan with status '${loan.status}'`);
+    }
+
+    loan.status = 'closed';
+    loan.closedAt = new Date();
+    loan.outstandingBalance = 0;
+
+    // Mark remaining pending installments as skipped
+    for (const installment of loan.schedule) {
+      if (installment.status === 'pending') {
+        installment.status = 'skipped';
+      }
+    }
+
+    this.logger.log(`Loan ${loan.loanNumber} closed by ${userId}`);
+    return loan.save();
+  }
+
+  // ===========================================================================
+  // Analytics: getDashboardMetrics
+  // ===========================================================================
+  async getDashboardMetrics(
+    query: AnalyticsQueryDto,
+    userId: string,
+    orgId: string,
+  ) {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const totalEmployees = await this.salaryStructureModel.countDocuments({
+      organizationId: orgId,
+      status: 'active',
+      isDeleted: false,
+    });
+
+    const latestRuns = await this.payrollRunModel
+      .find({ organizationId: orgId, isDeleted: false })
+      .sort({ 'payPeriod.year': -1, 'payPeriod.month': -1 })
+      .limit(3);
+
+    const totalPayrollCost = latestRuns.length > 0
+      ? (latestRuns[0] as any).summary?.totalNetPay || 0
+      : 0;
+
+    const latestSnapshot = await this.analyticsSnapshotModel
+      .findOne({ organizationId: orgId, isDeleted: false })
+      .sort({ snapshotDate: -1 });
+
+    const attritionRate = latestSnapshot?.attritionData?.monthlyRate || 0;
+
+    const pendingSalaryStructures = await this.salaryStructureModel.countDocuments({
+      organizationId: orgId,
+      status: 'pending_approval',
+      isDeleted: false,
+    });
+
+    const pendingExpenseClaims = await this.expenseClaimModel.countDocuments({
+      organizationId: orgId,
+      status: 'submitted',
+      isDeleted: false,
+    });
+
+    return {
+      headcount: totalEmployees,
+      payrollCost: totalPayrollCost,
+      attritionRate,
+      pendingApprovals: pendingSalaryStructures + pendingExpenseClaims,
+      recentRuns: latestRuns,
+    };
+  }
+
+  // ===========================================================================
+  // Analytics: getHeadcountTrends
+  // ===========================================================================
+  async getHeadcountTrends(
+    query: AnalyticsQueryDto,
+    userId: string,
+    orgId: string,
+  ) {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const now = new Date();
+    const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+
+    const filter: any = {
+      organizationId: orgId,
+      isDeleted: false,
+      snapshotDate: { $gte: twelveMonthsAgo },
+    };
+    if (query.year) filter['period.year'] = query.year;
+    if (query.month) filter['period.month'] = query.month;
+
+    const snapshots = await this.analyticsSnapshotModel
+      .find(filter)
+      .sort({ 'period.year': 1, 'period.month': 1 });
+
+    return snapshots.map((s) => ({
+      month: s.period.month,
+      year: s.period.year,
+      total: s.headcount.total,
+      newJoiners: s.headcount.newJoiners,
+      exits: s.headcount.exits,
+    }));
+  }
+
+  // ===========================================================================
+  // Analytics: getAttritionTrends
+  // ===========================================================================
+  async getAttritionTrends(
+    query: AnalyticsQueryDto,
+    userId: string,
+    orgId: string,
+  ) {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const now = new Date();
+    const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+
+    const filter: any = {
+      organizationId: orgId,
+      isDeleted: false,
+      snapshotDate: { $gte: twelveMonthsAgo },
+    };
+    if (query.year) filter['period.year'] = query.year;
+    if (query.month) filter['period.month'] = query.month;
+
+    const snapshots = await this.analyticsSnapshotModel
+      .find(filter)
+      .sort({ 'period.year': 1, 'period.month': 1 });
+
+    return snapshots.map((s) => ({
+      month: s.period.month,
+      year: s.period.year,
+      rate: s.attritionData.monthlyRate,
+      voluntaryExits: s.attritionData.voluntaryExits,
+      involuntaryExits: s.attritionData.involuntaryExits,
+    }));
+  }
+
+  // ===========================================================================
+  // Analytics: getAttritionPredictions
+  // ===========================================================================
+  async getAttritionPredictions(
+    userId: string,
+    orgId: string,
+  ) {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const latestSnapshot = await this.analyticsSnapshotModel
+      .findOne({ organizationId: orgId, isDeleted: false })
+      .sort({ snapshotDate: -1 });
+
+    if (!latestSnapshot || !latestSnapshot.attritionPredictions) {
+      return [];
+    }
+
+    return [...latestSnapshot.attritionPredictions].sort(
+      (a, b) => b.riskScore - a.riskScore,
+    );
+  }
+
+  // ===========================================================================
+  // Analytics: getCostAnalytics
+  // ===========================================================================
+  async getCostAnalytics(
+    query: AnalyticsQueryDto,
+    userId: string,
+    orgId: string,
+  ) {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const now = new Date();
+    const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+
+    const runs = await this.payrollRunModel
+      .find({
+        organizationId: orgId,
+        isDeleted: false,
+        status: { $in: ['finalized', 'paid'] },
+        createdAt: { $gte: twelveMonthsAgo },
+      })
+      .sort({ 'payPeriod.year': 1, 'payPeriod.month': 1 });
+
+    const monthlyCosts = runs.map((r) => ({
+      month: (r as any).payPeriod.month,
+      year: (r as any).payPeriod.year,
+      totalPayroll: (r as any).summary?.totalNetPay || 0,
+    }));
+
+    const totalPayrollAll = monthlyCosts.reduce((sum, c) => sum + c.totalPayroll, 0);
+    const activeCount = await this.salaryStructureModel.countDocuments({
+      organizationId: orgId,
+      status: 'active',
+      isDeleted: false,
+    });
+    const avgCost = activeCount > 0 ? totalPayrollAll / Math.max(monthlyCosts.length, 1) / activeCount : 0;
+
+    const latestSnapshot = await this.analyticsSnapshotModel
+      .findOne({ organizationId: orgId, isDeleted: false })
+      .sort({ snapshotDate: -1 });
+
+    return {
+      monthlyCosts,
+      avgCost,
+      byDepartment: latestSnapshot?.departmentBreakdown || [],
+    };
+  }
+
+  // ===========================================================================
+  // Analytics: getAttendanceTrends
+  // ===========================================================================
+  async getAttendanceTrends(
+    query: AnalyticsQueryDto,
+    userId: string,
+    orgId: string,
+  ) {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const now = new Date();
+    const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+
+    const filter: any = {
+      organizationId: orgId,
+      isDeleted: false,
+      snapshotDate: { $gte: twelveMonthsAgo },
+    };
+    if (query.year) filter['period.year'] = query.year;
+    if (query.month) filter['period.month'] = query.month;
+
+    const snapshots = await this.analyticsSnapshotModel
+      .find(filter)
+      .sort({ 'period.year': 1, 'period.month': 1 });
+
+    return snapshots.map((s) => ({
+      month: s.period.month,
+      year: s.period.year,
+      avgAttendance: s.attendanceSummary.avgAttendanceRate,
+      avgLate: s.attendanceSummary.avgLatePercentage,
+      avgOvertime: s.attendanceSummary.avgOvertimeHours,
+    }));
+  }
+
+  // ===========================================================================
+  // Analytics: getHeadcountForecast
+  // ===========================================================================
+  async getHeadcountForecast(
+    userId: string,
+    orgId: string,
+  ) {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const snapshots = await this.analyticsSnapshotModel
+      .find({ organizationId: orgId, isDeleted: false })
+      .sort({ 'period.year': -1, 'period.month': -1 })
+      .limit(6);
+
+    if (snapshots.length === 0) {
+      const current = await this.salaryStructureModel.countDocuments({
+        organizationId: orgId,
+        status: 'active',
+        isDeleted: false,
+      });
+      return { current, forecast: [] };
+    }
+
+    const ordered = [...snapshots].reverse();
+    const current = ordered[ordered.length - 1].headcount.total;
+
+    // Calculate average monthly change
+    let totalChange = 0;
+    for (let i = 1; i < ordered.length; i++) {
+      totalChange += ordered[i].headcount.total - ordered[i - 1].headcount.total;
+    }
+    const avgMonthlyChange = ordered.length > 1 ? totalChange / (ordered.length - 1) : 0;
+
+    // Count known exits (offboarding in notice_period)
+    const knownExits = await this.offboardingModel.countDocuments({
+      organizationId: orgId,
+      status: 'notice_period',
+      isDeleted: false,
+    });
+
+    const now = new Date();
+    const forecast: Array<{ month: number; year: number; projected: number }> = [];
+    for (let i = 1; i <= 3; i++) {
+      const futureDate = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const projected = Math.max(
+        0,
+        Math.round(current + avgMonthlyChange * i - (i === 1 ? knownExits : 0)),
+      );
+      forecast.push({
+        month: futureDate.getMonth() + 1,
+        year: futureDate.getFullYear(),
+        projected,
+      });
+    }
+
+    return { current, forecast };
+  }
+
+  // ===========================================================================
+  // Analytics: generateSnapshot
+  // ===========================================================================
+  async generateSnapshot(
+    userId: string,
+    orgId: string,
+  ): Promise<IAnalyticsSnapshot> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const year = now.getFullYear();
+
+    const activeCount = await this.salaryStructureModel.countDocuments({
+      organizationId: orgId,
+      status: 'active',
+      isDeleted: false,
+    });
+
+    const onboardingCount = await this.onboardingModel.countDocuments({
+      organizationId: orgId,
+      status: 'in_progress',
+      isDeleted: false,
+    });
+
+    const offboardingCount = await this.offboardingModel.countDocuments({
+      organizationId: orgId,
+      status: { $in: ['initiated', 'notice_period', 'clearance', 'fnf_processing'] },
+      isDeleted: false,
+    });
+
+    const onNoticeCount = await this.offboardingModel.countDocuments({
+      organizationId: orgId,
+      status: 'notice_period',
+      isDeleted: false,
+    });
+
+    // Get latest payroll run summary
+    const latestRun = await this.payrollRunModel
+      .findOne({
+        organizationId: orgId,
+        isDeleted: false,
+        status: { $in: ['finalized', 'paid'] },
+      })
+      .sort({ 'payPeriod.year': -1, 'payPeriod.month': -1 });
+
+    const totalPayroll = (latestRun as any)?.summary?.totalNetPay || 0;
+    const avgCostPerEmployee = activeCount > 0 ? totalPayroll / activeCount : 0;
+
+    const snapshotData = {
+      organizationId: orgId,
+      snapshotDate: now,
+      period: { month, year },
+      headcount: {
+        total: activeCount + onboardingCount,
+        active: activeCount,
+        onNotice: onNoticeCount,
+        newJoiners: onboardingCount,
+        exits: offboardingCount,
+        contractors: 0,
+      },
+      departmentBreakdown: [],
+      attritionData: {
+        monthlyRate: activeCount > 0 ? (offboardingCount / activeCount) * 100 : 0,
+        annualizedRate: activeCount > 0 ? (offboardingCount / activeCount) * 100 * 12 : 0,
+        voluntaryExits: 0,
+        involuntaryExits: 0,
+      },
+      costMetrics: {
+        totalPayroll,
+        avgCostPerEmployee,
+      },
+      attendanceSummary: {
+        avgAttendanceRate: 0,
+        avgLatePercentage: 0,
+        avgOvertimeHours: 0,
+      },
+      leaveSummary: {
+        avgLeaveUtilization: 0,
+        topLeaveTypes: [],
+      },
+      attritionPredictions: [],
+    };
+
+    // Upsert to handle unique index on org+period
+    const result = await this.analyticsSnapshotModel.findOneAndUpdate(
+      { organizationId: orgId, 'period.year': year, 'period.month': month },
+      snapshotData,
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+
+    this.logger.log(`Analytics snapshot generated for org ${orgId} period ${month}/${year}`);
+    return result;
+  }
+
+  // ===========================================================================
+  // RECRUITMENT - Job Postings
+  // ===========================================================================
+
+  private readonly DEFAULT_PIPELINE = [
+    { stageName: 'screening', stageOrder: 1, stageType: 'screening' as const },
+    { stageName: 'technical_round', stageOrder: 2, stageType: 'assessment' as const },
+    { stageName: 'hr_round', stageOrder: 3, stageType: 'interview' as const },
+    { stageName: 'offer', stageOrder: 4, stageType: 'offer' as const },
+    { stageName: 'hired', stageOrder: 5, stageType: 'hired' as const },
+  ];
+
+  async createJobPosting(
+    dto: CreateJobPostingDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IJobPosting> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    this.logger.log(`Creating job posting "${dto.title}" by user ${userId}`);
+
+    const jobPosting = new this.jobPostingModel({
+      organizationId: orgId,
+      title: dto.title,
+      departmentId: dto.departmentId || null,
+      location: dto.location,
+      employmentType: dto.employmentType,
+      description: dto.description,
+      requirements: dto.requirements || [],
+      skills: dto.skills || [],
+      openings: dto.openings || 1,
+      hiringManagerId: dto.hiringManagerId,
+      pipeline: this.DEFAULT_PIPELINE,
+      status: 'draft',
+      createdBy: userId,
+    });
+
+    return jobPosting.save();
+  }
+
+  async getJobPostings(
+    query: JobQueryDto,
+    userId: string,
+    orgId: string,
+  ) {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const filter: Record<string, unknown> = { organizationId: orgId, isDeleted: false };
+    if (query.status) filter.status = query.status;
+    if (query.department) filter.departmentId = query.department;
+
+    const [data, total] = await Promise.all([
+      this.jobPostingModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      this.jobPostingModel.countDocuments(filter),
+    ]);
+
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async getJobPosting(
+    id: string,
+    userId: string,
+    orgId: string,
+  ) {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const job = await this.jobPostingModel.findOne({ _id: id, organizationId: orgId, isDeleted: false }).lean();
+    if (!job) throw new NotFoundException('Job posting not found');
+
+    // Get candidate counts per stage
+    const stageCounts = await this.candidateModel.aggregate([
+      { $match: { jobPostingId: id, isDeleted: false } },
+      { $group: { _id: '$currentStage', count: { $sum: 1 } } },
+    ]);
+
+    const candidatesByStage: Record<string, number> = {};
+    for (const sc of stageCounts) {
+      candidatesByStage[sc._id] = sc.count;
+    }
+
+    return { ...job, candidatesByStage };
+  }
+
+  async updateJobPosting(
+    id: string,
+    dto: UpdateJobPostingDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IJobPosting> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const job = await this.jobPostingModel.findOne({ _id: id, organizationId: orgId, isDeleted: false });
+    if (!job) throw new NotFoundException('Job posting not found');
+    if (!['draft', 'open'].includes(job.status)) {
+      throw new BadRequestException('Can only update job postings in draft or open status');
+    }
+
+    if (dto.title) job.title = dto.title;
+    if (dto.location) job.location = dto.location;
+    if (dto.description) job.description = dto.description;
+    if (dto.requirements) job.requirements = dto.requirements;
+    if (dto.skills) job.skills = dto.skills;
+    if (dto.openings !== undefined) job.openings = dto.openings;
+
+    return job.save();
+  }
+
+  async updateJobStatus(
+    id: string,
+    dto: UpdateJobStatusDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IJobPosting> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const job = await this.jobPostingModel.findOne({ _id: id, organizationId: orgId, isDeleted: false });
+    if (!job) throw new NotFoundException('Job posting not found');
+
+    const validTransitions: Record<string, string[]> = {
+      draft: ['open', 'cancelled'],
+      open: ['on_hold', 'closed', 'cancelled'],
+      on_hold: ['open', 'closed', 'cancelled'],
+      closed: [],
+      cancelled: [],
+    };
+
+    if (!validTransitions[job.status]?.includes(dto.status)) {
+      throw new BadRequestException(`Cannot transition from ${job.status} to ${dto.status}`);
+    }
+
+    job.status = dto.status;
+    if (dto.status === 'open' && !job.publishedAt) {
+      job.publishedAt = new Date();
+    }
+    if (dto.status === 'closed') {
+      job.closedAt = new Date();
+    }
+
+    this.logger.log(`Job ${id} status updated to ${dto.status} by ${userId}`);
+    return job.save();
+  }
+
+  // ===========================================================================
+  // RECRUITMENT - Candidates
+  // ===========================================================================
+
+  async addCandidate(
+    dto: AddCandidateDto,
+    userId: string,
+    orgId: string,
+  ): Promise<ICandidate> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    // dto must include jobPostingId via the body (passed through from controller)
+    const body = dto as AddCandidateDto & { jobPostingId?: string };
+    if (!body.jobPostingId) throw new BadRequestException('jobPostingId is required');
+
+    const job = await this.jobPostingModel.findOne({ _id: body.jobPostingId, organizationId: orgId, isDeleted: false });
+    if (!job) throw new NotFoundException('Job posting not found');
+
+    // Check for duplicate
+    const existing = await this.candidateModel.findOne({
+      organizationId: orgId,
+      jobPostingId: body.jobPostingId,
+      email: dto.email,
+      isDeleted: false,
+    });
+    if (existing) throw new ConflictException('Candidate with this email already exists for this job posting');
+
+    const firstStage = job.pipeline.length > 0
+      ? job.pipeline.sort((a, b) => a.stageOrder - b.stageOrder)[0].stageName
+      : 'screening';
+
+    const candidate = new this.candidateModel({
+      organizationId: orgId,
+      jobPostingId: body.jobPostingId,
+      name: dto.name,
+      email: dto.email,
+      phone: dto.phone || null,
+      resumeUrl: dto.resumeUrl || null,
+      linkedinUrl: dto.linkedinUrl || null,
+      source: dto.source || 'direct',
+      referredBy: dto.referredBy || null,
+      currentStage: firstStage,
+      stageHistory: [{ stage: firstStage, enteredAt: new Date() }],
+      status: 'screening',
+      createdBy: userId,
+    });
+
+    this.logger.log(`Candidate ${dto.name} added to job ${body.jobPostingId} by ${userId}`);
+    return candidate.save();
+  }
+
+  async getCandidates(
+    query: CandidateQueryDto,
+    userId: string,
+    orgId: string,
+  ) {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const filter: Record<string, unknown> = { organizationId: orgId, isDeleted: false };
+    if (query.jobId) filter.jobPostingId = query.jobId;
+    if (query.stage) filter.currentStage = query.stage;
+    if (query.status) filter.status = query.status;
+
+    const [data, total] = await Promise.all([
+      this.candidateModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      this.candidateModel.countDocuments(filter),
+    ]);
+
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async getCandidate(
+    id: string,
+    userId: string,
+    orgId: string,
+  ) {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const candidate = await this.candidateModel.findOne({ _id: id, organizationId: orgId, isDeleted: false }).lean();
+    if (!candidate) throw new NotFoundException('Candidate not found');
+    return candidate;
+  }
+
+  async advanceCandidate(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<ICandidate> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const candidate = await this.candidateModel.findOne({ _id: id, organizationId: orgId, isDeleted: false });
+    if (!candidate) throw new NotFoundException('Candidate not found');
+    if (['rejected', 'withdrawn', 'hired'].includes(candidate.status)) {
+      throw new BadRequestException(`Cannot advance candidate with status ${candidate.status}`);
+    }
+
+    const job = await this.jobPostingModel.findOne({ _id: candidate.jobPostingId, organizationId: orgId });
+    if (!job) throw new NotFoundException('Associated job posting not found');
+
+    const sortedPipeline = [...job.pipeline].sort((a, b) => a.stageOrder - b.stageOrder);
+    const currentIndex = sortedPipeline.findIndex(s => s.stageName === candidate.currentStage);
+    if (currentIndex === -1 || currentIndex >= sortedPipeline.length - 1) {
+      throw new BadRequestException('Candidate is already at the final stage');
+    }
+
+    const nextStage = sortedPipeline[currentIndex + 1];
+    const now = new Date();
+
+    // Close current stage
+    const currentHistory = candidate.stageHistory.find(
+      h => h.stage === candidate.currentStage && !h.exitedAt,
+    );
+    if (currentHistory) {
+      currentHistory.exitedAt = now;
+      currentHistory.outcome = 'advanced';
+    }
+
+    // Open next stage
+    candidate.currentStage = nextStage.stageName;
+    candidate.stageHistory.push({ stage: nextStage.stageName, enteredAt: now } as any);
+
+    // Update status based on stage type
+    if (nextStage.stageType === 'offer') candidate.status = 'offered';
+    else if (nextStage.stageType === 'hired') candidate.status = 'hired';
+    else candidate.status = 'in_process';
+
+    this.logger.log(`Candidate ${id} advanced to ${nextStage.stageName} by ${userId}`);
+    return candidate.save();
+  }
+
+  async rejectCandidate(
+    id: string,
+    dto: RejectCandidateDto,
+    userId: string,
+    orgId: string,
+  ): Promise<ICandidate> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const candidate = await this.candidateModel.findOne({ _id: id, organizationId: orgId, isDeleted: false });
+    if (!candidate) throw new NotFoundException('Candidate not found');
+    if (['rejected', 'hired'].includes(candidate.status)) {
+      throw new BadRequestException(`Cannot reject candidate with status ${candidate.status}`);
+    }
+
+    const now = new Date();
+    const currentHistory = candidate.stageHistory.find(
+      h => h.stage === candidate.currentStage && !h.exitedAt,
+    );
+    if (currentHistory) {
+      currentHistory.exitedAt = now;
+      currentHistory.outcome = 'rejected';
+      currentHistory.feedback = dto.reason;
+      currentHistory.feedbackBy = userId;
+    }
+
+    candidate.status = 'rejected';
+    this.logger.log(`Candidate ${id} rejected by ${userId}: ${dto.reason}`);
+    return candidate.save();
+  }
+
+  async scheduleInterview(
+    id: string,
+    dto: ScheduleInterviewDto,
+    userId: string,
+    orgId: string,
+  ): Promise<ICandidate> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const candidate = await this.candidateModel.findOne({ _id: id, organizationId: orgId, isDeleted: false });
+    if (!candidate) throw new NotFoundException('Candidate not found');
+
+    candidate.interviews.push({
+      round: dto.round,
+      type: dto.type,
+      scheduledAt: new Date(dto.scheduledAt),
+      interviewerIds: dto.interviewerIds,
+      status: 'scheduled',
+    } as any);
+
+    this.logger.log(`Interview round ${dto.round} scheduled for candidate ${id} by ${userId}`);
+    return candidate.save();
+  }
+
+  async interviewFeedback(
+    id: string,
+    dto: InterviewFeedbackDto,
+    userId: string,
+    orgId: string,
+  ): Promise<ICandidate> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const candidate = await this.candidateModel.findOne({ _id: id, organizationId: orgId, isDeleted: false });
+    if (!candidate) throw new NotFoundException('Candidate not found');
+
+    // Find the latest scheduled/completed interview without feedback
+    const interview = candidate.interviews
+      .filter(i => ['scheduled', 'completed'].includes(i.status) && !i.feedback?.submittedBy)
+      .sort((a, b) => b.round - a.round)[0];
+
+    if (!interview) {
+      throw new BadRequestException('No pending interview found for feedback');
+    }
+
+    interview.status = 'completed';
+    interview.feedback = {
+      rating: dto.rating,
+      strengths: dto.strengths,
+      weaknesses: dto.weaknesses,
+      recommendation: dto.recommendation,
+      submittedBy: userId,
+      submittedAt: new Date(),
+    } as any;
+
+    this.logger.log(`Interview feedback submitted for candidate ${id} by ${userId}`);
+    return candidate.save();
+  }
+
+  async createOffer(
+    id: string,
+    dto: CreateOfferDto,
+    userId: string,
+    orgId: string,
+  ): Promise<ICandidate> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const candidate = await this.candidateModel.findOne({ _id: id, organizationId: orgId, isDeleted: false });
+    if (!candidate) throw new NotFoundException('Candidate not found');
+
+    candidate.offer = {
+      ctc: dto.ctc,
+      joiningDate: new Date(dto.joiningDate),
+      designation: dto.designation,
+      status: 'draft',
+    } as any;
+
+    if (candidate.status !== 'offered') {
+      candidate.status = 'offered';
+    }
+
+    this.logger.log(`Offer created for candidate ${id} by ${userId}`);
+    return candidate.save();
+  }
+
+  async sendOffer(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<ICandidate> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const candidate = await this.candidateModel.findOne({ _id: id, organizationId: orgId, isDeleted: false });
+    if (!candidate) throw new NotFoundException('Candidate not found');
+    if (!candidate.offer) throw new BadRequestException('No offer exists for this candidate');
+    if (candidate.offer.status !== 'draft') {
+      throw new BadRequestException(`Cannot send offer in ${candidate.offer.status} status`);
+    }
+
+    candidate.offer.status = 'sent';
+    candidate.offer.sentAt = new Date();
+
+    this.logger.log(`Offer sent to candidate ${id} by ${userId}`);
+    return candidate.save();
+  }
+
+  async convertToEmployee(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<ICandidate> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const candidate = await this.candidateModel.findOne({ _id: id, organizationId: orgId, isDeleted: false });
+    if (!candidate) throw new NotFoundException('Candidate not found');
+
+    if (!candidate.offer || candidate.offer.status !== 'accepted') {
+      // Allow conversion if offer is sent or accepted
+      if (!candidate.offer || !['sent', 'accepted'].includes(candidate.offer.status)) {
+        throw new BadRequestException('Offer must be sent or accepted before converting to employee');
+      }
+    }
+
+    // Generate a placeholder employee ID (in production, would call HR service)
+    const employeeId = `EMP-${Date.now()}`;
+    candidate.convertedToEmployeeId = employeeId;
+    candidate.status = 'hired';
+
+    // Close final stage
+    const now = new Date();
+    const currentHistory = candidate.stageHistory.find(
+      h => h.stage === candidate.currentStage && !h.exitedAt,
+    );
+    if (currentHistory) {
+      currentHistory.exitedAt = now;
+      currentHistory.outcome = 'advanced';
+    }
+
+    // Increment filledCount on job
+    await this.jobPostingModel.updateOne(
+      { _id: candidate.jobPostingId },
+      { $inc: { filledCount: 1 } },
+    );
+
+    this.logger.log(`Candidate ${id} converted to employee ${employeeId} by ${userId}`);
+    return candidate.save();
+  }
+
+  // ===========================================================================
+  // RECRUITMENT - Analytics
+  // ===========================================================================
+
+  async getRecruitmentAnalytics(
+    userId: string,
+    orgId: string,
+  ) {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const [
+      totalOpenJobs,
+      totalCandidates,
+      candidatesByStage,
+      candidatesByStatus,
+      avgTimeInStage,
+    ] = await Promise.all([
+      this.jobPostingModel.countDocuments({ organizationId: orgId, status: 'open', isDeleted: false }),
+      this.candidateModel.countDocuments({ organizationId: orgId, isDeleted: false }),
+      this.candidateModel.aggregate([
+        { $match: { organizationId: orgId, isDeleted: false } },
+        { $group: { _id: '$currentStage', count: { $sum: 1 } } },
+      ]),
+      this.candidateModel.aggregate([
+        { $match: { organizationId: orgId, isDeleted: false } },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]),
+      this.candidateModel.aggregate([
+        { $match: { organizationId: orgId, isDeleted: false } },
+        { $unwind: '$stageHistory' },
+        {
+          $project: {
+            stage: '$stageHistory.stage',
+            duration: {
+              $cond: {
+                if: { $ifNull: ['$stageHistory.exitedAt', false] },
+                then: { $subtract: ['$stageHistory.exitedAt', '$stageHistory.enteredAt'] },
+                else: { $subtract: [new Date(), '$stageHistory.enteredAt'] },
+              },
+            },
+          },
+        },
+        {
+          $group: {
+            _id: '$stage',
+            avgDurationMs: { $avg: '$duration' },
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+    ]);
+
+    const byStage: Record<string, number> = {};
+    for (const s of candidatesByStage) byStage[s._id] = s.count;
+
+    const byStatus: Record<string, number> = {};
+    for (const s of candidatesByStatus) byStatus[s._id] = s.count;
+
+    const avgTime: Record<string, { avgDays: number; count: number }> = {};
+    for (const s of avgTimeInStage) {
+      avgTime[s._id] = {
+        avgDays: Math.round((s.avgDurationMs / (1000 * 60 * 60 * 24)) * 10) / 10,
+        count: s.count,
+      };
+    }
+
+    return {
+      totalOpenJobs,
+      totalCandidates,
+      candidatesByStage: byStage,
+      candidatesByStatus: byStatus,
+      avgTimeInStage: avgTime,
+    };
   }
 }
