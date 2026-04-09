@@ -156,7 +156,7 @@ export default function OffboardingPage() {
     if (!user) return;
     setLoading(true);
     try {
-      const res = await payrollApi.getOffboardings();
+      const res = await payrollApi.getAllOffboardings();
       const data = Array.isArray(res.data) ? res.data : (res.data as any)?.offboardings ?? [];
       setRecords(data);
     } catch (err: any) {

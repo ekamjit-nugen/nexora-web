@@ -878,6 +878,7 @@ export class PayrollController {
 
   @Post('candidates/:id/interview-feedback')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin', 'manager')
   async interviewFeedback(@Param('id') id: string, @Body() dto: InterviewFeedbackDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;

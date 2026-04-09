@@ -2758,13 +2758,24 @@ export class PayrollService {
   ): Promise<IEmployeeLoan> {
     if (!orgId) throw new ForbiddenException('Organization context required');
 
-    // Generate loan number: LOAN-YYYY-NNN
+    // Generate loan number: LOAN-YYYY-NNN (with atomic retry on duplicate)
     const year = new Date().getFullYear();
-    const count = await this.employeeLoanModel.countDocuments({
-      organizationId: orgId,
-      loanNumber: { $regex: `^LOAN-${year}-` },
-    });
-    const loanNumber = `LOAN-${year}-${String(count + 1).padStart(3, '0')}`;
+    let loanNumber: string;
+    let retries = 0;
+    const maxRetries = 5;
+    while (retries < maxRetries) {
+      const count = await this.employeeLoanModel.countDocuments({
+        organizationId: orgId,
+        loanNumber: { $regex: `^LOAN-${year}-` },
+      });
+      loanNumber = `LOAN-${year}-${String(count + 1 + retries).padStart(3, '0')}`;
+      const existing = await this.employeeLoanModel.findOne({ loanNumber });
+      if (!existing) break;
+      retries++;
+    }
+    if (retries >= maxRetries) {
+      throw new ConflictException('Unable to generate unique loan number. Please try again.');
+    }
 
     const amount = dto.amount;
     const tenure = dto.tenure;
@@ -2923,6 +2934,11 @@ export class PayrollService {
     if (!orgId) throw new ForbiddenException('Organization context required');
 
     const loan = await this.getLoan(id, userId, orgId);
+
+    // Prevent self-approval (segregation of duties)
+    if (loan.employeeId === userId) {
+      throw new ForbiddenException('Cannot approve your own loan application');
+    }
 
     if (loan.status === 'rejected' || loan.status === 'cancelled') {
       throw new BadRequestException(`Cannot approve/reject a loan with status '${loan.status}'`);
@@ -3749,6 +3765,19 @@ export class PayrollService {
     const candidate = await this.candidateModel.findOne({ _id: id, organizationId: orgId, isDeleted: false });
     if (!candidate) throw new NotFoundException('Candidate not found');
 
+    // Validate candidate is in offer-eligible stage (must have completed interviews)
+    const offerStages = ['offer', 'hr_round', 'final_round'];
+    const jobPosting = await this.jobPostingModel.findOne({ _id: candidate.jobPostingId, isDeleted: false });
+    if (jobPosting?.pipeline?.length) {
+      const offerStageIdx = jobPosting.pipeline.findIndex(s => s.stageType === 'offer');
+      const currentStageIdx = jobPosting.pipeline.findIndex(s => s.stageName === candidate.currentStage);
+      if (offerStageIdx >= 0 && currentStageIdx >= 0 && currentStageIdx < offerStageIdx - 1) {
+        throw new BadRequestException(
+          `Candidate must complete earlier pipeline stages before receiving an offer. Current stage: ${candidate.currentStage}`,
+        );
+      }
+    }
+
     candidate.offer = {
       ctc: dto.ctc,
       joiningDate: new Date(dto.joiningDate),
@@ -3796,10 +3825,7 @@ export class PayrollService {
     if (!candidate) throw new NotFoundException('Candidate not found');
 
     if (!candidate.offer || candidate.offer.status !== 'accepted') {
-      // Allow conversion if offer is sent or accepted
-      if (!candidate.offer || !['sent', 'accepted'].includes(candidate.offer.status)) {
-        throw new BadRequestException('Offer must be sent or accepted before converting to employee');
-      }
+      throw new BadRequestException('Offer must be accepted before converting to employee. Current offer status: ' + (candidate.offer?.status || 'none'));
     }
 
     // Generate a placeholder employee ID (in production, would call HR service)
