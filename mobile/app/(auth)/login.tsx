@@ -111,12 +111,10 @@ export default function LoginScreen() {
 
     try {
       const res = await authApi.verifyOtp(email.trim().toLowerCase(), otp);
-      const tokens = res.data?.tokens;
-      if (tokens?.accessToken && tokens?.refreshToken) {
-        await login({
-          accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
-        });
+      const accessToken = res.data?.accessToken || res.data?.tokens?.accessToken;
+      const refreshToken = res.data?.refreshToken || res.data?.tokens?.refreshToken;
+      if (accessToken && refreshToken) {
+        await login({ accessToken, refreshToken });
         router.replace("/(tabs)");
       } else {
         setError("Invalid response from server");
