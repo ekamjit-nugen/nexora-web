@@ -2,13 +2,25 @@ import { Tabs } from "expo-router";
 import { useAuth } from "../../lib/auth-context";
 import { useEffect } from "react";
 import { useRouter } from "expo-router";
-import { ActivityIndicator, View, StyleSheet, Platform } from "react-native";
+import { ActivityIndicator, View, StyleSheet, Platform, Text } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { useQuery } from "@tanstack/react-query";
 import { COLORS, SHADOWS } from "../../lib/theme";
+import { notificationApi } from "../../lib/api";
 
 export default function TabsLayout() {
   const { user, loading } = useAuth();
   const router = useRouter();
+
+  const { data: unreadData } = useQuery({
+    queryKey: ["notifications", "unread-count"],
+    queryFn: () => notificationApi.getUnreadCount(),
+    refetchInterval: 30000,
+    enabled: !!user,
+    retry: 1,
+  });
+
+  const unreadCount = unreadData?.data?.count ?? 0;
 
   useEffect(() => {
     if (!loading && !user) {
@@ -55,6 +67,8 @@ export default function TabsLayout() {
         options={{
           title: "Home",
           tabBarLabel: "Home",
+          tabBarBadge: unreadCount > 0 ? (unreadCount > 99 ? "99+" : unreadCount) : undefined,
+          tabBarBadgeStyle: unreadCount > 0 ? styles.tabBadge : undefined,
           tabBarIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="home-variant" size={24} color={color} />
           ),
@@ -110,5 +124,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: COLORS.background,
+  },
+  tabBadge: {
+    backgroundColor: COLORS.danger,
+    fontSize: 10,
+    fontWeight: "700",
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
   },
 });

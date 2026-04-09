@@ -5,273 +5,346 @@ import {
   ScrollView,
   RefreshControl,
   TouchableOpacity,
+  Dimensions,
+  Platform,
 } from "react-native";
 import {
   Text,
   ActivityIndicator,
+  Portal,
+  Modal,
+  Snackbar,
 } from "react-native-paper";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { projectApi, taskApi } from "../../lib/api";
+import { useAuth } from "../../lib/auth-context";
+import { taskApi } from "../../lib/api";
 import { COLORS, SPACING, RADIUS, SHADOWS } from "../../lib/theme";
 
-type Tab = "projects" | "tasks";
+const { width } = Dimensions.get("window");
+const SUMMARY_CARD_WIDTH = (width - SPACING.lg * 2 - SPACING.sm * 3) / 4;
 
-const PROJECT_STATUS: Record<string, { color: string; icon: string }> = {
-  active: { color: COLORS.success, icon: "play-circle" },
-  planning: { color: COLORS.info, icon: "lightbulb-outline" },
-  on_hold: { color: COLORS.warning, icon: "pause-circle" },
-  completed: { color: COLORS.textMuted, icon: "check-circle" },
-  cancelled: { color: COLORS.danger, icon: "close-circle" },
+interface MyWorkData {
+  overdue: any[];
+  dueToday: any[];
+  inProgress: any[];
+  readyToStart: any[];
+  blocked: any[];
+  upcomingThisSprint: any[];
+  recentlyCompleted: any[];
+}
+
+const PRIORITY_CONFIG: Record<string, { color: string; bg: string; icon: string }> = {
+  urgent: { color: COLORS.danger, bg: COLORS.dangerLight, icon: "alert-circle" },
+  high: { color: COLORS.danger, bg: COLORS.dangerLight, icon: "arrow-up-bold" },
+  medium: { color: COLORS.warning, bg: COLORS.warningLight, icon: "minus" },
+  low: { color: COLORS.textSecondary, bg: COLORS.borderLight, icon: "arrow-down" },
 };
 
-const TASK_STATUS: Record<string, { color: string; icon: string }> = {
-  todo: { color: COLORS.textSecondary, icon: "circle-outline" },
-  in_progress: { color: COLORS.info, icon: "progress-clock" },
-  review: { color: COLORS.warning, icon: "eye-outline" },
-  done: { color: COLORS.success, icon: "check-circle" },
-  blocked: { color: COLORS.danger, icon: "block-helper" },
-};
+const STATUS_OPTIONS = [
+  { key: "todo", label: "To Do", icon: "circle-outline", color: COLORS.textSecondary },
+  { key: "in_progress", label: "In Progress", icon: "progress-clock", color: COLORS.info },
+  { key: "review", label: "In Review", icon: "eye-outline", color: COLORS.warning },
+  { key: "done", label: "Done", icon: "check-circle", color: COLORS.success },
+];
 
-const PRIORITY_CONFIG: Record<string, { color: string; bg: string }> = {
-  urgent: { color: COLORS.danger, bg: COLORS.dangerLight },
-  high: { color: COLORS.danger, bg: COLORS.dangerLight },
-  medium: { color: COLORS.warning, bg: COLORS.warningLight },
-  low: { color: COLORS.textSecondary, bg: COLORS.borderLight },
-};
+interface SectionConfig {
+  key: keyof MyWorkData;
+  title: string;
+  icon: string;
+  accentColor: string;
+  emptyText: string;
+}
 
-const FILTER_OPTIONS = ["all", "todo", "in_progress", "review", "done", "blocked"];
+const SECTIONS: SectionConfig[] = [
+  { key: "overdue", title: "Overdue", icon: "alert-circle-outline", accentColor: COLORS.danger, emptyText: "No overdue tasks" },
+  { key: "dueToday", title: "Due Today", icon: "calendar-today", accentColor: COLORS.warning, emptyText: "Nothing due today" },
+  { key: "inProgress", title: "In Progress", icon: "progress-clock", accentColor: COLORS.info, emptyText: "No tasks in progress" },
+  { key: "readyToStart", title: "Ready to Start", icon: "play-circle-outline", accentColor: COLORS.success, emptyText: "No tasks ready to start" },
+  { key: "blocked", title: "Blocked", icon: "block-helper", accentColor: COLORS.danger, emptyText: "No blocked tasks" },
+  { key: "upcomingThisSprint", title: "This Sprint", icon: "run-fast", accentColor: COLORS.textSecondary, emptyText: "No upcoming sprint tasks" },
+  { key: "recentlyCompleted", title: "Recently Completed", icon: "check-circle-outline", accentColor: COLORS.success, emptyText: "No recently completed tasks" },
+];
 
 export default function WorkScreen() {
-  const [activeTab, setActiveTab] = useState<Tab>("projects");
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
-  const [taskFilter, setTaskFilter] = useState<string>("all");
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
+  const [statusSheetVisible, setStatusSheetVisible] = useState(false);
+  const [selectedTask, setSelectedTask] = useState<any>(null);
+  const [snackMessage, setSnackMessage] = useState("");
+  const [snackVisible, setSnackVisible] = useState(false);
 
   const {
-    data: projectsData,
-    isLoading: projectsLoading,
-    refetch: refetchProjects,
+    data: myWorkResponse,
+    isLoading,
+    refetch,
   } = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => projectApi.getAll({ page: 1 }),
-    enabled: activeTab === "projects",
+    queryKey: ["myWork"],
+    queryFn: () => taskApi.getMyWork(),
   });
 
-  const {
-    data: tasksData,
-    isLoading: tasksLoading,
-    refetch: refetchTasks,
-  } = useQuery({
-    queryKey: ["tasks", taskFilter],
-    queryFn: () =>
-      taskApi.getAll({
-        page: 1,
-        status: taskFilter !== "all" ? taskFilter : undefined,
-      }),
-    enabled: activeTab === "tasks",
+  const updateStatusMutation = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: string }) =>
+      taskApi.updateStatus(id, status),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["myWork"] });
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      setStatusSheetVisible(false);
+      setSelectedTask(null);
+      const label = STATUS_OPTIONS.find((s) => s.key === variables.status)?.label || variables.status;
+      setSnackMessage(`Task moved to ${label}`);
+      setSnackVisible(true);
+    },
+    onError: (err: any) => {
+      setSnackMessage(err.message || "Failed to update status");
+      setSnackVisible(true);
+    },
   });
+
+  const myWork: MyWorkData = myWorkResponse?.data || {
+    overdue: [],
+    dueToday: [],
+    inProgress: [],
+    readyToStart: [],
+    blocked: [],
+    upcomingThisSprint: [],
+    recentlyCompleted: [],
+  };
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    if (activeTab === "projects") await refetchProjects();
-    else await refetchTasks();
+    await refetch();
     setRefreshing(false);
-  }, [activeTab, refetchProjects, refetchTasks]);
+  }, [refetch]);
 
-  const formatDate = (dateStr: string | undefined) => {
-    if (!dateStr) return "--";
-    return new Date(dateStr).toLocaleDateString("en-US", {
-      month: "short",
+  const toggleSection = (key: string) => {
+    setCollapsedSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handleLongPress = (task: any) => {
+    setSelectedTask(task);
+    setStatusSheetVisible(true);
+  };
+
+  const handleStatusChange = (status: string, task?: any) => {
+    const targetTask = task || selectedTask;
+    if (!targetTask) return;
+    updateStatusMutation.mutate({ id: targetTask._id, status });
+  };
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Good morning";
+    if (hour < 17) return "Good afternoon";
+    return "Good evening";
+  };
+
+  const formatDate = () => {
+    return new Date().toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
       day: "numeric",
-      year: "numeric",
     });
   };
 
-  const renderProjectsTab = () => (
-    <>
-      {projectsLoading ? (
-        <ActivityIndicator size="large" color={COLORS.primary} style={styles.loader} />
-      ) : (
-        <>
-          {(projectsData?.data || []).map((project: any, idx: number) => {
-            const status = PROJECT_STATUS[project.status] || PROJECT_STATUS.active;
-            return (
-              <TouchableOpacity key={project._id || idx} activeOpacity={0.7}>
-                <View style={styles.projectCard}>
-                  <View style={[styles.projectAccent, { backgroundColor: status.color }]} />
-                  <View style={styles.projectContent}>
-                    <View style={styles.projectHeader}>
-                      <Text style={styles.projectName} numberOfLines={1}>
-                        {project.name}
-                      </Text>
-                      <View style={[styles.statusBadge, { backgroundColor: status.color + "15" }]}>
-                        <MaterialCommunityIcons
-                          name={status.icon as any}
-                          size={13}
-                          color={status.color}
-                        />
-                        <Text style={[styles.statusText, { color: status.color }]}>
-                          {(project.status || "unknown").replace("_", " ")}
-                        </Text>
-                      </View>
-                    </View>
+  const formatDueDate = (dateStr: string | undefined) => {
+    if (!dateStr) return "";
+    return new Date(dateStr).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+  };
 
-                    {project.description && (
-                      <Text style={styles.projectDesc} numberOfLines={2}>
-                        {project.description}
-                      </Text>
-                    )}
+  const getDaysOverdue = (dateStr: string | undefined) => {
+    if (!dateStr) return 0;
+    const due = new Date(dateStr);
+    const now = new Date();
+    const diff = Math.floor((now.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
+    return Math.max(0, diff);
+  };
 
-                    <View style={styles.projectMeta}>
-                      <View style={styles.metaItem}>
-                        <MaterialCommunityIcons
-                          name="calendar-clock"
-                          size={14}
-                          color={COLORS.textMuted}
-                        />
-                        <Text style={styles.metaText}>
-                          {formatDate(project.endDate || project.dueDate)}
-                        </Text>
-                      </View>
-                      {project.teamMembers && (
-                        <View style={styles.metaItem}>
-                          <MaterialCommunityIcons
-                            name="account-group-outline"
-                            size={14}
-                            color={COLORS.textMuted}
-                          />
-                          <Text style={styles.metaText}>
-                            {project.teamMembers.length} members
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  </View>
-                </View>
-              </TouchableOpacity>
-            );
-          })}
+  const getDueDateStyle = (dateStr: string | undefined) => {
+    if (!dateStr) return { color: COLORS.textMuted };
+    const due = new Date(dateStr);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate());
 
-          {(!projectsData?.data || projectsData.data.length === 0) && (
-            <View style={styles.emptyCard}>
-              <MaterialCommunityIcons
-                name="folder-open-outline"
-                size={48}
-                color={COLORS.textMuted}
-              />
-              <Text style={styles.emptyTitle}>No projects yet</Text>
-              <Text style={styles.emptySubtitle}>
-                Projects assigned to you will appear here
-              </Text>
-            </View>
-          )}
-        </>
-      )}
-    </>
-  );
+    if (dueDay < today) return { color: COLORS.danger };
+    if (dueDay.getTime() === today.getTime()) return { color: COLORS.warning };
+    return { color: COLORS.textMuted };
+  };
 
-  const renderTasksTab = () => (
-    <>
-      {/* Filter Pills */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.filterScroll}
-        contentContainerStyle={styles.filterContent}
+  // Summary counts
+  const summaryCards = [
+    { label: "Overdue", count: myWork.overdue.length, color: COLORS.danger, bg: COLORS.dangerLight, icon: "alert-circle" as const },
+    { label: "Due Today", count: myWork.dueToday.length, color: COLORS.warning, bg: COLORS.warningLight, icon: "calendar-today" as const },
+    { label: "In Progress", count: myWork.inProgress.length, color: COLORS.info, bg: COLORS.infoLight, icon: "progress-clock" as const },
+    { label: "Blocked", count: myWork.blocked.length, color: COLORS.danger, bg: COLORS.dangerLight, icon: "block-helper" as const },
+  ];
+
+  const renderTaskCard = (task: any, sectionKey: keyof MyWorkData) => {
+    const priority = task.priority ? PRIORITY_CONFIG[task.priority] : null;
+    const isCompleted = sectionKey === "recentlyCompleted";
+    const isOverdue = sectionKey === "overdue";
+    const isBlocked = sectionKey === "blocked";
+    const daysOverdue = isOverdue ? getDaysOverdue(task.dueDate) : 0;
+
+    return (
+      <TouchableOpacity
+        key={task._id}
+        activeOpacity={0.7}
+        onLongPress={() => handleLongPress(task)}
+        delayLongPress={400}
       >
-        {FILTER_OPTIONS.map((status) => {
-          const isActive = taskFilter === status;
-          const config = status !== "all" ? TASK_STATUS[status] : null;
-          return (
+        <View style={[styles.taskCard, isCompleted && styles.taskCardCompleted]}>
+          {/* Priority dot */}
+          {priority && (
+            <View style={[styles.priorityDot, { backgroundColor: priority.color }]} />
+          )}
+          {!priority && <View style={[styles.priorityDot, { backgroundColor: COLORS.textMuted }]} />}
+
+          <View style={styles.taskCardContent}>
+            {/* Project name */}
+            <Text style={styles.taskProject} numberOfLines={1}>
+              {task.project?.name || task.projectName || "No project"}
+              {task.key ? ` / ${task.key}` : ""}
+            </Text>
+
+            {/* Title */}
+            <Text
+              style={[
+                styles.taskTitle,
+                isCompleted && styles.taskTitleCompleted,
+              ]}
+              numberOfLines={2}
+            >
+              {task.title || task.name}
+            </Text>
+
+            {/* Meta row */}
+            <View style={styles.taskMeta}>
+              {/* Due date */}
+              {task.dueDate && (
+                <View style={styles.metaItem}>
+                  <MaterialCommunityIcons
+                    name="calendar-clock"
+                    size={12}
+                    color={getDueDateStyle(task.dueDate).color}
+                  />
+                  <Text style={[styles.metaText, getDueDateStyle(task.dueDate)]}>
+                    {isOverdue && daysOverdue > 0
+                      ? `${daysOverdue}d overdue`
+                      : formatDueDate(task.dueDate)}
+                  </Text>
+                </View>
+              )}
+
+              {/* Story points */}
+              {task.storyPoints != null && (
+                <View style={styles.storyPointsBadge}>
+                  <MaterialCommunityIcons
+                    name="lightning-bolt"
+                    size={10}
+                    color={COLORS.accent}
+                  />
+                  <Text style={styles.storyPointsText}>{task.storyPoints}</Text>
+                </View>
+              )}
+
+              {/* Priority badge */}
+              {priority && (
+                <View style={[styles.priorityBadge, { backgroundColor: priority.bg }]}>
+                  <Text style={[styles.priorityText, { color: priority.color }]}>
+                    {task.priority}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {/* Blocked reason */}
+            {isBlocked && task.blockedReason && (
+              <View style={styles.blockedReason}>
+                <MaterialCommunityIcons name="alert-outline" size={12} color={COLORS.danger} />
+                <Text style={styles.blockedReasonText} numberOfLines={1}>
+                  {task.blockedReason}
+                </Text>
+              </View>
+            )}
+            {isBlocked && task.blockedBy && !task.blockedReason && (
+              <View style={styles.blockedReason}>
+                <MaterialCommunityIcons name="link-variant" size={12} color={COLORS.danger} />
+                <Text style={styles.blockedReasonText} numberOfLines={1}>
+                  Blocked by: {task.blockedBy?.title || task.blockedBy?.key || "another task"}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* Swipe hint for overdue / due today */}
+          {(isOverdue || sectionKey === "dueToday") && (
             <TouchableOpacity
-              key={status}
-              onPress={() => setTaskFilter(status)}
-              style={[styles.filterPill, isActive && styles.filterPillActive]}
+              style={styles.quickDoneBtn}
+              onPress={() => {
+                handleStatusChange("done", task);
+              }}
               activeOpacity={0.7}
             >
-              {config && (
-                <View style={[styles.filterDot, { backgroundColor: isActive ? COLORS.primary : config.color }]} />
-              )}
-              <Text style={[styles.filterPillText, isActive && styles.filterPillTextActive]}>
-                {status === "all"
-                  ? "All"
-                  : status.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-              </Text>
+              <MaterialCommunityIcons name="check" size={16} color={COLORS.success} />
             </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-
-      {tasksLoading ? (
-        <ActivityIndicator size="large" color={COLORS.primary} style={styles.loader} />
-      ) : (
-        <>
-          {(tasksData?.data || []).map((task: any, idx: number) => {
-            const status = TASK_STATUS[task.status] || TASK_STATUS.todo;
-            const priority = task.priority ? PRIORITY_CONFIG[task.priority] : null;
-            return (
-              <TouchableOpacity key={task._id || idx} activeOpacity={0.7}>
-                <View style={styles.taskCard}>
-                  <View style={[styles.taskStatusIcon, { backgroundColor: status.color + "15" }]}>
-                    <MaterialCommunityIcons
-                      name={status.icon as any}
-                      size={18}
-                      color={status.color}
-                    />
-                  </View>
-                  <View style={styles.taskContent}>
-                    <Text style={styles.taskTitle} numberOfLines={1}>
-                      {task.title || task.name}
-                    </Text>
-                    <Text style={styles.taskProject} numberOfLines={1}>
-                      {task.project?.name || task.projectName || "No project"}
-                    </Text>
-                    <View style={styles.taskMeta}>
-                      <View style={styles.metaItem}>
-                        <MaterialCommunityIcons
-                          name="calendar-clock"
-                          size={13}
-                          color={COLORS.textMuted}
-                        />
-                        <Text style={styles.metaText}>
-                          {formatDate(task.dueDate)}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                  {priority && (
-                    <View style={[styles.priorityBadge, { backgroundColor: priority.bg }]}>
-                      <Text style={[styles.priorityText, { color: priority.color }]}>
-                        {task.priority}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              </TouchableOpacity>
-            );
-          })}
-
-          {(!tasksData?.data || tasksData.data.length === 0) && (
-            <View style={styles.emptyCard}>
-              <MaterialCommunityIcons
-                name="checkbox-marked-circle-outline"
-                size={48}
-                color={COLORS.textMuted}
-              />
-              <Text style={styles.emptyTitle}>No tasks found</Text>
-              <Text style={styles.emptySubtitle}>
-                {taskFilter !== "all"
-                  ? `No tasks with status "${taskFilter.replace("_", " ")}"`
-                  : "Tasks assigned to you will appear here"}
-              </Text>
-            </View>
           )}
-        </>
-      )}
-    </>
-  );
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const renderSection = (config: SectionConfig) => {
+    const tasks = myWork[config.key] || [];
+    if (tasks.length === 0) return null;
+
+    const isCollapsed = collapsedSections[config.key] || false;
+    const isCompleted = config.key === "recentlyCompleted";
+
+    return (
+      <View key={config.key} style={styles.section}>
+        <TouchableOpacity
+          style={styles.sectionHeader}
+          onPress={() => toggleSection(config.key)}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.sectionAccent, { backgroundColor: config.accentColor }]} />
+          <MaterialCommunityIcons
+            name={config.icon as any}
+            size={18}
+            color={config.accentColor}
+          />
+          <Text style={[styles.sectionTitle, isCompleted && styles.sectionTitleDimmed]}>
+            {config.title}
+          </Text>
+          <View style={[styles.countBadge, { backgroundColor: config.accentColor + "20" }]}>
+            <Text style={[styles.countBadgeText, { color: config.accentColor }]}>
+              {tasks.length}
+            </Text>
+          </View>
+          <MaterialCommunityIcons
+            name={isCollapsed ? "chevron-down" : "chevron-up"}
+            size={20}
+            color={COLORS.textMuted}
+          />
+        </TouchableOpacity>
+
+        {!isCollapsed && (
+          <View style={styles.sectionContent}>
+            {tasks.map((task: any) => renderTaskCard(task, config.key))}
+          </View>
+        )}
+      </View>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -284,37 +357,11 @@ export default function WorkScreen() {
       >
         <SafeAreaView edges={["top"]}>
           <View style={styles.headerContent}>
-            <Text style={styles.headerTitle}>Work</Text>
-            <View style={styles.tabSwitcher}>
-              <TouchableOpacity
-                style={[styles.tabBtn, activeTab === "projects" && styles.tabBtnActive]}
-                onPress={() => setActiveTab("projects")}
-                activeOpacity={0.8}
-              >
-                <MaterialCommunityIcons
-                  name="folder-outline"
-                  size={16}
-                  color={activeTab === "projects" ? COLORS.primary : "rgba(255,255,255,0.7)"}
-                />
-                <Text style={[styles.tabBtnText, activeTab === "projects" && styles.tabBtnTextActive]}>
-                  Projects
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.tabBtn, activeTab === "tasks" && styles.tabBtnActive]}
-                onPress={() => setActiveTab("tasks")}
-                activeOpacity={0.8}
-              >
-                <MaterialCommunityIcons
-                  name="checkbox-marked-outline"
-                  size={16}
-                  color={activeTab === "tasks" ? COLORS.primary : "rgba(255,255,255,0.7)"}
-                />
-                <Text style={[styles.tabBtnText, activeTab === "tasks" && styles.tabBtnTextActive]}>
-                  Tasks
-                </Text>
-              </TouchableOpacity>
-            </View>
+            <Text style={styles.headerTitle}>My Work</Text>
+            <Text style={styles.headerGreeting}>
+              {getGreeting()}, {user?.firstName || "there"}
+            </Text>
+            <Text style={styles.headerDate}>{formatDate()}</Text>
           </View>
         </SafeAreaView>
       </LinearGradient>
@@ -326,8 +373,135 @@ export default function WorkScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        {activeTab === "projects" ? renderProjectsTab() : renderTasksTab()}
+        {isLoading ? (
+          <ActivityIndicator size="large" color={COLORS.primary} style={styles.loader} />
+        ) : (
+          <>
+            {/* Summary Cards */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.summaryRow}
+              style={styles.summaryScroll}
+            >
+              {summaryCards.map((card) => (
+                <View key={card.label} style={[styles.summaryCard, { borderTopColor: card.color }]}>
+                  <View style={[styles.summaryIconCircle, { backgroundColor: card.bg }]}>
+                    <MaterialCommunityIcons name={card.icon} size={18} color={card.color} />
+                  </View>
+                  <Text style={[styles.summaryCount, { color: card.color }]}>
+                    {card.count}
+                  </Text>
+                  <Text style={styles.summaryLabel}>{card.label}</Text>
+                </View>
+              ))}
+            </ScrollView>
+
+            {/* Task Sections */}
+            {SECTIONS.map(renderSection)}
+
+            {/* Empty state if absolutely no tasks */}
+            {Object.values(myWork).every((arr) => arr.length === 0) && (
+              <View style={styles.emptyCard}>
+                <MaterialCommunityIcons
+                  name="checkbox-marked-circle-outline"
+                  size={48}
+                  color={COLORS.textMuted}
+                />
+                <Text style={styles.emptyTitle}>All caught up!</Text>
+                <Text style={styles.emptySubtitle}>
+                  No tasks in your work queue right now
+                </Text>
+              </View>
+            )}
+          </>
+        )}
       </ScrollView>
+
+      {/* Quick Status Change Bottom Sheet */}
+      <Portal>
+        <Modal
+          visible={statusSheetVisible}
+          onDismiss={() => {
+            setStatusSheetVisible(false);
+            setSelectedTask(null);
+          }}
+          contentContainerStyle={styles.bottomSheet}
+        >
+          <View style={styles.bottomSheetHandle} />
+          <Text style={styles.bottomSheetTitle}>Change Status</Text>
+          {selectedTask && (
+            <Text style={styles.bottomSheetTaskName} numberOfLines={1}>
+              {selectedTask.title || selectedTask.name}
+            </Text>
+          )}
+          <View style={styles.statusOptions}>
+            {STATUS_OPTIONS.map((option) => {
+              const isCurrentStatus = selectedTask?.status === option.key;
+              return (
+                <TouchableOpacity
+                  key={option.key}
+                  style={[
+                    styles.statusOption,
+                    isCurrentStatus && styles.statusOptionActive,
+                  ]}
+                  onPress={() => handleStatusChange(option.key)}
+                  disabled={isCurrentStatus || updateStatusMutation.isPending}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.statusOptionIcon, { backgroundColor: option.color + "15" }]}>
+                    <MaterialCommunityIcons
+                      name={option.icon as any}
+                      size={20}
+                      color={option.color}
+                    />
+                  </View>
+                  <Text
+                    style={[
+                      styles.statusOptionLabel,
+                      isCurrentStatus && styles.statusOptionLabelActive,
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                  {isCurrentStatus && (
+                    <MaterialCommunityIcons name="check" size={18} color={COLORS.primary} />
+                  )}
+                  {updateStatusMutation.isPending &&
+                    updateStatusMutation.variables?.status === option.key && (
+                      <ActivityIndicator size="small" color={COLORS.primary} />
+                    )}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <TouchableOpacity
+            style={styles.bottomSheetCancel}
+            onPress={() => {
+              setStatusSheetVisible(false);
+              setSelectedTask(null);
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.bottomSheetCancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </Modal>
+      </Portal>
+
+      {/* Toast */}
+      <Snackbar
+        visible={snackVisible}
+        onDismiss={() => setSnackVisible(false)}
+        duration={2500}
+        style={styles.snackbar}
+        action={{
+          label: "OK",
+          onPress: () => setSnackVisible(false),
+          textColor: COLORS.primary,
+        }}
+      >
+        {snackMessage}
+      </Snackbar>
     </View>
   );
 }
@@ -343,39 +517,25 @@ const styles = StyleSheet.create({
   headerContent: {
     paddingHorizontal: SPACING.lg,
     paddingTop: SPACING.md,
+    paddingBottom: SPACING.sm,
   },
   headerTitle: {
     fontSize: 28,
     fontWeight: "800",
     color: "#FFFFFF",
     letterSpacing: -0.5,
-    marginBottom: SPACING.md,
   },
-  tabSwitcher: {
-    flexDirection: "row",
-    backgroundColor: "rgba(255,255,255,0.15)",
-    borderRadius: RADIUS.md,
-    padding: 3,
-  },
-  tabBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: SPACING.xs,
-    paddingVertical: SPACING.sm + 2,
-    borderRadius: RADIUS.sm + 2,
-  },
-  tabBtnActive: {
-    backgroundColor: "#FFFFFF",
-  },
-  tabBtnText: {
+  headerGreeting: {
     fontSize: 14,
-    fontWeight: "600",
-    color: "rgba(255,255,255,0.8)",
+    color: "rgba(255,255,255,0.75)",
+    fontWeight: "500",
+    marginTop: SPACING.xs,
   },
-  tabBtnTextActive: {
-    color: COLORS.primary,
+  headerDate: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.55)",
+    fontWeight: "500",
+    marginTop: 2,
   },
   scrollContent: {
     padding: SPACING.lg,
@@ -384,160 +544,200 @@ const styles = StyleSheet.create({
   loader: {
     marginVertical: SPACING.xxl,
   },
-  // Projects
-  projectCard: {
-    flexDirection: "row",
-    borderRadius: RADIUS.lg,
+
+  // Summary cards
+  summaryScroll: {
+    marginBottom: SPACING.lg,
+    marginHorizontal: -SPACING.lg,
+  },
+  summaryRow: {
+    paddingHorizontal: SPACING.lg,
+    gap: SPACING.sm,
+  },
+  summaryCard: {
+    width: SUMMARY_CARD_WIDTH,
+    minWidth: 80,
     backgroundColor: COLORS.surface,
-    marginBottom: SPACING.sm + 2,
-    overflow: "hidden",
-    ...SHADOWS.md,
-  },
-  projectAccent: {
-    width: 4,
-  },
-  projectContent: {
-    flex: 1,
-    padding: SPACING.md,
-  },
-  projectHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+    borderRadius: RADIUS.md,
+    padding: SPACING.sm + 2,
     alignItems: "center",
+    borderTopWidth: 3,
+    ...SHADOWS.sm,
+  },
+  summaryIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
     marginBottom: SPACING.xs,
   },
-  projectName: {
-    fontSize: 16,
+  summaryCount: {
+    fontSize: 22,
+    fontWeight: "800",
+    letterSpacing: -0.5,
+  },
+  summaryLabel: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: COLORS.textSecondary,
+    marginTop: 2,
+    textAlign: "center",
+  },
+
+  // Sections
+  section: {
+    marginBottom: SPACING.md,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: SPACING.sm + 2,
+    gap: SPACING.sm,
+  },
+  sectionAccent: {
+    width: 3,
+    height: 20,
+    borderRadius: 2,
+  },
+  sectionTitle: {
+    fontSize: 15,
     fontWeight: "700",
     color: COLORS.text,
     flex: 1,
-    marginRight: SPACING.sm,
     letterSpacing: -0.2,
   },
-  statusBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
+  sectionTitleDimmed: {
+    color: COLORS.textSecondary,
+  },
+  countBadge: {
     paddingHorizontal: SPACING.sm,
-    paddingVertical: 3,
+    paddingVertical: 2,
     borderRadius: RADIUS.full,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "capitalize",
-  },
-  projectDesc: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    lineHeight: 19,
-    marginBottom: SPACING.sm,
-  },
-  projectMeta: {
-    flexDirection: "row",
-    gap: SPACING.md,
-  },
-  metaItem: {
-    flexDirection: "row",
+    minWidth: 24,
     alignItems: "center",
-    gap: 4,
   },
-  metaText: {
+  countBadgeText: {
     fontSize: 12,
-    color: COLORS.textMuted,
-    fontWeight: "500",
-  },
-  // Filters
-  filterScroll: {
-    marginBottom: SPACING.md,
-    maxHeight: 44,
-  },
-  filterContent: {
-    gap: SPACING.sm,
-    paddingRight: SPACING.sm,
-  },
-  filterPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.sm,
-    borderRadius: RADIUS.full,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  filterPillActive: {
-    backgroundColor: COLORS.primaryLight,
-    borderColor: COLORS.primary,
-  },
-  filterDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-  },
-  filterPillText: {
-    fontSize: 13,
-    fontWeight: "500",
-    color: COLORS.textSecondary,
-  },
-  filterPillTextActive: {
-    color: COLORS.primary,
     fontWeight: "700",
   },
-  // Tasks
+  sectionContent: {
+    gap: SPACING.sm,
+  },
+
+  // Task card
   taskCard: {
     flexDirection: "row",
     alignItems: "center",
+    backgroundColor: COLORS.surface,
     borderRadius: RADIUS.lg,
     padding: SPACING.md,
-    backgroundColor: COLORS.surface,
-    marginBottom: SPACING.sm + 2,
     gap: SPACING.md,
     ...SHADOWS.sm,
   },
-  taskStatusIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: RADIUS.md,
-    alignItems: "center",
-    justifyContent: "center",
+  taskCardCompleted: {
+    opacity: 0.6,
   },
-  taskContent: {
+  priorityDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginLeft: 2,
+  },
+  taskCardContent: {
     flex: 1,
+  },
+  taskProject: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+    marginBottom: 3,
   },
   taskTitle: {
     fontSize: 15,
     fontWeight: "600",
     color: COLORS.text,
     letterSpacing: -0.2,
+    lineHeight: 20,
   },
-  taskProject: {
-    fontSize: 12,
+  taskTitleCompleted: {
+    textDecorationLine: "line-through",
     color: COLORS.textSecondary,
-    marginTop: 2,
   },
   taskMeta: {
     flexDirection: "row",
-    marginTop: SPACING.xs,
+    alignItems: "center",
+    marginTop: SPACING.xs + 2,
+    gap: SPACING.sm,
+  },
+  metaItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+  },
+  metaText: {
+    fontSize: 11,
+    fontWeight: "500",
+  },
+  storyPointsBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    backgroundColor: COLORS.accentLight,
+    paddingHorizontal: SPACING.xs + 2,
+    paddingVertical: 1,
+    borderRadius: RADIUS.xs,
+  },
+  storyPointsText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: COLORS.accent,
   },
   priorityBadge: {
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: 3,
+    paddingHorizontal: SPACING.xs + 3,
+    paddingVertical: 1,
     borderRadius: RADIUS.full,
   },
   priorityText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: "700",
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
-  // Empty
+  blockedReason: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.xs,
+    marginTop: SPACING.xs,
+    backgroundColor: COLORS.dangerLight,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.xs,
+    borderRadius: RADIUS.xs,
+  },
+  blockedReasonText: {
+    fontSize: 11,
+    color: COLORS.danger,
+    fontWeight: "500",
+    flex: 1,
+  },
+  quickDoneBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.successLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  // Empty state
   emptyCard: {
     borderRadius: RADIUS.lg,
     padding: SPACING.xl + 8,
     backgroundColor: COLORS.surface,
     alignItems: "center",
+    marginTop: SPACING.lg,
     ...SHADOWS.sm,
   },
   emptyTitle: {
@@ -551,5 +751,90 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.textSecondary,
     textAlign: "center",
+  },
+
+  // Bottom sheet
+  bottomSheet: {
+    backgroundColor: COLORS.surface,
+    borderTopLeftRadius: RADIUS.xl,
+    borderTopRightRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    paddingBottom: Platform.OS === "ios" ? SPACING.xxl : SPACING.lg,
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+  },
+  bottomSheetHandle: {
+    width: 36,
+    height: 4,
+    backgroundColor: COLORS.border,
+    borderRadius: 2,
+    alignSelf: "center",
+    marginBottom: SPACING.md,
+  },
+  bottomSheetTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: COLORS.text,
+    letterSpacing: -0.3,
+    marginBottom: SPACING.xs,
+  },
+  bottomSheetTaskName: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.md,
+  },
+  statusOptions: {
+    gap: SPACING.xs,
+  },
+  statusOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.md,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.md,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.background,
+  },
+  statusOptionActive: {
+    backgroundColor: COLORS.primaryLight,
+    borderWidth: 1,
+    borderColor: COLORS.primary + "30",
+  },
+  statusOptionIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: RADIUS.sm,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statusOptionLabel: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: COLORS.text,
+    flex: 1,
+  },
+  statusOptionLabelActive: {
+    color: COLORS.primary,
+  },
+  bottomSheetCancel: {
+    marginTop: SPACING.md,
+    paddingVertical: SPACING.md,
+    alignItems: "center",
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.borderLight,
+  },
+  bottomSheetCancelText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: COLORS.textSecondary,
+  },
+
+  // Snackbar
+  snackbar: {
+    backgroundColor: COLORS.text,
+    borderRadius: RADIUS.md,
+    marginBottom: Platform.OS === "ios" ? 90 : 70,
   },
 });

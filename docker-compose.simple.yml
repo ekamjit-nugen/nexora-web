@@ -160,6 +160,34 @@ services:
       retries: 5
     restart: unless-stopped
 
+  payroll-service:
+    build:
+      context: ./services/payroll-service
+      dockerfile: Dockerfile
+    container_name: nexora-payroll-service
+    ports:
+      - "3014:3014"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PAYROLL_SERVICE_PORT: 3014
+      MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/nexora_payroll?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
+      AUTH_SERVICE_URL: http://auth-service:3001
+      HR_SERVICE_URL: http://hr-service:3010
+      ATTENDANCE_SERVICE_URL: http://attendance-service:3011
+      LEAVE_SERVICE_URL: http://leave-service:3012
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - nexora-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:3014/api/v1/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   project-service:
     build:
       context: ./services/project-service

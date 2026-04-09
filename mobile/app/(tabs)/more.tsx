@@ -57,15 +57,16 @@ export default function MoreScreen() {
   };
 
   const accountItems: MenuItem[] = [
-    { id: "profile", label: "Profile", icon: "account-outline", subtitle: user?.email || "", color: COLORS.primary },
-    { id: "notifications", label: "Notifications", icon: "bell-outline", color: COLORS.warning },
-    { id: "settings", label: "Settings", icon: "cog-outline", color: COLORS.textSecondary },
+    { id: "profile", label: "Profile", icon: "account-outline", subtitle: user?.email || "", color: COLORS.primary, onPress: () => router.push("/profile") },
+    { id: "notifications", label: "Notifications", icon: "bell-outline", color: COLORS.warning, onPress: () => router.push("/notifications") },
+    { id: "settings", label: "Settings", icon: "cog-outline", color: COLORS.textSecondary, onPress: () => Alert.alert("Settings", "App settings coming in a future update.") },
   ];
 
   const workItems: MenuItem[] = [
-    { id: "directory", label: "Directory", icon: "account-group-outline", subtitle: "Browse team members", color: COLORS.accent },
-    { id: "timesheets", label: "Timesheets", icon: "table-clock", subtitle: "View and submit timesheets", color: COLORS.success },
-    { id: "policies", label: "Policies", icon: "shield-check-outline", subtitle: "Company policies", color: COLORS.secondary },
+    { id: "leave", label: "Leave", icon: "calendar-check-outline", subtitle: "Apply & manage leaves", color: COLORS.primary, onPress: () => router.push("/leave") },
+    { id: "directory", label: "Directory", icon: "account-group-outline", subtitle: "Browse team members", color: COLORS.accent, onPress: () => router.push("/directory") },
+    { id: "timesheets", label: "Timesheets", icon: "table-clock", subtitle: "View and submit timesheets", color: COLORS.success, onPress: () => router.push("/timesheets") },
+    { id: "policies", label: "Policies", icon: "shield-check-outline", subtitle: "Company policies", color: COLORS.secondary, onPress: () => router.push("/policies") },
   ];
 
   const orgItems: MenuItem[] = [

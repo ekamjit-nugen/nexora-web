@@ -6,6 +6,7 @@ import {
   RefreshControl,
   TouchableOpacity,
   Dimensions,
+  Alert,
 } from "react-native";
 import {
   Text,
@@ -16,8 +17,9 @@ import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { useAuth } from "../../lib/auth-context";
-import { attendanceApi } from "../../lib/api";
+import { attendanceApi, notificationApi, projectApi, taskApi, leaveApi } from "../../lib/api";
 import { COLORS, SPACING, RADIUS, SHADOWS } from "../../lib/theme";
 
 const { width } = Dimensions.get("window");
@@ -31,7 +33,9 @@ const QUICK_ACTIONS = [
 
 export default function HomeScreen() {
   const { user, currentOrg } = useAuth();
+  const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
+  const [clockLoading, setClockLoading] = useState(false);
 
   const {
     data: todayData,
@@ -42,6 +46,19 @@ export default function HomeScreen() {
     queryFn: () => attendanceApi.getToday(),
     retry: 1,
   });
+
+  const { data: unreadData } = useQuery({
+    queryKey: ["notifications", "unread-count"],
+    queryFn: () => notificationApi.getUnreadCount(),
+    refetchInterval: 30000,
+    retry: 1,
+  });
+
+  const { data: projectsData } = useQuery({ queryKey: ["projects"], queryFn: () => projectApi.getAll(), retry: 1 });
+  const { data: tasksData } = useQuery({ queryKey: ["tasks", "my-work"], queryFn: () => taskApi.getMyWork(), retry: 1 });
+  const { data: leaveBalanceData } = useQuery({ queryKey: ["leaves", "balance"], queryFn: () => leaveApi.getBalance(), retry: 1 });
+
+  const unreadCount = unreadData?.data?.count ?? 0;
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -78,6 +95,8 @@ export default function HomeScreen() {
   };
 
   const handleClockAction = async () => {
+    if (clockLoading) return;
+    setClockLoading(true);
     try {
       if (isCheckedIn) {
         await attendanceApi.checkOut();
@@ -86,7 +105,9 @@ export default function HomeScreen() {
       }
       refetchToday();
     } catch (err: any) {
-      // Error will be visible through refetch
+      Alert.alert("Error", err.message || "Failed to record attendance. Please try again.");
+    } finally {
+      setClockLoading(false);
     }
   };
 
@@ -120,10 +141,30 @@ export default function HomeScreen() {
                   </Text>
                   <Text style={styles.date}>{formatDate()}</Text>
                 </View>
-                <View style={styles.avatarCircle}>
-                  <Text style={styles.avatarText}>
-                    {(user?.firstName?.[0] || "U").toUpperCase()}
-                  </Text>
+                <View style={styles.headerActions}>
+                  <TouchableOpacity
+                    style={styles.bellButton}
+                    activeOpacity={0.7}
+                    onPress={() => router.push("/notifications")}
+                  >
+                    <MaterialCommunityIcons
+                      name="bell-outline"
+                      size={24}
+                      color="#FFFFFF"
+                    />
+                    {unreadCount > 0 && (
+                      <View style={styles.bellBadge}>
+                        <Text style={styles.bellBadgeText}>
+                          {unreadCount > 99 ? "99+" : unreadCount}
+                        </Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                  <View style={styles.avatarCircle}>
+                    <Text style={styles.avatarText}>
+                      {(user?.firstName?.[0] || "U").toUpperCase()}
+                    </Text>
+                  </View>
                 </View>
               </View>
               {currentOrg && (
@@ -206,7 +247,7 @@ export default function HomeScreen() {
                     <Text style={styles.timeLabel}>Check Out</Text>
                     <Text style={styles.timeValue}>
                       {formatTime(
-                        today?.sessions?.[today.sessions.length - 1]?.checkOut
+                        today?.sessions?.[today?.sessions?.length ? today.sessions.length - 1 : 0]?.checkOut
                       )}
                     </Text>
                   </View>
@@ -231,18 +272,24 @@ export default function HomeScreen() {
                 <TouchableOpacity
                   onPress={handleClockAction}
                   activeOpacity={0.8}
+                  disabled={clockLoading}
                   style={[
                     styles.clockButton,
                     isCheckedIn ? styles.clockOutButton : styles.clockInButton,
+                    clockLoading && { opacity: 0.7 },
                   ]}
                 >
-                  <MaterialCommunityIcons
-                    name={isCheckedIn ? "stop-circle-outline" : "play-circle-outline"}
-                    size={22}
-                    color="#FFFFFF"
-                  />
+                  {clockLoading ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <MaterialCommunityIcons
+                      name={isCheckedIn ? "stop-circle-outline" : "play-circle-outline"}
+                      size={22}
+                      color="#FFFFFF"
+                    />
+                  )}
                   <Text style={styles.clockButtonText}>
-                    {isCheckedIn ? "Clock Out" : "Clock In"}
+                    {clockLoading ? "Please wait..." : isCheckedIn ? "Clock Out" : "Clock In"}
                   </Text>
                 </TouchableOpacity>
               </>
@@ -257,6 +304,12 @@ export default function HomeScreen() {
                 key={action.key}
                 style={styles.actionCard}
                 activeOpacity={0.7}
+                onPress={() => {
+                  if (action.key === "leave") router.push("/leave/apply");
+                  else if (action.key === "time") router.push("/(tabs)/time");
+                  else if (action.key === "projects") router.push("/projects");
+                  else if (action.key === "directory") router.push("/directory");
+                }}
               >
                 <View style={[styles.actionIcon, { backgroundColor: action.bg }]}>
                   <MaterialCommunityIcons
@@ -274,15 +327,23 @@ export default function HomeScreen() {
           <Text style={styles.sectionTitle}>Overview</Text>
           <View style={styles.statsRow}>
             <View style={[styles.statCard, { borderLeftColor: COLORS.primary }]}>
-              <Text style={[styles.statNumber, { color: COLORS.primary }]}>--</Text>
+              <Text style={[styles.statNumber, { color: COLORS.primary }]}>{projectsData?.data?.length ?? "--"}</Text>
               <Text style={styles.statLabel}>Active Projects</Text>
             </View>
             <View style={[styles.statCard, { borderLeftColor: COLORS.accent }]}>
-              <Text style={[styles.statNumber, { color: COLORS.accent }]}>--</Text>
+              <Text style={[styles.statNumber, { color: COLORS.accent }]}>
+                {tasksData?.data
+                  ? (tasksData.data.overdue?.length || 0) + (tasksData.data.dueToday?.length || 0) + (tasksData.data.inProgress?.length || 0) + (tasksData.data.readyToStart?.length || 0)
+                  : "--"}
+              </Text>
               <Text style={styles.statLabel}>Open Tasks</Text>
             </View>
             <View style={[styles.statCard, { borderLeftColor: COLORS.success }]}>
-              <Text style={[styles.statNumber, { color: COLORS.success }]}>--</Text>
+              <Text style={[styles.statNumber, { color: COLORS.success }]}>
+                {leaveBalanceData?.data
+                  ? leaveBalanceData.data.reduce((sum: number, b: any) => sum + (b.remaining ?? b.balance ?? 0), 0)
+                  : "--"}
+              </Text>
               <Text style={styles.statLabel}>Leaves Left</Text>
             </View>
           </View>
@@ -333,6 +394,38 @@ const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.6)",
     marginTop: SPACING.xs,
     fontWeight: "500",
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.sm,
+  },
+  bellButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bellBadge: {
+    position: "absolute",
+    top: 2,
+    right: 2,
+    backgroundColor: COLORS.danger,
+    borderRadius: RADIUS.full,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "rgba(37, 99, 235, 0.9)",
+  },
+  bellBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#FFFFFF",
   },
   avatarCircle: {
     width: 48,

@@ -2,6 +2,10 @@ import * as SecureStore from "expo-secure-store";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_URL || "http://localhost:3005";
 
+if (!__DEV__ && API_BASE && !API_BASE.startsWith("https://")) {
+  console.warn("[Security] API_BASE should use HTTPS in production:", API_BASE);
+}
+
 interface ApiResponse<T = any> {
   success: boolean;
   data?: T;
@@ -12,6 +16,34 @@ interface ApiResponse<T = any> {
     total: number;
     totalPages: number;
   };
+}
+
+let refreshPromise: Promise<string> | null = null;
+
+async function refreshAccessToken(): Promise<string> {
+  const refreshToken = await SecureStore.getItemAsync("refreshToken");
+  if (!refreshToken) throw new Error("No refresh token");
+
+  const res = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refreshToken }),
+  });
+
+  if (!res.ok) {
+    await SecureStore.deleteItemAsync("accessToken");
+    await SecureStore.deleteItemAsync("refreshToken");
+    throw new Error("Session expired");
+  }
+
+  const json = await res.json();
+  const newAccess = json.data?.accessToken || json.accessToken;
+  const newRefresh = json.data?.refreshToken || json.refreshToken;
+
+  if (newAccess) await SecureStore.setItemAsync("accessToken", newAccess);
+  if (newRefresh) await SecureStore.setItemAsync("refreshToken", newRefresh);
+
+  return newAccess;
 }
 
 async function request<T = any>(
@@ -32,6 +64,37 @@ async function request<T = any>(
     ...options,
     headers,
   });
+
+  if (res.status === 401 && !endpoint.includes("/auth/refresh")) {
+    try {
+      if (!refreshPromise) {
+        refreshPromise = refreshAccessToken();
+      }
+      const newToken = await refreshPromise;
+      refreshPromise = null;
+
+      const retryHeaders: Record<string, string> = {
+        ...headers,
+        Authorization: `Bearer ${newToken}`,
+      };
+
+      const retryRes = await fetch(`${API_BASE}/api/v1${endpoint}`, {
+        ...options,
+        headers: retryHeaders,
+      });
+
+      const retryJson = await retryRes.json();
+
+      if (!retryRes.ok) {
+        throw new Error(retryJson.message || `Request failed with status ${retryRes.status}`);
+      }
+
+      return retryJson;
+    } catch (refreshError) {
+      refreshPromise = null;
+      throw refreshError;
+    }
+  }
 
   const json = await res.json();
 
@@ -95,6 +158,8 @@ export const attendanceApi = {
 };
 
 export const leaveApi = {
+  getById: (id: string) => request<any>(`/leaves/${id}`),
+
   getBalance: () => request<any[]>("/leaves/balance"),
 
   apply: (data: {
@@ -102,6 +167,7 @@ export const leaveApi = {
     startDate: string;
     endDate: string;
     reason: string;
+    halfDay?: { enabled: boolean; date?: string; half?: string };
   }) =>
     request<any>("/leaves", {
       method: "POST",
@@ -111,8 +177,24 @@ export const leaveApi = {
   getMyLeaves: (params?: { page?: number }) =>
     request<any[]>(`/leaves/my?page=${params?.page || 1}`),
 
-  cancel: (id: string) =>
-    request<any>(`/leaves/${id}/cancel`, { method: "PUT" }),
+  cancel: (id: string, reason?: string) =>
+    request<any>(`/leaves/${id}/cancel`, {
+      method: "PUT",
+      body: JSON.stringify({ reason: reason || "Cancelled by employee" }),
+    }),
+
+  getAll: (params?: { page?: number; status?: string }) =>
+    request<any[]>(
+      `/leaves?page=${params?.page || 1}${
+        params?.status ? `&status=${params.status}` : ""
+      }`
+    ),
+
+  approve: (id: string, data: { status: "approved" | "rejected"; rejectionReason?: string }) =>
+    request<any>(`/leaves/${id}/approve`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
 };
 
 export const projectApi = {
@@ -137,8 +219,137 @@ export const taskApi = {
       method: "PUT",
       body: JSON.stringify({ status }),
     }),
+
+  getMyWork: () => request<any>("/tasks/my-work"),
+};
+
+export const boardApi = {
+  getByProject: (projectId: string) =>
+    request<any[]>(`/boards/project/${projectId}`),
+
+  getById: (id: string) => request<any>(`/boards/${id}`),
+
+  moveTask: (
+    boardId: string,
+    taskId: string,
+    data: { fromColumnId: string; toColumnId: string; newIndex?: number }
+  ) =>
+    request(`/boards/${boardId}/tasks/${taskId}/move`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  getTasksByProject: (projectId: string, params?: { status?: string }) =>
+    request<any[]>(
+      `/tasks?projectId=${projectId}${
+        params?.status ? `&status=${params.status}` : ""
+      }`
+    ),
 };
 
 export const chatApi = {
   getConversations: () => request<any[]>("/chat/conversations"),
+
+  getConversation: (id: string) => request<any>(`/chat/conversations/${id}`),
+
+  getMessages: (conversationId: string, params?: { page?: number; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set("page", String(params.page));
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const query = qs.toString();
+    return request<any[]>(`/chat/conversations/${conversationId}/messages${query ? `?${query}` : ""}`);
+  },
+
+  sendMessage: (conversationId: string, content: string, type = "text", replyTo?: string) =>
+    request<any>(`/chat/conversations/${conversationId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content, type, replyTo }),
+    }),
+
+  markAsRead: (conversationId: string) =>
+    request(`/chat/conversations/${conversationId}/read`, { method: "POST" }),
+
+  getOnlineUsers: () =>
+    request<Array<{ _id: string; firstName: string; lastName: string }>>("/chat/users/online"),
+
+  createDirectConversation: (targetUserId: string) =>
+    request<any>("/chat/conversations/direct", {
+      method: "POST",
+      body: JSON.stringify({ targetUserId }),
+    }),
+
+  getUnread: () =>
+    request<{ count: number; unreadConversations?: Array<{ conversationId: string; count: number }> }>("/chat/unread"),
+};
+
+export const employeeApi = {
+  getAll: (params?: { page?: number; search?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set("page", String(params.page));
+    if (params?.search) qs.set("search", params.search);
+    const query = qs.toString();
+    return request<any[]>(`/employees${query ? `?${query}` : ""}`);
+  },
+};
+
+export const notificationApi = {
+  getNotifications: (page = 1, limit = 20) =>
+    request<any[]>(`/tasks/notifications?page=${page}&limit=${limit}`),
+
+  getUnreadCount: () =>
+    request<{ count: number }>("/tasks/notifications/unread-count"),
+
+  markAsRead: (id: string) =>
+    request<any>(`/tasks/notifications/${id}/read`, { method: "PUT" }),
+
+  markAllAsRead: () =>
+    request<any>("/tasks/notifications/read-all", { method: "PUT" }),
+};
+
+export const policyApi = {
+  getApplicable: () => request<any[]>('/policies/applicable'),
+  getById: (id: string) => request<any>(`/policies/${id}`),
+  acknowledge: (id: string) =>
+    request<any>(`/policies/${id}/acknowledge`, { method: 'POST' }),
+};
+
+export const timesheetApi = {
+  getMyTimesheets: (params?: { page?: number }) =>
+    request<any[]>(`/timesheets/my?page=${params?.page || 1}`),
+
+  getPending: (params?: { page?: number }) =>
+    request<any[]>(`/timesheets/pending?page=${params?.page || 1}`),
+
+  getById: (id: string) => request<any>(`/timesheets/${id}`),
+
+  create: (data: { period: { startDate: string; endDate: string; type: string } }) =>
+    request<any>("/timesheets", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  update: (id: string, data: any) =>
+    request<any>(`/timesheets/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  autoPopulate: (data: { startDate: string; endDate: string }) =>
+    request<any>("/timesheets/auto-populate", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  submit: (id: string) =>
+    request<any>(`/timesheets/${id}/submit`, {
+      method: "POST",
+    }),
+
+  review: (id: string, data: { status: string; reviewComment?: string }) =>
+    request<any>(`/timesheets/${id}/review`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  getStats: () => request<any>("/timesheets/stats"),
 };

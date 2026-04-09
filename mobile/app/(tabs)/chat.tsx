@@ -16,6 +16,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { chatApi } from "../../lib/api";
 import { COLORS, SPACING, RADIUS, SHADOWS } from "../../lib/theme";
 
@@ -44,6 +45,7 @@ function getAvatarColor(name: string): string {
 }
 
 export default function ChatScreen() {
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
 
@@ -102,7 +104,7 @@ export default function ChatScreen() {
     const avatarColor = getAvatarColor(item.name);
 
     return (
-      <TouchableOpacity activeOpacity={0.6} style={styles.conversationRow}>
+      <TouchableOpacity activeOpacity={0.6} style={styles.conversationRow} onPress={() => router.push(`/chat/${item._id}`)}>
         <View style={styles.avatarContainer}>
           <View style={[styles.avatar, { backgroundColor: avatarColor + "18" }]}>
             <Text style={[styles.avatarText, { color: avatarColor }]}>

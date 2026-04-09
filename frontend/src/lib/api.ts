@@ -2429,3 +2429,129 @@ export const integrationApi = {
   removeGitConfig: (provider?: string) =>
     request('/integrations/git/config' + (provider ? `?provider=${provider}` : ''), { method: 'DELETE' }),
 };
+
+export const payrollApi = {
+  // Salary Structures
+  createSalaryStructure: (data: Record<string, unknown>) =>
+    request("/salary-structures", { method: "POST", body: JSON.stringify(data) }),
+  getSalaryStructure: (employeeId: string) =>
+    request(`/salary-structures/${employeeId}`),
+  getSalaryHistory: (employeeId: string) =>
+    request(`/salary-structures/${employeeId}/history`),
+  updateSalaryStructure: (id: string, data: Record<string, unknown>) =>
+    request(`/salary-structures/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  submitForApproval: (id: string) =>
+    request(`/salary-structures/${id}/submit`, { method: "POST" }),
+  approveSalaryStructure: (id: string) =>
+    request(`/salary-structures/${id}/approve`, { method: "POST" }),
+  rejectSalaryStructure: (id: string, reason?: string) =>
+    request(`/salary-structures/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) }),
+  simulateCTC: (ctc: number, employeeId?: string) =>
+    request("/salary-structures/simulate", { method: "POST", body: JSON.stringify({ ctc, employeeId }) }),
+
+  // Payroll Runs
+  initiateRun: (month: number, year: number) =>
+    request("/payroll-runs", { method: "POST", body: JSON.stringify({ month, year }) }),
+  getRuns: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/payroll-runs${qs}`);
+  },
+  getRun: (id: string) => request(`/payroll-runs/${id}`),
+  processRun: (id: string) =>
+    request(`/payroll-runs/${id}/process`, { method: "POST" }),
+  updateRunStatus: (id: string, data: { status: string; notes?: string; paymentReference?: string }) =>
+    request(`/payroll-runs/${id}/status`, { method: "PUT", body: JSON.stringify(data) }),
+  getRunEntries: (id: string, params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/payroll-runs/${id}/entries${qs}`);
+  },
+  getRunEntry: (runId: string, employeeId: string) =>
+    request(`/payroll-runs/${runId}/entries/${employeeId}`),
+  overrideEntry: (runId: string, employeeId: string, data: Record<string, unknown>) =>
+    request(`/payroll-runs/${runId}/entries/${employeeId}`, { method: "PUT", body: JSON.stringify(data) }),
+  holdEntry: (runId: string, employeeId: string, reason: string) =>
+    request(`/payroll-runs/${runId}/entries/${employeeId}/hold`, { method: "POST", body: JSON.stringify({ reason }) }),
+  releaseEntry: (runId: string, employeeId: string) =>
+    request(`/payroll-runs/${runId}/entries/${employeeId}/release`, { method: "POST" }),
+  generatePayslips: (runId: string) =>
+    request(`/payroll-runs/${runId}/generate-payslips`, { method: "POST" }),
+
+  // Payslips
+  getMyPayslips: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/payslips/my${qs}`);
+  },
+  getPayslip: (id: string) => request(`/payslips/${id}`),
+
+  // Investment Declarations
+  submitDeclaration: (data: Record<string, unknown>) =>
+    request("/investment-declarations", { method: "POST", body: JSON.stringify(data) }),
+  getMyDeclarations: () => request("/investment-declarations/my"),
+  getDeclaration: (id: string) => request(`/investment-declarations/${id}`),
+  updateDeclaration: (id: string, data: Record<string, unknown>) =>
+    request(`/investment-declarations/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  verifyDeclaration: (id: string, data: { verified: boolean; remarks?: string }) =>
+    request(`/investment-declarations/${id}/verify`, { method: "POST", body: JSON.stringify(data) }),
+
+  // Expense Claims
+  createExpenseClaim: (data: Record<string, unknown>) =>
+    request("/expense-claims", { method: "POST", body: JSON.stringify(data) }),
+  getMyExpenseClaims: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/expense-claims/my${qs}`);
+  },
+  getAllExpenseClaims: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/expense-claims${qs}`);
+  },
+  getPendingExpenses: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/expense-claims/pending${qs}`);
+  },
+  getExpenseClaim: (id: string) => request(`/expense-claims/${id}`),
+  updateExpenseClaim: (id: string, data: Record<string, unknown>) =>
+    request(`/expense-claims/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  submitExpenseClaim: (id: string) =>
+    request(`/expense-claims/${id}/submit`, { method: "POST" }),
+  approveExpenseClaim: (id: string, data: { status: string; remarks?: string }) =>
+    request(`/expense-claims/${id}/approve`, { method: "POST", body: JSON.stringify(data) }),
+  cancelExpenseClaim: (id: string) =>
+    request(`/expense-claims/${id}`, { method: "DELETE" }),
+  getExpenseStats: () => request("/expense-claims/stats"),
+
+  // Onboarding
+  initiateOnboarding: (data: Record<string, unknown>) =>
+    request("/onboarding", { method: "POST", body: JSON.stringify(data) }),
+  getAllOnboardings: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/onboarding${qs}`);
+  },
+  getOnboarding: (employeeId: string) => request(`/onboarding/${employeeId}`),
+  completeChecklistItem: (employeeId: string, data: { taskId: string; notes?: string }) =>
+    request(`/onboarding/${employeeId}/checklist/complete`, { method: "POST", body: JSON.stringify(data) }),
+  uploadDocument: (employeeId: string, docIndex: number, url: string) =>
+    request(`/onboarding/${employeeId}/documents/${docIndex}/upload`, { method: "POST", body: JSON.stringify({ url }) }),
+  verifyDocument: (employeeId: string, docIndex: number, data: { status: string; rejectionReason?: string }) =>
+    request(`/onboarding/${employeeId}/documents/${docIndex}/verify`, { method: "POST", body: JSON.stringify(data) }),
+  confirmEmployee: (employeeId: string) =>
+    request(`/onboarding/${employeeId}/confirm`, { method: "POST" }),
+
+  // Offboarding
+  initiateOffboarding: (data: Record<string, unknown>) =>
+    request("/offboarding", { method: "POST", body: JSON.stringify(data) }),
+  getAllOffboardings: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/offboarding${qs}`);
+  },
+  getOffboarding: (employeeId: string) => request(`/offboarding/${employeeId}`),
+  updateClearance: (employeeId: string, data: { department: string; status: string; remarks?: string }) =>
+    request(`/offboarding/${employeeId}/clearance`, { method: "PUT", body: JSON.stringify(data) }),
+  submitExitInterview: (employeeId: string, data: Record<string, unknown>) =>
+    request(`/offboarding/${employeeId}/exit-interview`, { method: "POST", body: JSON.stringify(data) }),
+  calculateFnF: (employeeId: string) =>
+    request(`/offboarding/${employeeId}/calculate-fnf`, { method: "POST" }),
+  approveFnF: (employeeId: string, data?: { notes?: string }) =>
+    request(`/offboarding/${employeeId}/approve-fnf`, { method: "POST", body: JSON.stringify(data || {}) }),
+  generateLetters: (employeeId: string) =>
+    request(`/offboarding/${employeeId}/generate-letters`, { method: "POST" }),
+};

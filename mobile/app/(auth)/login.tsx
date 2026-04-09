@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   View,
   StyleSheet,
@@ -37,9 +37,18 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [otpSent, setOtpSent] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
 
   const otpInputRef = useRef<RNTextInput>(null);
   const fadeAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => (prev <= 1 ? 0 : prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
 
   const validateEmail = (value: string) => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -77,6 +86,7 @@ export default function LoginScreen() {
     try {
       await authApi.sendOtp(email.trim().toLowerCase());
       setOtpSent(true);
+      setResendCooldown(60);
       animateTransition(() => setStep("otp"));
       setTimeout(() => otpInputRef.current?.focus(), 400);
     } catch (err: any) {
@@ -125,6 +135,7 @@ export default function LoginScreen() {
 
     try {
       await authApi.sendOtp(email.trim().toLowerCase());
+      setResendCooldown(60);
       setError("");
     } catch (err: any) {
       setError(err.message || "Failed to resend OTP");
@@ -308,12 +319,12 @@ export default function LoginScreen() {
                     <Button
                       mode="text"
                       onPress={handleResendOtp}
-                      disabled={loading}
+                      disabled={loading || resendCooldown > 0}
                       compact
                       labelStyle={styles.linkText}
                       icon="refresh"
                     >
-                      Resend
+                      {resendCooldown > 0 ? `Resend (${resendCooldown}s)` : "Resend"}
                     </Button>
                     <Button
                       mode="text"
@@ -331,21 +342,21 @@ export default function LoginScreen() {
             </Animated.View>
 
             {/* Dev credentials hint */}
-            {/* DEV_ONLY */}
-            <View style={styles.devBanner}>
-              <MaterialCommunityIcons
-                name="bug-outline"
-                size={16}
-                color="rgba(255,255,255,0.7)"
-              />
-              <Text style={styles.devBannerTitle}>
-                DEV MODE — OTP: 000000
-              </Text>
-              <Text style={styles.devBannerText}>
-                admin@nexora.io · hr@nexora.io · dev@nexora.io
-              </Text>
-            </View>
-            {/* END DEV_ONLY */}
+            {__DEV__ && (
+              <View style={styles.devBanner}>
+                <MaterialCommunityIcons
+                  name="bug-outline"
+                  size={16}
+                  color="rgba(255,255,255,0.7)"
+                />
+                <Text style={styles.devBannerTitle}>
+                  DEV MODE — OTP: 000000
+                </Text>
+                <Text style={styles.devBannerText}>
+                  admin@nexora.io · hr@nexora.io · dev@nexora.io
+                </Text>
+              </View>
+            )}
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>

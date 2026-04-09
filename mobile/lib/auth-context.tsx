@@ -77,11 +77,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               : null;
             if (saved) setCurrentOrg(saved);
           }
-        } catch {
-          // Org fetch may fail if not multi-tenant yet
+        } catch (err) {
+          console.warn("[Auth] Failed to fetch organizations:", err);
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn("[Auth] Failed to fetch user, clearing tokens:", err);
       await SecureStore.deleteItemAsync("accessToken");
       await SecureStore.deleteItemAsync("refreshToken");
       setUser(null);
@@ -106,8 +107,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = async () => {
     try {
       await authApi.logout();
-    } catch {
-      // Ignore logout API errors
+    } catch (err) {
+      console.warn("[Auth] Logout API error (proceeding with local cleanup):", err);
     }
     await SecureStore.deleteItemAsync("accessToken");
     await SecureStore.deleteItemAsync("refreshToken");
@@ -122,8 +123,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await SecureStore.setItemAsync("currentOrgId", org._id);
     try {
       await orgApi.switchOrg(org._id);
-    } catch {
-      // Switch org may not be implemented yet
+    } catch (err) {
+      console.warn("[Auth] Failed to switch organization:", err);
     }
   };
 
