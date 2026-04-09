@@ -1,0 +1,505 @@
+"use client";
+
+import { useEffect, useState, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
+import { payrollApi } from "@/lib/api";
+import { Sidebar } from "@/components/sidebar";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { toast } from "sonner";
+
+// ---------------------------------------------------------------------------
+// Status configs
+// ---------------------------------------------------------------------------
+const jobStatusConfig: Record<string, { label: string; color: string }> = {
+  draft: { label: "Draft", color: "bg-gray-100 text-gray-600 border-gray-200" },
+  open: { label: "Open", color: "bg-green-50 text-green-700 border-green-200" },
+  on_hold: { label: "On Hold", color: "bg-amber-50 text-amber-700 border-amber-200" },
+  closed: { label: "Closed", color: "bg-gray-50 text-gray-500 border-gray-200" },
+  cancelled: { label: "Cancelled", color: "bg-red-50 text-red-700 border-red-200" },
+};
+const candidateStatusConfig: Record<string, { label: string; color: string }> = {
+  new: { label: "New", color: "bg-blue-50 text-blue-700 border-blue-200" },
+  screening: { label: "Screening", color: "bg-cyan-50 text-cyan-700 border-cyan-200" },
+  in_process: { label: "In Process", color: "bg-purple-50 text-purple-700 border-purple-200" },
+  offered: { label: "Offered", color: "bg-amber-50 text-amber-700 border-amber-200" },
+  hired: { label: "Hired", color: "bg-green-50 text-green-700 border-green-200" },
+  rejected: { label: "Rejected", color: "bg-red-50 text-red-700 border-red-200" },
+  withdrawn: { label: "Withdrawn", color: "bg-gray-50 text-gray-500 border-gray-200" },
+};
+const JOB_TYPE_OPTIONS = ["full_time", "part_time", "contract", "intern"] as const;
+const JOB_TYPE_LABELS: Record<string, string> = {
+  full_time: "Full Time", part_time: "Part Time", contract: "Contract", intern: "Intern",
+};
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+interface Job {
+  _id: string; title: string; location?: string; type?: string;
+  description?: string; requirements?: string[]; skills?: string[];
+  openings: number; filled?: number; status: string;
+  hiringManager?: string; createdAt?: string;
+}
+interface Candidate {
+  _id: string; name: string; email: string; phone?: string;
+  stage?: string; source?: string; status: string;
+  jobId?: string; jobTitle?: string; createdAt?: string;
+}
+
+const INPUT = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400";
+const SELECT = `${INPUT} bg-white`;
+type TabKey = "jobs" | "candidates";
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+export default function RecruitmentPage() {
+  const { user, loading: authLoading, hasOrgRole } = useAuth();
+  const router = useRouter();
+  const isManager = hasOrgRole("manager") || hasOrgRole("admin") || hasOrgRole("hr");
+
+  const [activeTab, setActiveTab] = useState<TabKey>("jobs");
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [selectedJobId, setSelectedJobId] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Post Job modal
+  const [showJobModal, setShowJobModal] = useState(false);
+  const emptyJobForm = { title: "", location: "", type: "full_time", description: "", requirements: "", skills: "", openings: "1", hiringManager: "" };
+  const [jobForm, setJobForm] = useState(emptyJobForm);
+
+  // Schedule Interview modal
+  const [showInterviewModal, setShowInterviewModal] = useState(false);
+  const [interviewCandidateId, setInterviewCandidateId] = useState("");
+  const emptyInterviewForm = { round: "1", type: "video", dateTime: "", interviewerIds: "" };
+  const [interviewForm, setInterviewForm] = useState(emptyInterviewForm);
+
+  // Make Offer modal
+  const [showOfferModal, setShowOfferModal] = useState(false);
+  const [offerCandidateId, setOfferCandidateId] = useState("");
+  const emptyOfferForm = { ctc: "", joiningDate: "", designation: "" };
+  const [offerForm, setOfferForm] = useState(emptyOfferForm);
+
+  // Auth guard
+  useEffect(() => {
+    if (!authLoading && !user) router.push("/login");
+    if (!authLoading && user && !isManager) router.push("/dashboard");
+  }, [user, authLoading, router, isManager]);
+
+  // Data fetching
+  const fetchJobs = useCallback(async () => {
+    if (!user) return;
+    try {
+      const res = await payrollApi.getJobPostings();
+      setJobs(Array.isArray(res.data) ? res.data : (res.data as any)?.jobs ?? []);
+    } catch (err: any) { toast.error(err.message || "Failed to load job postings"); }
+  }, [user]);
+
+  const fetchCandidates = useCallback(async () => {
+    if (!user) return;
+    try {
+      const params: Record<string, string> = {};
+      if (selectedJobId) params.jobId = selectedJobId;
+      if (statusFilter) params.status = statusFilter;
+      const res = await payrollApi.getCandidates(Object.keys(params).length ? params : undefined);
+      setCandidates(Array.isArray(res.data) ? res.data : (res.data as any)?.candidates ?? []);
+    } catch (err: any) { toast.error(err.message || "Failed to load candidates"); }
+  }, [user, selectedJobId, statusFilter]);
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
+    await Promise.all([fetchJobs(), fetchCandidates()]);
+    setLoading(false);
+  }, [fetchJobs, fetchCandidates]);
+
+  useEffect(() => { if (user) fetchAll(); }, [fetchAll, user]);
+
+  // Stats
+  const jobStats = useMemo(() => ({
+    openJobs: jobs.filter((j) => j.status === "open").length,
+    onHold: jobs.filter((j) => j.status === "on_hold").length,
+    totalCandidates: candidates.length,
+    filled: jobs.reduce((sum, j) => sum + (j.filled || 0), 0),
+  }), [jobs, candidates]);
+
+  // Handlers
+  const handleCreateJob = async () => {
+    if (!jobForm.title.trim()) { toast.error("Job title is required"); return; }
+    setSaving(true);
+    try {
+      const splitCsv = (s: string) => s ? s.split(",").map((x) => x.trim()).filter(Boolean) : [];
+      await payrollApi.createJobPosting({
+        title: jobForm.title.trim(), location: jobForm.location.trim() || undefined,
+        type: jobForm.type, description: jobForm.description.trim() || undefined,
+        requirements: splitCsv(jobForm.requirements), skills: splitCsv(jobForm.skills),
+        openings: parseInt(jobForm.openings, 10) || 1, hiringManager: jobForm.hiringManager.trim() || undefined,
+      });
+      toast.success("Job posting created");
+      setShowJobModal(false);
+      setJobForm(emptyJobForm);
+      await fetchJobs();
+    } catch (err: any) { toast.error(err.message || "Failed to create job posting"); }
+    finally { setSaving(false); }
+  };
+
+  const handleJobStatus = async (id: string, status: string) => {
+    setActionLoading(id);
+    try {
+      await payrollApi.updateJobStatus(id, status);
+      toast.success(`Job status updated to ${jobStatusConfig[status]?.label ?? status}`);
+      await fetchJobs();
+    } catch (err: any) { toast.error(err.message || "Failed to update job status"); }
+    finally { setActionLoading(null); }
+  };
+
+  const handleViewCandidates = (jobId: string) => { setSelectedJobId(jobId); setActiveTab("candidates"); };
+
+  const handleAdvance = async (id: string) => {
+    setActionLoading(id);
+    try {
+      await payrollApi.advanceCandidate(id);
+      toast.success("Candidate advanced to next stage");
+      await fetchCandidates();
+    } catch (err: any) { toast.error(err.message || "Failed to advance candidate"); }
+    finally { setActionLoading(null); }
+  };
+
+  const handleReject = async (id: string) => {
+    const reason = prompt("Enter rejection reason:");
+    if (!reason) return;
+    setActionLoading(id);
+    try {
+      await payrollApi.rejectCandidate(id, reason);
+      toast.success("Candidate rejected");
+      await fetchCandidates();
+    } catch (err: any) { toast.error(err.message || "Failed to reject candidate"); }
+    finally { setActionLoading(null); }
+  };
+
+  const handleScheduleInterview = async () => {
+    if (!interviewForm.dateTime) { toast.error("Date/time is required"); return; }
+    setSaving(true);
+    try {
+      const splitCsv = (s: string) => s ? s.split(",").map((x) => x.trim()).filter(Boolean) : [];
+      await payrollApi.scheduleInterview(interviewCandidateId, {
+        round: parseInt(interviewForm.round, 10) || 1, type: interviewForm.type,
+        dateTime: interviewForm.dateTime, interviewerIds: splitCsv(interviewForm.interviewerIds),
+      });
+      toast.success("Interview scheduled");
+      setShowInterviewModal(false);
+      setInterviewForm(emptyInterviewForm);
+      await fetchCandidates();
+    } catch (err: any) { toast.error(err.message || "Failed to schedule interview"); }
+    finally { setSaving(false); }
+  };
+
+  const handleMakeOffer = async () => {
+    if (!offerForm.ctc || !offerForm.joiningDate || !offerForm.designation) {
+      toast.error("All offer fields are required"); return;
+    }
+    setSaving(true);
+    try {
+      await payrollApi.createOffer(offerCandidateId, {
+        ctc: parseFloat(offerForm.ctc) * 100,
+        joiningDate: offerForm.joiningDate, designation: offerForm.designation.trim(),
+      });
+      toast.success("Offer created");
+      setShowOfferModal(false);
+      setOfferForm(emptyOfferForm);
+      await fetchCandidates();
+    } catch (err: any) { toast.error(err.message || "Failed to create offer"); }
+    finally { setSaving(false); }
+  };
+
+  const canMakeOffer = (stage?: string) => ["interview", "final_interview", "in_process", "offered"].includes(stage ?? "");
+
+  // Loading state
+  if (authLoading || !user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-800" />
+      </div>
+    );
+  }
+
+  const StatusBadge = ({ config, status }: { config: Record<string, { label: string; color: string }>; status: string }) => {
+    const sc = config[status] ?? { label: status, color: "bg-gray-100 text-gray-600 border-gray-200" };
+    return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${sc.color}`}>{sc.label}</span>;
+  };
+
+  const TH = ({ children, right }: { children: React.ReactNode; right?: boolean }) => (
+    <th className={`${right ? "text-right" : "text-left"} px-4 py-3 font-medium text-gray-500`}>{children}</th>
+  );
+
+  return (
+    <div className="min-h-screen flex bg-[#F8FAFC]">
+      <Sidebar />
+      <main className="flex-1 ml-[260px] p-8">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Recruitment</h1>
+            <p className="text-sm text-gray-500 mt-1">Manage job postings and candidates</p>
+          </div>
+          {activeTab === "jobs" && <Button onClick={() => setShowJobModal(true)}>Post New Job</Button>}
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 mb-6 bg-white rounded-lg border border-gray-200 p-1 w-fit">
+          {(["jobs", "candidates"] as TabKey[]).map((tab) => (
+            <button key={tab} onClick={() => setActiveTab(tab)} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === tab ? "bg-gray-900 text-white" : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"}`}>
+              {tab === "jobs" ? "Jobs" : "Candidates"}
+            </button>
+          ))}
+        </div>
+
+        {/* Jobs Tab */}
+        {activeTab === "jobs" && (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+              {[
+                { label: "Open Jobs", value: jobStats.openJobs, color: "text-green-700" },
+                { label: "On Hold", value: jobStats.onHold, color: "text-amber-700" },
+                { label: "Total Candidates", value: jobStats.totalCandidates, color: "text-blue-700" },
+                { label: "Positions Filled", value: jobStats.filled, color: "text-indigo-700" },
+              ].map((s) => (
+                <Card key={s.label}>
+                  <CardContent className="p-4">
+                    <p className="text-xs text-gray-500 uppercase tracking-wide">{s.label}</p>
+                    <p className={`text-2xl font-bold mt-1 ${s.color}`}>{s.value}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            <Card>
+              <CardContent className="p-0">
+                {loading ? <div className="p-8 text-center text-gray-400">Loading...</div>
+                : jobs.length === 0 ? <div className="p-8 text-center text-gray-400">No job postings found</div>
+                : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead><tr className="border-b border-gray-100 bg-gray-50/50">
+                        <TH>Title</TH><TH>Location</TH><TH>Type</TH><TH>Openings / Filled</TH><TH>Status</TH><TH right>Actions</TH>
+                      </tr></thead>
+                      <tbody>
+                        {jobs.map((job) => (
+                          <tr key={job._id} className="border-b border-gray-50 hover:bg-gray-50/50">
+                            <td className="px-4 py-3 font-medium text-gray-900">{job.title}</td>
+                            <td className="px-4 py-3 text-gray-600">{job.location || "\u2014"}</td>
+                            <td className="px-4 py-3 text-gray-600">{JOB_TYPE_LABELS[job.type ?? ""] ?? job.type ?? "\u2014"}</td>
+                            <td className="px-4 py-3 text-gray-600">{job.openings} / {job.filled ?? 0}</td>
+                            <td className="px-4 py-3"><StatusBadge config={jobStatusConfig} status={job.status} /></td>
+                            <td className="px-4 py-3 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                {job.status === "draft" && (
+                                  <Button variant="outline" size="sm" disabled={actionLoading === job._id} onClick={() => handleJobStatus(job._id, "open")}>Open</Button>
+                                )}
+                                {job.status === "open" && (
+                                  <>
+                                    <Button variant="outline" size="sm" disabled={actionLoading === job._id} onClick={() => handleJobStatus(job._id, "on_hold")}>Hold</Button>
+                                    <Button variant="outline" size="sm" disabled={actionLoading === job._id} onClick={() => handleJobStatus(job._id, "closed")}>Close</Button>
+                                  </>
+                                )}
+                                <Button variant="outline" size="sm" onClick={() => handleViewCandidates(job._id)}>View Candidates</Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </>
+        )}
+
+        {/* Candidates Tab */}
+        {activeTab === "candidates" && (
+          <>
+            <div className="flex items-center gap-4 mb-6">
+              <select value={selectedJobId} onChange={(e) => setSelectedJobId(e.target.value)} className={SELECT}>
+                <option value="">All Jobs</option>
+                {jobs.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}
+              </select>
+              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={SELECT}>
+                <option value="">All Statuses</option>
+                {Object.entries(candidateStatusConfig).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              </select>
+            </div>
+            <Card>
+              <CardContent className="p-0">
+                {loading ? <div className="p-8 text-center text-gray-400">Loading...</div>
+                : candidates.length === 0 ? <div className="p-8 text-center text-gray-400">No candidates found</div>
+                : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead><tr className="border-b border-gray-100 bg-gray-50/50">
+                        <TH>Name</TH><TH>Email</TH><TH>Stage</TH><TH>Source</TH><TH>Status</TH><TH right>Actions</TH>
+                      </tr></thead>
+                      <tbody>
+                        {candidates.map((c) => {
+                          const isTerminal = ["hired", "rejected", "withdrawn"].includes(c.status);
+                          return (
+                            <tr key={c._id} className="border-b border-gray-50 hover:bg-gray-50/50">
+                              <td className="px-4 py-3 font-medium text-gray-900">{c.name}</td>
+                              <td className="px-4 py-3 text-gray-600">{c.email}</td>
+                              <td className="px-4 py-3 text-gray-600">{c.stage ?? "\u2014"}</td>
+                              <td className="px-4 py-3 text-gray-600">{c.source ?? "\u2014"}</td>
+                              <td className="px-4 py-3"><StatusBadge config={candidateStatusConfig} status={c.status} /></td>
+                              <td className="px-4 py-3 text-right">
+                                {!isTerminal && (
+                                  <div className="flex items-center justify-end gap-2">
+                                    <Button variant="outline" size="sm" className="text-green-700 border-green-300 hover:bg-green-50" disabled={actionLoading === c._id} onClick={() => handleAdvance(c._id)}>Advance</Button>
+                                    <Button variant="outline" size="sm" className="text-red-700 border-red-300 hover:bg-red-50" disabled={actionLoading === c._id} onClick={() => handleReject(c._id)}>Reject</Button>
+                                    <Button variant="outline" size="sm" disabled={actionLoading === c._id} onClick={() => { setInterviewCandidateId(c._id); setShowInterviewModal(true); }}>Schedule Interview</Button>
+                                    {canMakeOffer(c.stage) && (
+                                      <Button variant="outline" size="sm" className="text-indigo-700 border-indigo-300 hover:bg-indigo-50" disabled={actionLoading === c._id} onClick={() => { setOfferCandidateId(c._id); setShowOfferModal(true); }}>Make Offer</Button>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </>
+        )}
+
+        {/* Post New Job Modal */}
+        {showJobModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+              <div className="p-6 border-b border-gray-100">
+                <h2 className="text-lg font-semibold text-gray-900">Post New Job</h2>
+              </div>
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Title *</label>
+                  <input type="text" value={jobForm.title} onChange={(e) => setJobForm((f) => ({ ...f, title: e.target.value }))} className={INPUT} placeholder="e.g. Senior Frontend Developer" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+                    <input type="text" value={jobForm.location} onChange={(e) => setJobForm((f) => ({ ...f, location: e.target.value }))} className={INPUT} placeholder="e.g. Bangalore" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                    <select value={jobForm.type} onChange={(e) => setJobForm((f) => ({ ...f, type: e.target.value }))} className={SELECT}>
+                      {JOB_TYPE_OPTIONS.map((t) => <option key={t} value={t}>{JOB_TYPE_LABELS[t]}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                  <textarea value={jobForm.description} onChange={(e) => setJobForm((f) => ({ ...f, description: e.target.value }))} rows={3} className={INPUT} placeholder="Job description..." />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Requirements (comma-separated)</label>
+                  <input type="text" value={jobForm.requirements} onChange={(e) => setJobForm((f) => ({ ...f, requirements: e.target.value }))} className={INPUT} placeholder="e.g. 3+ years React, TypeScript" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Skills (comma-separated)</label>
+                  <input type="text" value={jobForm.skills} onChange={(e) => setJobForm((f) => ({ ...f, skills: e.target.value }))} className={INPUT} placeholder="e.g. React, Node.js, PostgreSQL" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Openings</label>
+                    <input type="number" min="1" value={jobForm.openings} onChange={(e) => setJobForm((f) => ({ ...f, openings: e.target.value }))} className={INPUT} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Hiring Manager ID</label>
+                    <input type="text" value={jobForm.hiringManager} onChange={(e) => setJobForm((f) => ({ ...f, hiringManager: e.target.value }))} className={INPUT} placeholder="Manager user ID" />
+                  </div>
+                </div>
+              </div>
+              <div className="p-6 border-t border-gray-100 flex justify-end gap-3">
+                <Button variant="outline" onClick={() => setShowJobModal(false)} disabled={saving}>Cancel</Button>
+                <Button onClick={handleCreateJob} disabled={saving}>{saving ? "Creating..." : "Create"}</Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Schedule Interview Modal */}
+        {showInterviewModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+              <div className="p-6 border-b border-gray-100">
+                <h2 className="text-lg font-semibold text-gray-900">Schedule Interview</h2>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Round #</label>
+                    <input type="number" min="1" value={interviewForm.round} onChange={(e) => setInterviewForm((f) => ({ ...f, round: e.target.value }))} className={INPUT} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                    <select value={interviewForm.type} onChange={(e) => setInterviewForm((f) => ({ ...f, type: e.target.value }))} className={SELECT}>
+                      <option value="phone">Phone</option><option value="video">Video</option>
+                      <option value="onsite">On-site</option><option value="technical">Technical</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Date & Time *</label>
+                  <input type="datetime-local" value={interviewForm.dateTime} onChange={(e) => setInterviewForm((f) => ({ ...f, dateTime: e.target.value }))} className={INPUT} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Interviewer IDs (comma-separated)</label>
+                  <input type="text" value={interviewForm.interviewerIds} onChange={(e) => setInterviewForm((f) => ({ ...f, interviewerIds: e.target.value }))} className={INPUT} placeholder="user-id-1, user-id-2" />
+                </div>
+              </div>
+              <div className="p-6 border-t border-gray-100 flex justify-end gap-3">
+                <Button variant="outline" onClick={() => setShowInterviewModal(false)} disabled={saving}>Cancel</Button>
+                <Button onClick={handleScheduleInterview} disabled={saving}>{saving ? "Scheduling..." : "Schedule"}</Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Make Offer Modal */}
+        {showOfferModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+              <div className="p-6 border-b border-gray-100">
+                <h2 className="text-lg font-semibold text-gray-900">Make Offer</h2>
+              </div>
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">CTC (INR) *</label>
+                  <input type="number" min="0" step="0.01" value={offerForm.ctc} onChange={(e) => setOfferForm((f) => ({ ...f, ctc: e.target.value }))} className={INPUT} placeholder="e.g. 1200000" />
+                  <p className="text-xs text-gray-400 mt-1">Amount in rupees (stored as paise)</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Joining Date *</label>
+                  <input type="date" value={offerForm.joiningDate} onChange={(e) => setOfferForm((f) => ({ ...f, joiningDate: e.target.value }))} className={INPUT} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Designation *</label>
+                  <input type="text" value={offerForm.designation} onChange={(e) => setOfferForm((f) => ({ ...f, designation: e.target.value }))} className={INPUT} placeholder="e.g. Senior Engineer" />
+                </div>
+              </div>
+              <div className="p-6 border-t border-gray-100 flex justify-end gap-3">
+                <Button variant="outline" onClick={() => setShowOfferModal(false)} disabled={saving}>Cancel</Button>
+                <Button onClick={handleMakeOffer} disabled={saving}>{saving ? "Creating..." : "Create Offer"}</Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}

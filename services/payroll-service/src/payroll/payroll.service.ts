@@ -2189,8 +2189,8 @@ export class PayrollService {
       status: 'pending',
       startDate,
       targetCompletionDate,
-      checklist: checklist as any,
-      documents: this.getDefaultOnboardingDocuments() as any,
+      checklist: checklist,
+      documents: this.getDefaultOnboardingDocuments(),
       buddyId: dto.buddyId || null,
       welcomeKitSent: false,
       probationEndDate: dto.probationEndDate ? new Date(dto.probationEndDate) : null,
@@ -2457,10 +2457,10 @@ export class PayrollService {
       noticePeriodWaived: dto.noticePeriodWaived ?? false,
       noticePeriodShortfall: shortfall,
       noticeRecoveryAmount: null,
-      clearance: this.getDefaultClearanceDepartments() as any,
+      clearance: this.getDefaultClearanceDepartments(),
       exitInterview: {
         conducted: false,
-      } as any,
+      },
       fnfSettlement: {
         basicDue: 0,
         leaveEncashment: 0,
@@ -2471,7 +2471,7 @@ export class PayrollService {
         otherDeductions: 0,
         totalPayable: 0,
         status: 'pending',
-      } as any,
+      },
       experienceLetterGenerated: false,
       auditTrail: [
         {
@@ -2586,7 +2586,7 @@ export class PayrollService {
       feedback: dto.feedback ?? null,
       reasonForLeaving: dto.reasonForLeaving ?? null,
       wouldRecommend: dto.wouldRecommend ?? null,
-    } as any;
+    };
 
     offboarding.auditTrail.push({
       action: 'exit_interview_submitted',
@@ -2653,7 +2653,7 @@ export class PayrollService {
       approvedBy: null,
       approvedAt: null,
       paidAt: null,
-    } as any;
+    };
 
     offboarding.noticeRecoveryAmount = noticeRecovery;
 
@@ -3056,10 +3056,11 @@ export class PayrollService {
     const latestRuns = await this.payrollRunModel
       .find({ organizationId: orgId, isDeleted: false })
       .sort({ 'payPeriod.year': -1, 'payPeriod.month': -1 })
-      .limit(3);
+      .limit(3)
+      .lean();
 
     const totalPayrollCost = latestRuns.length > 0
-      ? (latestRuns[0] as any).summary?.totalNetPay || 0
+      ? latestRuns[0].summary?.totalNet || 0
       : 0;
 
     const latestSnapshot = await this.analyticsSnapshotModel
@@ -3199,12 +3200,13 @@ export class PayrollService {
         status: { $in: ['finalized', 'paid'] },
         createdAt: { $gte: twelveMonthsAgo },
       })
-      .sort({ 'payPeriod.year': 1, 'payPeriod.month': 1 });
+      .sort({ 'payPeriod.year': 1, 'payPeriod.month': 1 })
+      .lean();
 
     const monthlyCosts = runs.map((r) => ({
-      month: (r as any).payPeriod.month,
-      year: (r as any).payPeriod.year,
-      totalPayroll: (r as any).summary?.totalNetPay || 0,
+      month: r.payPeriod.month,
+      year: r.payPeriod.year,
+      totalPayroll: r.summary?.totalNet || 0,
     }));
 
     const totalPayrollAll = monthlyCosts.reduce((sum, c) => sum + c.totalPayroll, 0);
@@ -3362,10 +3364,45 @@ export class PayrollService {
         isDeleted: false,
         status: { $in: ['finalized', 'paid'] },
       })
-      .sort({ 'payPeriod.year': -1, 'payPeriod.month': -1 });
+      .sort({ 'payPeriod.year': -1, 'payPeriod.month': -1 })
+      .lean();
 
-    const totalPayroll = (latestRun as any)?.summary?.totalNetPay || 0;
+    const totalPayroll = latestRun?.summary?.totalNet || 0;
     const avgCostPerEmployee = activeCount > 0 ? totalPayroll / activeCount : 0;
+
+    // Build department breakdown from salary structures
+    const activeStructures = await this.salaryStructureModel.find({
+      organizationId: orgId,
+      status: 'active',
+      isDeleted: false,
+    }).lean();
+
+    const deptMap = new Map<string, { count: number; totalSalary: number }>();
+    for (const s of activeStructures) {
+      const dept = s.structureName?.split(' - ')[0] || 'General';
+      const existing = deptMap.get(dept) || { count: 0, totalSalary: 0 };
+      existing.count++;
+      existing.totalSalary += s.grossSalary || 0;
+      deptMap.set(dept, existing);
+    }
+    const departmentBreakdown = Array.from(deptMap.entries()).map(([dept, data]) => ({
+      department: dept,
+      count: data.count,
+      avgSalary: data.count > 0 ? Math.round(data.totalSalary / data.count / 12) : 0,
+    }));
+
+    // Classify exits as voluntary vs involuntary
+    const offboardings = await this.offboardingModel.find({
+      organizationId: orgId,
+      isDeleted: false,
+      status: { $nin: ['cancelled'] },
+    }).lean();
+    const voluntaryExits = offboardings.filter(
+      (o) => ['resignation', 'mutual_separation', 'retirement'].includes(o.type),
+    ).length;
+    const involuntaryExits = offboardings.filter(
+      (o) => ['termination'].includes(o.type),
+    ).length;
 
     const snapshotData = {
       organizationId: orgId,
@@ -3379,15 +3416,15 @@ export class PayrollService {
         exits: offboardingCount,
         contractors: 0,
       },
-      departmentBreakdown: [],
+      departmentBreakdown,
       attritionData: {
         monthlyRate: activeCount > 0 ? (offboardingCount / activeCount) * 100 : 0,
         annualizedRate: (() => {
           const mRate = activeCount > 0 ? offboardingCount / activeCount : 0;
           return Math.round((1 - Math.pow(1 - mRate, 12)) * 10000) / 100;
         })(),
-        voluntaryExits: 0,
-        involuntaryExits: 0,
+        voluntaryExits,
+        involuntaryExits,
       },
       costMetrics: {
         totalPayroll,
@@ -3681,7 +3718,7 @@ export class PayrollService {
 
     // Open next stage
     candidate.currentStage = nextStage.stageName;
-    candidate.stageHistory.push({ stage: nextStage.stageName, enteredAt: now } as any);
+    candidate.stageHistory.push({ stage: nextStage.stageName, enteredAt: now });
 
     // Update status based on stage type
     if (nextStage.stageType === 'offer') candidate.status = 'offered';
@@ -3748,7 +3785,7 @@ export class PayrollService {
       scheduledAt: new Date(dto.scheduledAt),
       interviewerIds: dto.interviewerIds,
       status: 'scheduled',
-    } as any);
+    });
 
     this.logger.log(`Interview round ${dto.round} scheduled for candidate ${id} by ${userId}`);
     return candidate.save();
@@ -3782,7 +3819,7 @@ export class PayrollService {
       recommendation: dto.recommendation,
       submittedBy: userId,
       submittedAt: new Date(),
-    } as any;
+    };
 
     this.logger.log(`Interview feedback submitted for candidate ${id} by ${userId}`);
     return candidate.save();
@@ -3817,7 +3854,7 @@ export class PayrollService {
       joiningDate: new Date(dto.joiningDate),
       designation: dto.designation,
       status: 'draft',
-    } as any;
+    };
 
     if (candidate.status !== 'offered') {
       candidate.status = 'offered';
