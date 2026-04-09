@@ -117,8 +117,8 @@ const globalLimiter = rateLimit({
   legacyHeaders: false,
 });
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5,
+  windowMs: parseInt(process.env.AUTH_RATE_LIMIT_WINDOW_MS || '900000', 10), // default 15 min
+  max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || '20', 10), // configurable, default 20
   message: { success: false, message: 'Too many authentication attempts. Please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,

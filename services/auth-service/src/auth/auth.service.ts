@@ -40,10 +40,10 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly MAX_LOGIN_ATTEMPTS = 5;
   private readonly LOCK_TIME = 30 * 60 * 1000; // 30 minutes
-  private readonly OTP_MAX_ATTEMPTS = 5;
-  private readonly OTP_LOCKOUT_MINUTES = 15;
-  private readonly OTP_RATE_LIMIT_PER_HOUR = 5;
-  private readonly OTP_RESEND_COOLDOWN_SECONDS = 30;
+  private readonly OTP_MAX_ATTEMPTS = parseInt(process.env.OTP_MAX_ATTEMPTS || '10', 10);
+  private readonly OTP_LOCKOUT_MINUTES = parseInt(process.env.OTP_LOCKOUT_MINUTES || '5', 10);
+  private readonly OTP_RATE_LIMIT_PER_HOUR = parseInt(process.env.OTP_RATE_LIMIT_PER_HOUR || '20', 10);
+  private readonly OTP_RESEND_COOLDOWN_SECONDS = parseInt(process.env.OTP_RESEND_COOLDOWN_SECONDS || '10', 10);
   private readonly mailTransporter: nodemailer.Transporter;
 
   constructor(
