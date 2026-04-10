@@ -99,7 +99,11 @@ async function request<T = any>(
   const json = await res.json();
 
   if (!res.ok) {
-    throw new Error(json.message || `Request failed with status ${res.status}`);
+    const errorMessage =
+      json.error?.message ||
+      json.message ||
+      `Request failed with status ${res.status}`;
+    throw new Error(errorMessage);
   }
 
   return json;

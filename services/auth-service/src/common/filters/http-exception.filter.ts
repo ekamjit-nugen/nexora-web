@@ -17,10 +17,12 @@ export class HttpExceptionFilterImpl implements ExceptionFilter {
       status = exception.getStatus();
       const exceptionResponse = exception.getResponse() as any;
 
-      code = exceptionResponse.code || this.statusToCode(status);
-      message = exceptionResponse.message || exception.message;
-      details = exceptionResponse.details;
-      fields = exceptionResponse.fields;
+      // Support both flat { code, message } and nested { error: { code, message } } formats
+      const nested = exceptionResponse?.error || {};
+      code = nested.code || exceptionResponse.code || this.statusToCode(status);
+      message = nested.message || exceptionResponse.message || exception.message;
+      details = nested.details || exceptionResponse.details;
+      fields = nested.fields || exceptionResponse.fields;
 
       // Handle class-validator validation errors
       if (status === HttpStatus.BAD_REQUEST && Array.isArray(exceptionResponse.message)) {
