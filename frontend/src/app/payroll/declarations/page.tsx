@@ -96,6 +96,15 @@ export default function InvestmentDeclarationsPage() {
     if (user) fetchDeclarations();
   }, [fetchDeclarations, user]);
 
+  // Pagination
+  const ITEMS_PER_PAGE = 20;
+  const [currentPage, setCurrentPage] = useState(1);
+  const totalPages = Math.ceil(declarations.length / ITEMS_PER_PAGE);
+  const paginatedDeclarations = declarations.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
+  // Reset page when declarations change
+  useEffect(() => { setCurrentPage(1); }, [declarations.length]);
+
   const resetForm = useCallback(() => {
     setFormFY(getCurrentFinancialYear());
     setFormRegime("old");
@@ -230,7 +239,7 @@ export default function InvestmentDeclarationsPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {declarations.map((decl) => (
+              {paginatedDeclarations.map((decl) => (
                 <div key={decl._id} className="bg-white rounded-xl border border-[#E2E8F0] p-5 hover:shadow-md transition-shadow">
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="text-[15px] font-semibold text-[#0F172A]">FY {decl.financialYear}</h3>
@@ -307,6 +316,29 @@ export default function InvestmentDeclarationsPage() {
                   )}
                 </div>
               ))}
+              {totalPages > 1 && (
+                <div className="md:col-span-2 flex items-center justify-between px-4 py-3 bg-white rounded-xl border border-[#E2E8F0]">
+                  <p className="text-[12px] text-[#64748B]">
+                    Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, declarations.length)} of {declarations.length}
+                  </p>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                      className="px-3 py-1.5 text-[12px] rounded-lg border border-[#E2E8F0] disabled:opacity-40 hover:bg-[#F8FAFC]"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-1.5 text-[12px] rounded-lg border border-[#E2E8F0] disabled:opacity-40 hover:bg-[#F8FAFC]"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

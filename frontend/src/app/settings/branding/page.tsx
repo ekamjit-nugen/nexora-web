@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { settingsApi } from "@/lib/api";
 import { toast } from "sonner";
+
+const MAX_LOGO_BYTES = 2 * 1024 * 1024; // 2MB
+const ALLOWED_LOGO_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/svg+xml"];
 
 const COLOR_PRESETS = [
   { name: "Nexora Blue", value: "#2E86C1" },
@@ -30,6 +33,16 @@ export default function BrandingPage() {
   const [letterHeader, setLetterHeader] = useState("");
   const [letterFooter, setLetterFooter] = useState("");
 
+  // Logo state
+  const [primaryLogo, setPrimaryLogo] = useState<string>("");
+  const [iconLogo, setIconLogo] = useState<string>("");
+  const [darkLogo, setDarkLogo] = useState<string>("");
+  const [logoUploading, setLogoUploading] = useState<string | null>(null);
+
+  const primaryLogoRef = useRef<HTMLInputElement>(null);
+  const iconLogoRef = useRef<HTMLInputElement>(null);
+  const darkLogoRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     if (!currentOrg) return;
     setLoading(true);
@@ -43,6 +56,9 @@ export default function BrandingPage() {
       setPayslipFooter(b.payslipFooter || "");
       setLetterHeader(b.letterHeader || "");
       setLetterFooter(b.letterFooter || "");
+      setPrimaryLogo(b.primaryLogo || b.logo || "");
+      setIconLogo(b.iconLogo || b.favicon || "");
+      setDarkLogo(b.darkLogo || "");
     }).catch(() => {}).finally(() => setLoading(false));
   }, [currentOrg]);
 
@@ -52,12 +68,80 @@ export default function BrandingPage() {
       await settingsApi.updateBranding({
         primaryColor, secondaryColor, sidebarColor, logoAlignment,
         payslipHeader, payslipFooter, letterHeader, letterFooter,
+        primaryLogo, iconLogo, darkLogo,
       });
       toast.success("Branding settings saved");
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to save");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const readFileAsDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("Failed to read file"));
+      reader.readAsDataURL(file);
+    });
+
+  const handleLogoSelect = async (
+    slot: "primary" | "icon" | "dark",
+    file: File | null,
+  ) => {
+    if (!file) return;
+    if (!ALLOWED_LOGO_TYPES.includes(file.type)) {
+      toast.error("Unsupported file type. Use PNG, JPG, or SVG.");
+      return;
+    }
+    if (file.size > MAX_LOGO_BYTES) {
+      toast.error("File too large. Maximum size is 2MB.");
+      return;
+    }
+    setLogoUploading(slot);
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      const patch: Record<string, unknown> = {};
+      if (slot === "primary") {
+        setPrimaryLogo(dataUrl);
+        patch.primaryLogo = dataUrl;
+      } else if (slot === "icon") {
+        setIconLogo(dataUrl);
+        patch.iconLogo = dataUrl;
+      } else {
+        setDarkLogo(dataUrl);
+        patch.darkLogo = dataUrl;
+      }
+      await settingsApi.updateBranding(patch);
+      toast.success("Logo uploaded");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to upload logo");
+    } finally {
+      setLogoUploading(null);
+    }
+  };
+
+  const handleLogoRemove = async (slot: "primary" | "icon" | "dark") => {
+    setLogoUploading(slot);
+    try {
+      const patch: Record<string, unknown> = {};
+      if (slot === "primary") {
+        setPrimaryLogo("");
+        patch.primaryLogo = "";
+      } else if (slot === "icon") {
+        setIconLogo("");
+        patch.iconLogo = "";
+      } else {
+        setDarkLogo("");
+        patch.darkLogo = "";
+      }
+      await settingsApi.updateBranding(patch);
+      toast.success("Logo removed");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove logo");
+    } finally {
+      setLogoUploading(null);
     }
   };
 
@@ -82,20 +166,77 @@ export default function BrandingPage() {
           Logo & Identity
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {["Primary Logo", "Icon / Favicon", "Dark Mode Logo"].map((label) => (
-            <div key={label}>
-              <label className={labelClass}>{label}</label>
-              <div className="border-2 border-dashed border-[#E2E8F0] rounded-xl p-8 text-center hover:border-[#2E86C1]/30 transition-colors cursor-pointer">
-                <div className="w-12 h-12 rounded-xl bg-[#F1F5F9] flex items-center justify-center mx-auto mb-3">
-                  <svg className="w-6 h-6 text-[#94A3B8]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-                  </svg>
-                </div>
-                <p className="text-xs text-[#94A3B8]">PNG, SVG, or JPG — max 2MB</p>
-                <span className="inline-flex items-center mt-2 px-3 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">Coming Soon</span>
+          {([
+            { slot: "primary" as const, label: "Primary Logo", value: primaryLogo, ref: primaryLogoRef },
+            { slot: "icon" as const, label: "Icon / Favicon", value: iconLogo, ref: iconLogoRef },
+            { slot: "dark" as const, label: "Dark Mode Logo", value: darkLogo, ref: darkLogoRef },
+          ]).map(({ slot, label, value, ref }) => {
+            const isUploading = logoUploading === slot;
+            const bgClass = slot === "dark" ? "bg-[#0F172A]" : "bg-[#F8FAFC]";
+            return (
+              <div key={slot}>
+                <label className={labelClass}>{label}</label>
+                <input
+                  ref={ref}
+                  type="file"
+                  accept="image/png,image/jpeg,image/svg+xml,image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    handleLogoSelect(slot, e.target.files?.[0] || null);
+                    if (e.target) e.target.value = "";
+                  }}
+                />
+                {value ? (
+                  <div className="border border-[#E2E8F0] rounded-xl overflow-hidden">
+                    <div className={`${bgClass} flex items-center justify-center p-4 h-32`}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={value}
+                        alt={label}
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    </div>
+                    <div className="flex border-t border-[#E2E8F0]">
+                      <button
+                        type="button"
+                        disabled={isUploading}
+                        onClick={() => ref.current?.click()}
+                        className="flex-1 py-2 text-xs font-medium text-[#2E86C1] hover:bg-[#EBF5FF] transition-colors disabled:opacity-50"
+                      >
+                        {isUploading ? "Uploading..." : "Replace"}
+                      </button>
+                      <div className="w-px bg-[#E2E8F0]" />
+                      <button
+                        type="button"
+                        disabled={isUploading}
+                        onClick={() => handleLogoRemove(slot)}
+                        className="flex-1 py-2 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={isUploading}
+                    onClick={() => ref.current?.click()}
+                    className="w-full border-2 border-dashed border-[#E2E8F0] rounded-xl p-8 text-center hover:border-[#2E86C1]/50 hover:bg-[#F8FAFC] transition-colors disabled:opacity-50"
+                  >
+                    <div className="w-12 h-12 rounded-xl bg-[#F1F5F9] flex items-center justify-center mx-auto mb-3">
+                      <svg className="w-6 h-6 text-[#94A3B8]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                      </svg>
+                    </div>
+                    <p className="text-xs font-medium text-[#334155]">
+                      {isUploading ? "Uploading..." : "Click to upload"}
+                    </p>
+                    <p className="text-xs text-[#94A3B8] mt-1">PNG, SVG, or JPG — max 2MB</p>
+                  </button>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         <div className="mt-5">
           <label className={labelClass}>Logo Alignment in Documents</label>

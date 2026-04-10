@@ -140,6 +140,15 @@ export default function OnboardingPage() {
   const inProgressCount = onboardings.filter((o) => o.status === "in_progress").length;
   const completedCount = onboardings.filter((o) => o.status === "completed").length;
 
+  // Pagination
+  const ITEMS_PER_PAGE = 20;
+  const [currentPage, setCurrentPage] = useState(1);
+  const totalPages = Math.ceil(onboardings.length / ITEMS_PER_PAGE);
+  const paginatedOnboardings = onboardings.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
+  // Reset page when data changes significantly
+  useEffect(() => { setCurrentPage(1); }, [onboardings.length]);
+
   // ---------------------------------------------------------------------------
   // Action handlers
   // ---------------------------------------------------------------------------
@@ -328,7 +337,7 @@ export default function OnboardingPage() {
           {/* Onboarding Cards */}
           {!loading && onboardings.length > 0 && (
             <div className="space-y-4">
-              {onboardings.map((rec) => {
+              {paginatedOnboardings.map((rec) => {
                 const stCfg = statusConfig[rec.status] || statusConfig.pending;
                 const progress = getProgress(rec);
                 const isExpanded = expandedId === rec._id;
@@ -585,6 +594,29 @@ export default function OnboardingPage() {
                   </div>
                 );
               })}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between px-4 py-3 bg-white rounded-xl border border-[#E2E8F0]">
+                  <p className="text-[12px] text-[#64748B]">
+                    Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, onboardings.length)} of {onboardings.length}
+                  </p>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                      className="px-3 py-1.5 text-[12px] rounded-lg border border-[#E2E8F0] disabled:opacity-40 hover:bg-[#F8FAFC]"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-1.5 text-[12px] rounded-lg border border-[#E2E8F0] disabled:opacity-40 hover:bg-[#F8FAFC]"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

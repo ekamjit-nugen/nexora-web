@@ -128,6 +128,19 @@ export default function RecruitmentPage() {
     filled: jobs.reduce((sum, j) => sum + (j.filled || 0), 0),
   }), [jobs, candidates]);
 
+  // Pagination
+  const ITEMS_PER_PAGE = 20;
+  const [jobsPage, setJobsPage] = useState(1);
+  const [candidatesPage, setCandidatesPage] = useState(1);
+  const jobsTotalPages = Math.ceil(jobs.length / ITEMS_PER_PAGE);
+  const candidatesTotalPages = Math.ceil(candidates.length / ITEMS_PER_PAGE);
+  const paginatedJobs = jobs.slice((jobsPage - 1) * ITEMS_PER_PAGE, jobsPage * ITEMS_PER_PAGE);
+  const paginatedCandidates = candidates.slice((candidatesPage - 1) * ITEMS_PER_PAGE, candidatesPage * ITEMS_PER_PAGE);
+
+  // Reset pages on filter/tab changes
+  useEffect(() => { setJobsPage(1); }, [activeTab]);
+  useEffect(() => { setCandidatesPage(1); }, [activeTab, selectedJobId, statusFilter]);
+
   // Handlers
   const handleCreateJob = async () => {
     if (!jobForm.title.trim()) { toast.error("Job title is required"); return; }
@@ -288,7 +301,7 @@ export default function RecruitmentPage() {
                         <TH>Title</TH><TH>Location</TH><TH>Type</TH><TH>Openings / Filled</TH><TH>Status</TH><TH right>Actions</TH>
                       </tr></thead>
                       <tbody>
-                        {jobs.map((job) => (
+                        {paginatedJobs.map((job) => (
                           <tr key={job._id} className="border-b border-gray-50 hover:bg-gray-50/50">
                             <td className="px-4 py-3 font-medium text-gray-900">{job.title}</td>
                             <td className="px-4 py-3 text-gray-600">{job.location || "\u2014"}</td>
@@ -313,6 +326,29 @@ export default function RecruitmentPage() {
                         ))}
                       </tbody>
                     </table>
+                    {jobsTotalPages > 1 && (
+                      <div className="flex items-center justify-between px-4 py-3 border-t border-[#E2E8F0]">
+                        <p className="text-[12px] text-[#64748B]">
+                          Showing {(jobsPage - 1) * ITEMS_PER_PAGE + 1} to {Math.min(jobsPage * ITEMS_PER_PAGE, jobs.length)} of {jobs.length}
+                        </p>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() => setJobsPage(p => Math.max(1, p - 1))}
+                            disabled={jobsPage === 1}
+                            className="px-3 py-1.5 text-[12px] rounded-lg border border-[#E2E8F0] disabled:opacity-40 hover:bg-[#F8FAFC]"
+                          >
+                            Previous
+                          </button>
+                          <button
+                            onClick={() => setJobsPage(p => Math.min(jobsTotalPages, p + 1))}
+                            disabled={jobsPage === jobsTotalPages}
+                            className="px-3 py-1.5 text-[12px] rounded-lg border border-[#E2E8F0] disabled:opacity-40 hover:bg-[#F8FAFC]"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </CardContent>
@@ -344,7 +380,7 @@ export default function RecruitmentPage() {
                         <TH>Name</TH><TH>Email</TH><TH>Stage</TH><TH>Source</TH><TH>Status</TH><TH right>Actions</TH>
                       </tr></thead>
                       <tbody>
-                        {candidates.map((c) => {
+                        {paginatedCandidates.map((c) => {
                           const isTerminal = ["hired", "rejected", "withdrawn"].includes(c.status);
                           return (
                             <tr key={c._id} className="border-b border-gray-50 hover:bg-gray-50/50">
@@ -370,6 +406,29 @@ export default function RecruitmentPage() {
                         })}
                       </tbody>
                     </table>
+                    {candidatesTotalPages > 1 && (
+                      <div className="flex items-center justify-between px-4 py-3 border-t border-[#E2E8F0]">
+                        <p className="text-[12px] text-[#64748B]">
+                          Showing {(candidatesPage - 1) * ITEMS_PER_PAGE + 1} to {Math.min(candidatesPage * ITEMS_PER_PAGE, candidates.length)} of {candidates.length}
+                        </p>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() => setCandidatesPage(p => Math.max(1, p - 1))}
+                            disabled={candidatesPage === 1}
+                            className="px-3 py-1.5 text-[12px] rounded-lg border border-[#E2E8F0] disabled:opacity-40 hover:bg-[#F8FAFC]"
+                          >
+                            Previous
+                          </button>
+                          <button
+                            onClick={() => setCandidatesPage(p => Math.min(candidatesTotalPages, p + 1))}
+                            disabled={candidatesPage === candidatesTotalPages}
+                            className="px-3 py-1.5 text-[12px] rounded-lg border border-[#E2E8F0] disabled:opacity-40 hover:bg-[#F8FAFC]"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </CardContent>

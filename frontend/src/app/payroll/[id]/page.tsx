@@ -105,6 +105,15 @@ export default function PayrollRunDetailPage() {
   const [expandedEntry, setExpandedEntry] = useState<string | null>(null);
   const [showAuditTrail, setShowAuditTrail] = useState(false);
 
+  // Pagination
+  const ITEMS_PER_PAGE = 20;
+  const [currentPage, setCurrentPage] = useState(1);
+  const totalPages = Math.ceil(entries.length / ITEMS_PER_PAGE);
+  const paginatedEntries = entries.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
+  // Reset page when entries change
+  useEffect(() => { setCurrentPage(1); }, [entries.length]);
+
   // Auth guard
   useEffect(() => {
     if (!authLoading && !user) router.push("/login");
@@ -451,7 +460,7 @@ export default function PayrollRunDetailPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {entries.map((entry) => {
+                    {paginatedEntries.map((entry) => {
                       const eCfg = entryStatusConfig[entry.status] || entryStatusConfig.draft;
                       const isExpanded = expandedEntry === entry._id;
                       const isEntryLoading = actionLoading === `hold-${entry.employeeId}` || actionLoading === `release-${entry.employeeId}`;
@@ -523,6 +532,29 @@ export default function PayrollRunDetailPage() {
                     })}
                   </tbody>
                 </table>
+              )}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between px-4 py-3 border-t border-[#E2E8F0]">
+                  <p className="text-[12px] text-[#64748B]">
+                    Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, entries.length)} of {entries.length}
+                  </p>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                      className="px-3 py-1.5 text-[12px] rounded-lg border border-[#E2E8F0] disabled:opacity-40 hover:bg-[#F8FAFC]"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-1.5 text-[12px] rounded-lg border border-[#E2E8F0] disabled:opacity-40 hover:bg-[#F8FAFC]"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
               )}
 
               {/* Expanded entry detail */}

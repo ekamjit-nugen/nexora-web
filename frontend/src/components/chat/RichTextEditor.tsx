@@ -1,6 +1,6 @@
 "use client";
 
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
 import Link from "@tiptap/extension-link";
@@ -10,6 +10,14 @@ import { common, createLowlight } from "lowlight";
 import { useCallback, useEffect, useRef, KeyboardEvent } from "react";
 
 const lowlight = createLowlight(common);
+
+// Module-level WeakMap to expose an editor's send handler for external triggers
+// (e.g. a floating send button). Avoids mutating the Tiptap Editor instance with
+// an untyped property.
+const editorSendHandlers = new WeakMap<Editor, () => void>();
+export function getEditorSendHandler(editor: Editor): (() => void) | undefined {
+  return editorSendHandlers.get(editor);
+}
 
 interface RichTextEditorProps {
   onSend: (content: string, plainText: string) => void;
@@ -64,11 +72,13 @@ export function RichTextEditor({ onSend, placeholder = "Type a message...", disa
     handleSendRef.current = handleSend;
   }, [handleSend]);
 
-  // Expose handleSend on editor instance for external triggers
+  // Expose handleSend via module-level WeakMap for external triggers
   useEffect(() => {
-    if (editor) {
-      (editor as any).__send = handleSend;
-    }
+    if (!editor) return;
+    editorSendHandlers.set(editor, handleSend);
+    return () => {
+      editorSendHandlers.delete(editor);
+    };
   }, [editor, handleSend]);
 
   if (!editor) return null;

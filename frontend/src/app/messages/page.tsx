@@ -8,7 +8,17 @@ import { chatApi, hrApi, uploadFileWithProgress } from "@/lib/api";
 import type { Conversation, ChatMessage, Employee, ChatSettings } from "@/lib/api";
 import { useGlobalSocket } from "@/lib/socket-context";
 import { useWebRTC } from "@/lib/hooks/useWebRTC";
-import { useCallContext } from "@/lib/call-context";
+import { useCallContext, type AnnotationStroke } from "@/lib/call-context";
+
+// VideoCallWindow attaches imperative annotation methods onto its internal canvas
+// element. We look them up via this structural type instead of using `as any`.
+interface AnnotationCanvas extends HTMLCanvasElement {
+  __clearCanvas?: () => void;
+  __drawRemoteStroke?: (stroke: AnnotationStroke) => void;
+}
+function getAnnotationCanvas(): AnnotationCanvas | null {
+  return document.querySelector<HTMLCanvasElement>("canvas") as AnnotationCanvas | null;
+}
 import {
   ThreadPanel, StatusSetter,
   GlobalSearch, FileBrowser, PinnedMessages, BookmarksList, AiSummaryPanel,
@@ -701,25 +711,20 @@ export default function MessagesPage() {
   }, [signaling]);
 
   const handleAnnotationClear = useCallback(() => {
-    const canvas = document.querySelector("canvas") as HTMLCanvasElement | null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (canvas && (canvas as any).__clearCanvas) (canvas as any).__clearCanvas();
+    const canvas = getAnnotationCanvas();
+    canvas?.__clearCanvas?.();
     signaling.sendAnnotationClear();
   }, [signaling]);
 
   // Listen for remote annotation strokes and clears
   useEffect(() => {
     const cleanupStroke = signaling.onAnnotationStroke((data) => {
-      const canvas = document.querySelector("canvas") as HTMLCanvasElement | null;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (canvas && (canvas as any).__drawRemoteStroke) {
-        (canvas as any).__drawRemoteStroke(data);
-      }
+      const canvas = getAnnotationCanvas();
+      canvas?.__drawRemoteStroke?.(data);
     });
     const cleanupClear = signaling.onAnnotationClear(() => {
-      const canvas = document.querySelector("canvas") as HTMLCanvasElement | null;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (canvas && (canvas as any).__clearCanvas) (canvas as any).__clearCanvas();
+      const canvas = getAnnotationCanvas();
+      canvas?.__clearCanvas?.();
     });
     return () => { cleanupStroke(); cleanupClear(); };
   }, [signaling]);

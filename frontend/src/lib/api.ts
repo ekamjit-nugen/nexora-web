@@ -655,6 +655,11 @@ export interface ChatMessage {
     question?: string;
     options?: string[];
   };
+  threadInfo?: {
+    replyCount: number;
+    lastReplyAt?: string;
+    participants?: string[];
+  };
   createdAt: string;
 }
 
@@ -730,7 +735,11 @@ export const chatApi = {
   // Threads
   getThreadReplies: (messageId: string, params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";
-    return request(`/chat/threads/${messageId}${qs}`);
+    return request<{
+      rootMessage: ChatMessage;
+      data: ChatMessage[];
+      pagination: { page: number; limit: number; total: number; pages: number };
+    }>(`/chat/threads/${messageId}${qs}`);
   },
   replyToThread: (messageId: string, content: string) =>
     request<ChatMessage>(`/chat/threads/${messageId}/reply`, { method: "POST", body: JSON.stringify({ content }) }),

@@ -121,6 +121,15 @@ export default function PayrollPage() {
   const filteredRuns =
     activeFilter === "all" ? runs : runs.filter((r) => r.status === activeFilter);
 
+  // Pagination
+  const ITEMS_PER_PAGE = 20;
+  const [currentPage, setCurrentPage] = useState(1);
+  const totalPages = Math.ceil(filteredRuns.length / ITEMS_PER_PAGE);
+  const paginatedRuns = filteredRuns.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
+  // Reset page when filter changes
+  useEffect(() => { setCurrentPage(1); }, [activeFilter]);
+
   const statCounts = {
     total: runs.length,
     draft: runs.filter((r) => r.status === "draft").length,
@@ -329,7 +338,7 @@ export default function PayrollPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRuns.map((run) => {
+                  {paginatedRuns.map((run) => {
                     const cfg = statusConfig[run.status] || statusConfig.draft;
                     const isLoading = actionLoading === run._id;
                     const gross = run.totalGrossPay ?? run.grossPay ?? 0;
@@ -448,6 +457,29 @@ export default function PayrollPage() {
                   })}
                 </tbody>
               </table>
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between px-4 py-3 border-t border-[#E2E8F0]">
+                  <p className="text-[12px] text-[#64748B]">
+                    Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, filteredRuns.length)} of {filteredRuns.length}
+                  </p>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                      className="px-3 py-1.5 text-[12px] rounded-lg border border-[#E2E8F0] disabled:opacity-40 hover:bg-[#F8FAFC]"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-1.5 text-[12px] rounded-lg border border-[#E2E8F0] disabled:opacity-40 hover:bg-[#F8FAFC]"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

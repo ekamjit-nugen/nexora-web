@@ -24,7 +24,7 @@ export function ThreadPanel({ rootMessage, employeeMap, currentUserId, onClose, 
     try {
       setLoading(true);
       const res = await chatApi.getThreadReplies(rootMessage._id);
-      setReplies((res.data as any)?.data || []);
+      setReplies(res.data?.data ?? []);
     } catch {
       setReplies([]);
     } finally {
@@ -56,7 +56,7 @@ export function ThreadPanel({ rootMessage, employeeMap, currentUserId, onClose, 
   };
 
   const rootSender = employeeMap[rootMessage.senderId];
-  const replyCount = (rootMessage as any).threadInfo?.replyCount || replies.length;
+  const replyCount = rootMessage.threadInfo?.replyCount || replies.length;
 
   return (
     <div className="flex flex-col h-full bg-white border-l border-slate-200 w-full md:w-[380px] md:min-w-[340px]">

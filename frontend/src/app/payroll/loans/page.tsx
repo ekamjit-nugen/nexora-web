@@ -190,6 +190,15 @@ export default function EmployeeLoansPage() {
   // ---------------------------------------------------------------------------
   const activeLoans = activeTab === "my" ? myLoans : allLoans;
 
+  // Pagination
+  const ITEMS_PER_PAGE = 20;
+  const [currentPage, setCurrentPage] = useState(1);
+  const totalPages = Math.ceil(activeLoans.length / ITEMS_PER_PAGE);
+  const paginatedLoans = activeLoans.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
+  // Reset page when tab changes
+  useEffect(() => { setCurrentPage(1); }, [activeTab]);
+
   // ---------------------------------------------------------------------------
   // Expand / Detail
   // ---------------------------------------------------------------------------
@@ -504,7 +513,7 @@ export default function EmployeeLoansPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {activeLoans.map((loan) => (
+                    {paginatedLoans.map((loan) => (
                       <>
                         <tr
                           key={loan._id}
@@ -663,6 +672,29 @@ export default function EmployeeLoansPage() {
                     ))}
                   </tbody>
                 </table>
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between px-4 py-3 border-t border-[#E2E8F0]">
+                    <p className="text-[12px] text-[#64748B]">
+                      Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, activeLoans.length)} of {activeLoans.length}
+                    </p>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                        disabled={currentPage === 1}
+                        className="px-3 py-1.5 text-[12px] rounded-lg border border-[#E2E8F0] disabled:opacity-40 hover:bg-[#F8FAFC]"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                        disabled={currentPage === totalPages}
+                        className="px-3 py-1.5 text-[12px] rounded-lg border border-[#E2E8F0] disabled:opacity-40 hover:bg-[#F8FAFC]"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

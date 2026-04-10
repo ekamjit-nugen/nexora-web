@@ -187,6 +187,15 @@ export default function OffboardingPage() {
     total: records.length,
   };
 
+  // Pagination
+  const ITEMS_PER_PAGE = 20;
+  const [currentPage, setCurrentPage] = useState(1);
+  const totalPages = Math.ceil(records.length / ITEMS_PER_PAGE);
+  const paginatedRecords = records.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
+  // Reset page when records change
+  useEffect(() => { setCurrentPage(1); }, [records.length]);
+
   // ---------------------------------------------------------------------------
   // Handlers
   // ---------------------------------------------------------------------------
@@ -375,7 +384,7 @@ export default function OffboardingPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {records.map((record) => {
+              {paginatedRecords.map((record) => {
                 const sCfg = statusConfig[record.status] || statusConfig.initiated;
                 const eCfg = exitTypeConfig[record.exitType] || exitTypeConfig.resignation;
                 const clearedCount = record.clearance?.filter((c) => c.status === "cleared").length ?? 0;
@@ -459,6 +468,29 @@ export default function OffboardingPage() {
                   </Card>
                 );
               })}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between px-4 py-3 bg-white rounded-xl border border-[#E2E8F0]">
+                  <p className="text-[12px] text-[#64748B]">
+                    Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, records.length)} of {records.length}
+                  </p>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                      className="px-3 py-1.5 text-[12px] rounded-lg border border-[#E2E8F0] disabled:opacity-40 hover:bg-[#F8FAFC]"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-1.5 text-[12px] rounded-lg border border-[#E2E8F0] disabled:opacity-40 hover:bg-[#F8FAFC]"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -9,6 +9,29 @@ import { getInitials, formatTime } from "@/lib/utils";
 import { chatApi } from "@/lib/api";
 import { toast } from "sonner";
 
+// ── Web Speech API minimal types (not in lib.dom by default) ──
+interface SpeechRecognitionResultItem { transcript: string }
+interface SpeechRecognitionResult { isFinal: boolean; [index: number]: SpeechRecognitionResultItem }
+interface SpeechRecognitionEvent {
+  resultIndex: number;
+  results: { length: number; [index: number]: SpeechRecognitionResult };
+}
+interface SpeechRecognitionInstance {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
+interface WindowWithSpeech {
+  SpeechRecognition?: SpeechRecognitionConstructor;
+  webkitSpeechRecognition?: SpeechRecognitionConstructor;
+}
+
 // ── Helpers ──
 
 function formatDateGroup(dateStr: string): string {
@@ -217,8 +240,7 @@ function MessageListInner({
                   const isDeleted = msg.isDeleted;
 
                   if (isSystem) {
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const cmdData = (msg as any).commandData;
+                    const cmdData = msg.commandData;
 
                     // Task card
                     if (cmdData?.action === "createTask") {
@@ -283,8 +305,7 @@ function MessageListInner({
 
                   // Poll message card
                   if (msg.type === "poll") {
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const cmdData = (msg as any).commandData;
+                    const cmdData = msg.commandData;
                     const question = cmdData?.question || msg.content;
                     const options: string[] = cmdData?.options || [];
                     return (
@@ -440,8 +461,8 @@ function MessageListInner({
                                 <button
                                   onClick={async () => {
                                     try {
-                                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                      const SpeechRecognitionApi = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+                                      const w = window as unknown as WindowWithSpeech;
+                                      const SpeechRecognitionApi = w.SpeechRecognition || w.webkitSpeechRecognition;
                                       if (!SpeechRecognitionApi) { toast.error("Speech recognition not supported in this browser"); return; }
                                       toast.info("Transcribing voice message...");
                                       const audioEl = new Audio(msg.fileUrl);
@@ -456,8 +477,7 @@ function MessageListInner({
                                       recognition.interimResults = false;
                                       recognition.lang = "en-US";
                                       let transcript = "";
-                                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                      recognition.onresult = (event: any) => {
+                                      recognition.onresult = (event: SpeechRecognitionEvent) => {
                                         for (let i = event.resultIndex; i < event.results.length; i++) {
                                           if (event.results[i].isFinal) transcript += event.results[i][0].transcript + " ";
                                         }
@@ -540,15 +560,13 @@ function MessageListInner({
                           </div>
                         )}
                         {/* Thread reply count */}
-                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                        {!isDeleted && (msg as any).threadInfo?.replyCount > 0 && (
+                        {!isDeleted && msg.threadInfo && msg.threadInfo.replyCount > 0 && (
                           <button
                             onClick={() => onThreadOpen(msg)}
                             className="flex items-center gap-1 mt-0.5 ml-1 text-[11px] text-blue-500 hover:text-blue-700 hover:underline"
                           >
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                            {(msg as any).threadInfo.replyCount} {(msg as any).threadInfo.replyCount === 1 ? "reply" : "replies"}
+                            {msg.threadInfo.replyCount} {msg.threadInfo.replyCount === 1 ? "reply" : "replies"}
                           </button>
                         )}
                         {/* Floating action bar — appears on hover */}

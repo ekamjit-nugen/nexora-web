@@ -79,7 +79,10 @@ export default function VoiceHuddle({ conversationId, currentUserId, employeeMap
   const startVAD = useCallback((stream: MediaStream, userId: string) => {
     try {
       if (!audioContextRef.current) {
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        const AudioCtx =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioCtx) return;
         audioContextRef.current = new AudioCtx();
       }
       const ctx = audioContextRef.current;
