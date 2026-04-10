@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { payrollApi } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
+import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
   BarChart,
@@ -287,6 +288,8 @@ export default function HRAnalyticsPage() {
   const [attendanceData, setAttendanceData] = useState<AttendancePoint[]>([]);
   const [forecast, setForecast] = useState<HeadcountForecast | null>(null);
   const [predictions, setPredictions] = useState<AttritionPrediction[]>([]);
+  const [livePredictions, setLivePredictions] = useState<any[]>([]);
+  const [loadingPredictions, setLoadingPredictions] = useState(false);
 
   // UI state
   const [loading, setLoading] = useState(true);
@@ -440,6 +443,25 @@ export default function HRAnalyticsPage() {
   useEffect(() => {
     fetchAllData();
   }, [fetchAllData]);
+
+  // ---------------------------------------------------------------------------
+  // Live ML attrition predictions (independently refreshable)
+  // ---------------------------------------------------------------------------
+  const fetchLivePredictions = useCallback(async () => {
+    setLoadingPredictions(true);
+    try {
+      const res = await payrollApi.getLiveAttritionPredictions();
+      setLivePredictions(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      // Fall back silently — use the snapshot predictions if live fails
+    } finally {
+      setLoadingPredictions(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchLivePredictions();
+  }, [fetchLivePredictions]);
 
   // ---------------------------------------------------------------------------
   // Generate snapshot
@@ -861,90 +883,134 @@ export default function HRAnalyticsPage() {
         </div>
 
         {/* ----------------------------------------------------------------- */}
-        {/* Attrition Risk Table                                               */}
+        {/* AI Attrition Risk Analysis                                         */}
         {/* ----------------------------------------------------------------- */}
-        <div className="bg-white rounded-xl border border-[#E2E8F0] p-6 shadow-sm mb-8">
-          <h3 className="text-[15px] font-semibold text-[#0F172A] mb-4">
-            Attrition Risk Predictions
-          </h3>
-          {loading ? (
-            <div className="space-y-3 animate-pulse">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="h-12 bg-[#F1F5F9] rounded" />
-              ))}
+        <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden mb-8">
+          <div className="px-6 py-4 border-b border-[#E2E8F0] flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-[15px] font-semibold text-[#0F172A]">AI Attrition Risk Analysis</h3>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200">
+                  ML Powered
+                </span>
+              </div>
+              <p className="text-[12px] text-[#64748B] mt-0.5">
+                6-factor weighted model analyzing tenure, compensation, attendance, and performance
+              </p>
             </div>
-          ) : predictions.length === 0 ? (
-            <div className="py-12">
-              <EmptyChart message="No attrition predictions available" />
+            <Button
+              onClick={fetchLivePredictions}
+              disabled={loadingPredictions}
+              variant="outline"
+              className="h-8 text-[12px]"
+            >
+              {loadingPredictions ? "Analyzing..." : "Refresh Analysis"}
+            </Button>
+          </div>
+
+          {/* Risk distribution stats */}
+          <div className="grid grid-cols-4 gap-px bg-[#E2E8F0] border-b border-[#E2E8F0]">
+            <div className="bg-white p-4">
+              <p className="text-[11px] text-[#64748B] uppercase font-medium">Total Analyzed</p>
+              <p className="text-[20px] font-bold text-[#0F172A] mt-1">{livePredictions.length}</p>
             </div>
-          ) : (
+            <div className="bg-white p-4">
+              <p className="text-[11px] text-[#64748B] uppercase font-medium">High Risk (60+)</p>
+              <p className="text-[20px] font-bold text-red-600 mt-1">
+                {livePredictions.filter(p => p.riskScore >= 60).length}
+              </p>
+            </div>
+            <div className="bg-white p-4">
+              <p className="text-[11px] text-[#64748B] uppercase font-medium">Medium Risk (30-59)</p>
+              <p className="text-[20px] font-bold text-amber-600 mt-1">
+                {livePredictions.filter(p => p.riskScore >= 30 && p.riskScore < 60).length}
+              </p>
+            </div>
+            <div className="bg-white p-4">
+              <p className="text-[11px] text-[#64748B] uppercase font-medium">Low Risk (&lt;30)</p>
+              <p className="text-[20px] font-bold text-emerald-600 mt-1">
+                {livePredictions.filter(p => p.riskScore < 30).length}
+              </p>
+            </div>
+          </div>
+
+          {/* Predictions table */}
+          {livePredictions.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-[12px]">
                 <thead>
-                  <tr className="border-b border-[#E2E8F0]">
-                    <th className="text-left py-3 px-4 text-xs font-medium text-[#64748B] uppercase tracking-wider">
-                      Employee ID
-                    </th>
-                    <th className="text-left py-3 px-4 text-xs font-medium text-[#64748B] uppercase tracking-wider">
-                      Risk Score
-                    </th>
-                    <th className="text-left py-3 px-4 text-xs font-medium text-[#64748B] uppercase tracking-wider">
-                      Top Factors
-                    </th>
-                    <th className="text-left py-3 px-4 text-xs font-medium text-[#64748B] uppercase tracking-wider">
-                      Predicted At
-                    </th>
+                  <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
+                    <th className="text-left px-5 py-3 font-semibold text-[#475569]">Employee ID</th>
+                    <th className="text-left px-5 py-3 font-semibold text-[#475569]">Risk Score</th>
+                    <th className="text-left px-5 py-3 font-semibold text-[#475569]">Risk Factors</th>
+                    <th className="text-left px-5 py-3 font-semibold text-[#475569]">Confidence</th>
                   </tr>
                 </thead>
-                <tbody>
-                  {predictions.map((pred, idx) => (
-                    <tr
-                      key={pred.employeeId + idx}
-                      className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC] transition-colors"
-                    >
-                      <td className="py-3 px-4">
-                        <span className="font-medium text-[#0F172A]">
-                          {pred.employeeName || pred.employeeId}
-                        </span>
-                        {pred.employeeName && (
-                          <span className="block text-xs text-[#94A3B8]">
-                            {pred.employeeId}
+                <tbody className="divide-y divide-[#F1F5F9]">
+                  {livePredictions.slice(0, 20).map((pred, idx) => (
+                    <tr key={pred.employeeId || idx} className="hover:bg-[#F8FAFC]">
+                      <td className="px-5 py-3 font-mono text-[#0F172A]">{pred.employeeId?.slice(-8) || "—"}</td>
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-24 bg-[#F1F5F9] rounded-full h-2 overflow-hidden">
+                            <div
+                              className={`h-full rounded-full ${
+                                pred.riskScore >= 60 ? "bg-red-500" :
+                                pred.riskScore >= 30 ? "bg-amber-500" : "bg-emerald-500"
+                              }`}
+                              style={{ width: `${pred.riskScore}%` }}
+                            />
+                          </div>
+                          <span className={`text-[13px] font-semibold ${
+                            pred.riskScore >= 60 ? "text-red-600" :
+                            pred.riskScore >= 30 ? "text-amber-600" : "text-emerald-600"
+                          }`}>
+                            {pred.riskScore}
                           </span>
-                        )}
+                        </div>
                       </td>
-                      <td className="py-3 px-4">
-                        <RiskBar score={pred.riskScore} />
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex flex-wrap gap-1.5">
-                          {pred.topFactors.map((factor, fIdx) => (
+                      <td className="px-5 py-3">
+                        <div className="flex flex-wrap gap-1">
+                          {(pred.factors || []).map((factor: string, i: number) => (
                             <span
-                              key={fIdx}
-                              className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-[#F1F5F9] text-[#475569] border border-[#E2E8F0]"
+                              key={i}
+                              className="text-[10px] px-2 py-0.5 rounded-full bg-[#F1F5F9] text-[#475569] border border-[#E2E8F0]"
                             >
                               {factor}
                             </span>
                           ))}
-                          {pred.topFactors.length === 0 && (
-                            <span className="text-xs text-[#94A3B8]">--</span>
-                          )}
                         </div>
                       </td>
-                      <td className="py-3 px-4 text-[#64748B]">
-                        {pred.predictedAt
-                          ? new Date(pred.predictedAt).toLocaleDateString("en-IN", {
-                              day: "numeric",
-                              month: "short",
-                              year: "numeric",
-                            })
-                          : "--"}
+                      <td className="px-5 py-3 text-[#64748B]">
+                        {pred.confidence ? `${Math.round(pred.confidence * 100)}%` : "—"}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+          ) : loadingPredictions ? (
+            <div className="text-center py-12 text-[#64748B]">
+              <div className="inline-block w-8 h-8 border-2 border-[#E2E8F0] border-t-[#2E86C1] rounded-full animate-spin mb-3" />
+              <p className="text-[13px]">Analyzing workforce patterns...</p>
+            </div>
+          ) : (
+            <div className="text-center py-12">
+              <svg className="w-12 h-12 mx-auto text-[#E2E8F0]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              <p className="text-[13px] text-[#64748B] mt-3">No attrition data available</p>
+              <p className="text-[11px] text-[#94A3B8] mt-1">Run analysis to generate predictions</p>
+            </div>
           )}
+
+          {/* Methodology footer */}
+          <div className="px-6 py-3 border-t border-[#E2E8F0] bg-[#F8FAFC]">
+            <p className="text-[11px] text-[#64748B]">
+              <strong>Model:</strong> Weighted scoring — Salary Gap (25%), Tenure (20%), Leave Frequency (15%),
+              Attendance (15%), Performance (15%), Team Attrition (10%). Scores are indicative, not definitive.
+            </p>
+          </div>
         </div>
       </main>
     </div>
