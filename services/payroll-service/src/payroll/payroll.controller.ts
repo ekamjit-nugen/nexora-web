@@ -21,6 +21,8 @@ import {
   RejectSalaryStructureDto, VerifyInvestmentDto, UploadDocumentDto,
   UpdateOnboardingStatusDto, UpdateOffboardingStatusDto,
   OnboardingQueryDto, OffboardingQueryDto,
+  GenerateForm16Dto, GeneratePFECRDto, GenerateESIReturnDto,
+  GenerateTDSQuarterlyDto, StatutoryReportQueryDto,
 } from './dto/index';
 
 @Controller()
@@ -929,5 +931,80 @@ export class PayrollController {
     const userId = req.user.userId;
     const result = await this.payrollService.getRecruitmentAnalytics(userId, orgId);
     return { success: true, message: 'Recruitment analytics retrieved', data: result };
+  }
+
+  // ── Statutory Reports ──
+
+  @Post('statutory-reports/form-16')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  @HttpCode(HttpStatus.CREATED)
+  async generateForm16(@Body() dto: GenerateForm16Dto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.generateForm16(dto, userId, orgId);
+    return { success: true, message: 'Form 16 generated successfully', data: result };
+  }
+
+  @Post('statutory-reports/pf-ecr')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'super_admin')
+  @HttpCode(HttpStatus.CREATED)
+  async generatePFECR(@Body() dto: GeneratePFECRDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.generatePFECR(dto, userId, orgId);
+    return { success: true, message: 'PF ECR generated successfully', data: result };
+  }
+
+  @Post('statutory-reports/esi-return')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'super_admin')
+  @HttpCode(HttpStatus.CREATED)
+  async generateESIReturn(@Body() dto: GenerateESIReturnDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.generateESIReturn(dto, userId, orgId);
+    return { success: true, message: 'ESI return generated successfully', data: result };
+  }
+
+  @Post('statutory-reports/tds-quarterly')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'super_admin')
+  @HttpCode(HttpStatus.CREATED)
+  async generateTDSQuarterly(@Body() dto: GenerateTDSQuarterlyDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.generateTDSQuarterly(dto, userId, orgId);
+    return { success: true, message: 'TDS quarterly return generated successfully', data: result };
+  }
+
+  @Get('statutory-reports/my/form-16')
+  @UseGuards(JwtAuthGuard)
+  async getMyForm16(@Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getMyForm16(userId, orgId);
+    return { success: true, message: 'Form 16 reports retrieved', data: result };
+  }
+
+  @Get('statutory-reports')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async listStatutoryReports(@Query() query: StatutoryReportQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.listStatutoryReports(query, userId, orgId);
+    return { success: true, message: 'Statutory reports retrieved', data: result };
+  }
+
+  @Get('statutory-reports/:id')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin', 'manager')
+  async getStatutoryReport(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getStatutoryReport(id, userId, orgId);
+    return { success: true, message: 'Statutory report retrieved', data: result };
   }
 }

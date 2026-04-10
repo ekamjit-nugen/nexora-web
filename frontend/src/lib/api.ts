@@ -2639,4 +2639,20 @@ export const payrollApi = {
   convertToEmployee: (id: string) =>
     request(`/candidates/${id}/convert-to-employee`, { method: "POST" }),
   getRecruitmentAnalytics: () => request("/recruitment/analytics"),
+
+  // Statutory Reports
+  generateForm16: (data: { employeeId: string; financialYear: string }) =>
+    request("/statutory-reports/form-16", { method: "POST", body: JSON.stringify(data) }),
+  generatePFECR: (data: { month: number; year: number }) =>
+    request("/statutory-reports/pf-ecr", { method: "POST", body: JSON.stringify(data) }),
+  generateESIReturn: (data: { month: number; year: number }) =>
+    request("/statutory-reports/esi-return", { method: "POST", body: JSON.stringify(data) }),
+  generateTDSQuarterly: (data: { quarter: number; year: number }) =>
+    request("/statutory-reports/tds-quarterly", { method: "POST", body: JSON.stringify(data) }),
+  listStatutoryReports: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/statutory-reports${qs}`);
+  },
+  getStatutoryReport: (id: string) => request(`/statutory-reports/${id}`),
+  getMyForm16: () => request("/statutory-reports/my/form-16"),
 };

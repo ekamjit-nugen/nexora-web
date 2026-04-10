@@ -20,6 +20,7 @@ import { IOffboarding } from './schemas/offboarding.schema';
 import { IAnalyticsSnapshot } from './schemas/analytics-snapshot.schema';
 import { IJobPosting } from './schemas/job-posting.schema';
 import { ICandidate } from './schemas/candidate.schema';
+import { IStatutoryReport } from './schemas/statutory-report.schema';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { ExternalServicesService } from './external-services.service';
 import {
@@ -58,6 +59,11 @@ import {
   InterviewFeedbackDto,
   CreateOfferDto,
   RejectCandidateDto,
+  GenerateForm16Dto,
+  GeneratePFECRDto,
+  GenerateESIReturnDto,
+  GenerateTDSQuarterlyDto,
+  StatutoryReportQueryDto,
 } from './dto/index';
 
 @Injectable()
@@ -77,6 +83,7 @@ export class PayrollService {
     @InjectModel('AnalyticsSnapshot') private analyticsSnapshotModel: Model<IAnalyticsSnapshot>,
     @InjectModel('JobPosting') private jobPostingModel: Model<IJobPosting>,
     @InjectModel('Candidate') private candidateModel: Model<ICandidate>,
+    @InjectModel('StatutoryReport') private statutoryReportModel: Model<IStatutoryReport>,
     private calculationService: PayrollCalculationService,
     private externalServices: ExternalServicesService,
   ) {}
@@ -3997,5 +4004,681 @@ export class PayrollService {
       candidatesByStatus: byStatus,
       avgTimeInStage: avgTime,
     };
+  }
+
+  // ===========================================================================
+  // Statutory Reports — Form 16 / PF ECR / ESI / TDS 24Q
+  // ===========================================================================
+
+  /**
+   * Parse "2025-2026" financial year string → { startDate, endDate, startYear, endYear }
+   * Indian FY runs April (month 4) of startYear → March (month 3) of endYear.
+   */
+  private parseFinancialYear(financialYear: string): {
+    startYear: number;
+    endYear: number;
+    startDate: Date;
+    endDate: Date;
+  } {
+    const match = /^(\d{4})-(\d{4})$/.exec(financialYear);
+    if (!match) {
+      throw new BadRequestException(
+        `Invalid financialYear format '${financialYear}'. Expected 'YYYY-YYYY' (e.g. '2025-2026').`,
+      );
+    }
+    const startYear = parseInt(match[1], 10);
+    const endYear = parseInt(match[2], 10);
+    if (endYear !== startYear + 1) {
+      throw new BadRequestException(
+        `Invalid financialYear '${financialYear}'. End year must be exactly one more than start year.`,
+      );
+    }
+    return {
+      startYear,
+      endYear,
+      startDate: new Date(Date.UTC(startYear, 3, 1)), // 1 April
+      endDate: new Date(Date.UTC(endYear, 2, 31, 23, 59, 59, 999)), // 31 March
+    };
+  }
+
+  // ===========================================================================
+  // generateForm16 — Employee annual tax statement under section 203 of IT Act
+  // ===========================================================================
+  async generateForm16(
+    dto: GenerateForm16Dto,
+    userId: string,
+    orgId: string,
+  ): Promise<IStatutoryReport> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    this.logger.log(
+      `Generating Form 16 for employee ${dto.employeeId} FY ${dto.financialYear} by ${userId}`,
+    );
+
+    const fy = this.parseFinancialYear(dto.financialYear);
+
+    // Find all payslips covering FY months — April of startYear through March of endYear
+    const payslips = await this.payslipModel.find({
+      organizationId: orgId,
+      employeeId: dto.employeeId,
+      isDeleted: false,
+      $or: [
+        { 'payPeriod.year': fy.startYear, 'payPeriod.month': { $gte: 4 } },
+        { 'payPeriod.year': fy.endYear, 'payPeriod.month': { $lte: 3 } },
+      ],
+    });
+
+    if (!payslips.length) {
+      throw new NotFoundException(
+        `No payslips found for employee ${dto.employeeId} in FY ${dto.financialYear}`,
+      );
+    }
+
+    // Aggregate annual totals from individual payslips
+    let grossEarnings = 0;
+    let totalDeductions = 0;
+    let totalPFEmployee = 0;
+    let totalESIEmployee = 0;
+    let totalTDS = 0;
+    let totalProfessionalTax = 0;
+    let basicSum = 0;
+    let hraSum = 0;
+    let otherAllowancesSum = 0;
+
+    for (const slip of payslips) {
+      grossEarnings += slip.totals?.grossEarnings || 0;
+      totalDeductions += slip.totals?.totalDeductions || 0;
+
+      for (const e of slip.earnings || []) {
+        const code = (e.code || '').toUpperCase();
+        if (code === 'BASIC') basicSum += e.amount || 0;
+        else if (code === 'HRA') hraSum += e.amount || 0;
+        else otherAllowancesSum += e.amount || 0;
+      }
+
+      for (const d of slip.deductions || []) {
+        const code = (d.code || '').toUpperCase();
+        if (code === 'PF' || code === 'EPF') totalPFEmployee += d.amount || 0;
+        else if (code === 'ESI') totalESIEmployee += d.amount || 0;
+        else if (code === 'TDS') totalTDS += d.amount || 0;
+        else if (code === 'PT' || code === 'PTAX') totalProfessionalTax += d.amount || 0;
+      }
+    }
+
+    // Fetch verified investment declarations for FY — drives Chapter VI-A deductions
+    const declaration = await this.investmentDeclarationModel.findOne({
+      organizationId: orgId,
+      employeeId: dto.employeeId,
+      financialYear: dto.financialYear,
+      isDeleted: false,
+    });
+
+    const regime = declaration?.regime || 'old';
+    const standardDeduction = regime === 'new' ? 75000 : 50000;
+
+    // Chapter VI-A deductions capped per section limits (old regime only)
+    let section80C = 0;
+    let section80D = 0;
+    let section80E = 0;
+    let section80G = 0;
+    let section24b = 0;
+
+    if (declaration && regime === 'old') {
+      for (const sec of declaration.sections || []) {
+        const declaredTotal = (sec.items || []).reduce(
+          (s, it) => s + (it.verifiedAmount || it.declaredAmount || 0),
+          0,
+        );
+        if (sec.section === '80C') section80C = Math.min(declaredTotal, 150000);
+        else if (sec.section === '80D') section80D = Math.min(declaredTotal, 100000);
+        else if (sec.section === '80E') section80E = declaredTotal;
+        else if (sec.section === '80G') section80G = declaredTotal;
+        else if (sec.section === '24b') section24b = Math.min(declaredTotal, 200000);
+      }
+    }
+
+    const totalChapterVIA =
+      regime === 'old' ? section80C + section80D + section80E + section80G : 0;
+
+    // Gross total income after standard deduction, professional tax, and housing loan interest
+    const grossTotalIncome = Math.max(
+      0,
+      grossEarnings - standardDeduction - totalProfessionalTax - section24b,
+    );
+
+    // Taxable income after Chapter VI-A
+    const taxableIncome = Math.max(0, grossTotalIncome - totalChapterVIA);
+
+    // Fetch employee + org snapshots from most recent payslip for Part A
+    const latestSlip = payslips[payslips.length - 1];
+    const employeeSnapshot = latestSlip.employeeSnapshot || ({} as any);
+    const organizationSnapshot = latestSlip.organizationSnapshot || ({} as any);
+
+    const data = {
+      // Part A — Employer/Employee identification & TDS summary
+      partA: {
+        employerName: organizationSnapshot.name || null,
+        employerPAN: organizationSnapshot.pan || null,
+        employerTAN: organizationSnapshot.tan || null,
+        employerAddress: organizationSnapshot.address || null,
+        employeeName: employeeSnapshot.name || null,
+        employeePAN: employeeSnapshot.pan || null,
+        employeeDesignation: employeeSnapshot.designation || null,
+        assessmentYear: `${fy.endYear}-${fy.endYear + 1}`,
+        financialYear: dto.financialYear,
+        periodFrom: fy.startDate,
+        periodTo: fy.endDate,
+        totalSalaryPaid: grossEarnings,
+        totalTDSDeducted: totalTDS,
+        quarterlyTDS: [], // populated via Form 24Q cross-reference if needed
+      },
+      // Part B — Salary breakup, exemptions, deductions, tax computation
+      partB: {
+        regime,
+        salaryBreakdown: {
+          basic: basicSum,
+          hra: hraSum,
+          otherAllowances: otherAllowancesSum,
+          grossSalary: grossEarnings,
+        },
+        exemptions: {
+          standardDeduction,
+          professionalTax: totalProfessionalTax,
+          housingLoanInterest: section24b,
+        },
+        chapterVIADeductions: {
+          section80C,
+          section80D,
+          section80E,
+          section80G,
+          total: totalChapterVIA,
+        },
+        grossTotalIncome,
+        taxableIncome,
+        taxComputed: totalTDS, // actual TDS deducted through the year
+        statutoryContributions: {
+          pfEmployee: totalPFEmployee,
+          esiEmployee: totalESIEmployee,
+        },
+      },
+      payslipCount: payslips.length,
+    };
+
+    const report = new this.statutoryReportModel({
+      organizationId: orgId,
+      reportType: 'form_16',
+      financialYear: dto.financialYear,
+      period: { year: fy.startYear },
+      employeeId: dto.employeeId,
+      status: 'generated',
+      data,
+      generatedAt: new Date(),
+      generatedBy: userId,
+      totals: {
+        totalGross: grossEarnings,
+        totalDeductions,
+        totalTax: totalTDS,
+        employeeCount: 1,
+      },
+      createdBy: userId,
+    });
+
+    await report.save();
+    this.logger.log(`Form 16 generated (id=${report._id}) for employee ${dto.employeeId}`);
+    return report;
+  }
+
+  // ===========================================================================
+  // generatePFECR — Electronic Challan cum Return for EPFO
+  // ===========================================================================
+  async generatePFECR(
+    dto: GeneratePFECRDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IStatutoryReport> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    this.logger.log(`Generating PF ECR for ${dto.month}/${dto.year} by ${userId}`);
+
+    const run = await this.payrollRunModel.findOne({
+      organizationId: orgId,
+      'payPeriod.month': dto.month,
+      'payPeriod.year': dto.year,
+      isDeleted: false,
+    });
+
+    if (!run) {
+      throw new NotFoundException(
+        `No payroll run found for ${dto.month}/${dto.year}`,
+      );
+    }
+
+    const entries = await this.payrollEntryModel.find({
+      organizationId: orgId,
+      payrollRunId: run._id,
+      isDeleted: false,
+    });
+
+    // Build ECR line items — one per covered employee (UAN mandatory)
+    const ecrRows: Array<Record<string, unknown>> = [];
+    let totalWages = 0;
+    let totalPFWages = 0;
+    let totalEEContribution = 0;
+    let totalERContribution = 0;
+    let totalPension = 0;
+    let totalEDLI = 0;
+    let totalAdminCharges = 0;
+
+    for (const entry of entries) {
+      const slip = await this.payslipModel.findOne({
+        organizationId: orgId,
+        employeeId: entry.employeeId,
+        'payPeriod.month': dto.month,
+        'payPeriod.year': dto.year,
+        isDeleted: false,
+      });
+
+      const uan = slip?.employeeSnapshot?.uan || null;
+      const name = slip?.employeeSnapshot?.name || null;
+
+      // EPFO split: 8.33% to EPS (capped at ceiling), rest to EPF
+      const pfEmployer = entry.statutory?.pfEmployer || 0;
+      const pfWage = Math.min(
+        entry.totals?.grossEarnings || 0,
+        15000, // statutory wage ceiling
+      );
+      const pensionContribution = Math.round(pfWage * 0.0833);
+      const epfEmployer = Math.max(0, pfEmployer - pensionContribution);
+
+      ecrRows.push({
+        uan,
+        memberName: name,
+        grossWages: entry.totals?.grossEarnings || 0,
+        epfWages: pfWage,
+        epsWages: pfWage,
+        edliWages: pfWage,
+        epfContribRemitted: entry.statutory?.pfEmployee || 0,
+        epsContribRemitted: pensionContribution,
+        epfEpsDiffRemitted: epfEmployer,
+        ncpDays: entry.attendance?.lopDays || 0,
+        refundOfAdvances: 0,
+      });
+
+      totalWages += entry.totals?.grossEarnings || 0;
+      totalPFWages += pfWage;
+      totalEEContribution += entry.statutory?.pfEmployee || 0;
+      totalERContribution += epfEmployer;
+      totalPension += pensionContribution;
+      totalEDLI += entry.statutory?.edli || 0;
+      totalAdminCharges += entry.statutory?.pfAdminCharges || 0;
+    }
+
+    const data = {
+      period: { month: dto.month, year: dto.year },
+      payrollRunId: String(run._id),
+      runNumber: run.runNumber,
+      rows: ecrRows,
+      summary: {
+        totalMembers: ecrRows.length,
+        totalWages,
+        totalPFWages,
+        totalEEContribution,
+        totalERContribution,
+        totalPension,
+        totalEDLI,
+        totalAdminCharges,
+        totalChallan:
+          totalEEContribution +
+          totalERContribution +
+          totalPension +
+          totalEDLI +
+          totalAdminCharges,
+      },
+    };
+
+    const report = new this.statutoryReportModel({
+      organizationId: orgId,
+      reportType: 'pf_ecr',
+      period: { month: dto.month, year: dto.year },
+      status: 'generated',
+      data,
+      generatedAt: new Date(),
+      generatedBy: userId,
+      totals: {
+        totalGross: totalWages,
+        totalDeductions: totalEEContribution,
+        totalTax: 0,
+        employeeCount: ecrRows.length,
+      },
+      createdBy: userId,
+    });
+
+    await report.save();
+    this.logger.log(`PF ECR generated (id=${report._id}) for ${dto.month}/${dto.year}`);
+    return report;
+  }
+
+  // ===========================================================================
+  // generateESIReturn — monthly ESI contribution return
+  // ===========================================================================
+  async generateESIReturn(
+    dto: GenerateESIReturnDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IStatutoryReport> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    this.logger.log(`Generating ESI return for ${dto.month}/${dto.year} by ${userId}`);
+
+    const run = await this.payrollRunModel.findOne({
+      organizationId: orgId,
+      'payPeriod.month': dto.month,
+      'payPeriod.year': dto.year,
+      isDeleted: false,
+    });
+
+    if (!run) {
+      throw new NotFoundException(
+        `No payroll run found for ${dto.month}/${dto.year}`,
+      );
+    }
+
+    const entries = await this.payrollEntryModel.find({
+      organizationId: orgId,
+      payrollRunId: run._id,
+      isDeleted: false,
+    });
+
+    const rows: Array<Record<string, unknown>> = [];
+    let totalGross = 0;
+    let totalEmployeeContribution = 0;
+    let totalEmployerContribution = 0;
+    let coveredCount = 0;
+
+    for (const entry of entries) {
+      const esiEmployee = entry.statutory?.esiEmployee || 0;
+      const esiEmployer = entry.statutory?.esiEmployer || 0;
+      // Only include employees actually covered under ESI (wages ≤ ceiling, non-zero contribution)
+      if (esiEmployee <= 0 && esiEmployer <= 0) continue;
+
+      const slip = await this.payslipModel.findOne({
+        organizationId: orgId,
+        employeeId: entry.employeeId,
+        'payPeriod.month': dto.month,
+        'payPeriod.year': dto.year,
+        isDeleted: false,
+      });
+
+      rows.push({
+        ipNumber: slip?.employeeSnapshot?.esiNumber || null,
+        memberName: slip?.employeeSnapshot?.name || null,
+        employeeId: entry.employeeId,
+        numberOfDays:
+          (entry.attendance?.presentDays || 0) +
+          (entry.attendance?.paidLeaveDays || 0),
+        grossWages: entry.totals?.grossEarnings || 0,
+        employeeContribution: esiEmployee,
+        employerContribution: esiEmployer,
+        totalContribution: esiEmployee + esiEmployer,
+        reasonForZeroWages: null,
+      });
+
+      totalGross += entry.totals?.grossEarnings || 0;
+      totalEmployeeContribution += esiEmployee;
+      totalEmployerContribution += esiEmployer;
+      coveredCount += 1;
+    }
+
+    const data = {
+      period: { month: dto.month, year: dto.year },
+      payrollRunId: String(run._id),
+      runNumber: run.runNumber,
+      rows,
+      summary: {
+        coveredEmployees: coveredCount,
+        totalGrossWages: totalGross,
+        totalEmployeeContribution,
+        totalEmployerContribution,
+        totalContribution: totalEmployeeContribution + totalEmployerContribution,
+      },
+    };
+
+    const report = new this.statutoryReportModel({
+      organizationId: orgId,
+      reportType: 'esi_return',
+      period: { month: dto.month, year: dto.year },
+      status: 'generated',
+      data,
+      generatedAt: new Date(),
+      generatedBy: userId,
+      totals: {
+        totalGross,
+        totalDeductions: totalEmployeeContribution,
+        totalTax: 0,
+        employeeCount: coveredCount,
+      },
+      createdBy: userId,
+    });
+
+    await report.save();
+    this.logger.log(`ESI return generated (id=${report._id}) for ${dto.month}/${dto.year}`);
+    return report;
+  }
+
+  // ===========================================================================
+  // generateTDSQuarterly — Form 24Q quarterly TDS return on salaries
+  // ===========================================================================
+  async generateTDSQuarterly(
+    dto: GenerateTDSQuarterlyDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IStatutoryReport> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    this.logger.log(
+      `Generating TDS quarterly (Q${dto.quarter} ${dto.year}) by ${userId}`,
+    );
+
+    // Map quarter → month range within the calendar year (Indian FY convention)
+    // Q1 Apr-Jun (calendar year = fy startYear)
+    // Q2 Jul-Sep
+    // Q3 Oct-Dec
+    // Q4 Jan-Mar (calendar year = fy endYear)
+    const quarterMap: Record<number, { months: number[]; yearOffset: number }> = {
+      1: { months: [4, 5, 6], yearOffset: 0 },
+      2: { months: [7, 8, 9], yearOffset: 0 },
+      3: { months: [10, 11, 12], yearOffset: 0 },
+      4: { months: [1, 2, 3], yearOffset: 0 },
+    };
+    const meta = quarterMap[dto.quarter];
+    if (!meta) {
+      throw new BadRequestException(`Invalid quarter: ${dto.quarter}`);
+    }
+
+    // Financial year label — Q4 (Jan-Mar) belongs to the FY that started the previous calendar year
+    const fyStart = dto.quarter === 4 ? dto.year - 1 : dto.year;
+    const financialYear = `${fyStart}-${fyStart + 1}`;
+
+    const runs = await this.payrollRunModel.find({
+      organizationId: orgId,
+      'payPeriod.month': { $in: meta.months },
+      'payPeriod.year': dto.year,
+      isDeleted: false,
+    });
+
+    if (!runs.length) {
+      throw new NotFoundException(
+        `No payroll runs found for Q${dto.quarter} ${dto.year}`,
+      );
+    }
+
+    const runIds = runs.map((r) => r._id);
+    const entries = await this.payrollEntryModel.find({
+      organizationId: orgId,
+      payrollRunId: { $in: runIds },
+      isDeleted: false,
+    });
+
+    // Aggregate TDS per employee across the quarter — one deductee record per PAN
+    const perEmployee = new Map<
+      string,
+      {
+        employeeId: string;
+        name: string | null;
+        pan: string | null;
+        totalSalary: number;
+        totalTDS: number;
+        monthlyBreakup: Array<{
+          month: number;
+          grossEarnings: number;
+          tds: number;
+        }>;
+      }
+    >();
+
+    for (const entry of entries) {
+      let agg = perEmployee.get(entry.employeeId);
+      if (!agg) {
+        const slip = await this.payslipModel.findOne({
+          organizationId: orgId,
+          employeeId: entry.employeeId,
+          isDeleted: false,
+        }).sort({ 'payPeriod.year': -1, 'payPeriod.month': -1 });
+        agg = {
+          employeeId: entry.employeeId,
+          name: slip?.employeeSnapshot?.name || null,
+          pan: slip?.employeeSnapshot?.pan || null,
+          totalSalary: 0,
+          totalTDS: 0,
+          monthlyBreakup: [],
+        };
+        perEmployee.set(entry.employeeId, agg);
+      }
+      agg.totalSalary += entry.totals?.grossEarnings || 0;
+      agg.totalTDS += entry.statutory?.tds || 0;
+      agg.monthlyBreakup.push({
+        month: entry.payPeriod?.month,
+        grossEarnings: entry.totals?.grossEarnings || 0,
+        tds: entry.statutory?.tds || 0,
+      });
+    }
+
+    const deducteeRecords = Array.from(perEmployee.values());
+    const totalSalaryPaid = deducteeRecords.reduce((s, r) => s + r.totalSalary, 0);
+    const totalTDSDeducted = deducteeRecords.reduce((s, r) => s + r.totalTDS, 0);
+
+    const data = {
+      formType: '24Q',
+      quarter: dto.quarter,
+      year: dto.year,
+      financialYear,
+      months: meta.months,
+      payrollRunIds: runIds.map(String),
+      deducteeRecords,
+      summary: {
+        totalDeductees: deducteeRecords.length,
+        totalSalaryPaid,
+        totalTDSDeducted,
+      },
+    };
+
+    const report = new this.statutoryReportModel({
+      organizationId: orgId,
+      reportType: 'tds_quarterly',
+      financialYear,
+      period: { quarter: dto.quarter, year: dto.year },
+      status: 'generated',
+      data,
+      generatedAt: new Date(),
+      generatedBy: userId,
+      totals: {
+        totalGross: totalSalaryPaid,
+        totalDeductions: totalTDSDeducted,
+        totalTax: totalTDSDeducted,
+        employeeCount: deducteeRecords.length,
+      },
+      createdBy: userId,
+    });
+
+    await report.save();
+    this.logger.log(
+      `TDS quarterly generated (id=${report._id}) for Q${dto.quarter} ${dto.year}`,
+    );
+    return report;
+  }
+
+  // ===========================================================================
+  // listStatutoryReports — Paginated list scoped to org
+  // ===========================================================================
+  async listStatutoryReports(
+    query: StatutoryReportQueryDto,
+    userId: string,
+    orgId: string,
+  ): Promise<{
+    data: IStatutoryReport[];
+    pagination: { page: number; limit: number; total: number; totalPages: number };
+  }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const filter: any = { organizationId: orgId, isDeleted: false };
+    if (query.reportType) filter.reportType = query.reportType;
+    if (query.financialYear) filter.financialYear = query.financialYear;
+    if (query.status) filter.status = query.status;
+
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      this.statutoryReportModel
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      this.statutoryReportModel.countDocuments(filter),
+    ]);
+
+    return {
+      data,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  // ===========================================================================
+  // getStatutoryReport — Single report scoped to org
+  // ===========================================================================
+  async getStatutoryReport(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<IStatutoryReport> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const report = await this.statutoryReportModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!report) throw new NotFoundException('Statutory report not found');
+    return report;
+  }
+
+  // ===========================================================================
+  // getMyForm16 — Self-service: current user's Form 16 reports
+  // ===========================================================================
+  async getMyForm16(
+    userId: string,
+    orgId: string,
+  ): Promise<IStatutoryReport[]> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    // userId here corresponds to the authenticated employee's id — scoped strictly to self
+    return this.statutoryReportModel
+      .find({
+        organizationId: orgId,
+        reportType: 'form_16',
+        employeeId: userId,
+        isDeleted: false,
+      })
+      .sort({ 'period.year': -1, createdAt: -1 });
   }
 }

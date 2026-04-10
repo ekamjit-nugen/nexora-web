@@ -57,6 +57,10 @@ export interface IUser extends Document {
   otpAttempts?: number;
   otpLastRequestedAt?: Date;
   otpRequestCount?: number;
+  gdprDeletionRequested?: boolean;
+  gdprDeletionRequestedAt?: Date;
+  gdprDeletionScheduledAt?: Date;
+  gdprDeletionReason?: string;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -226,6 +230,10 @@ export const UserSchema = new Schema<IUser>(
     otpAttempts: { type: Number, select: false, default: 0 },
     otpLastRequestedAt: { type: Date, select: false, default: null },
     otpRequestCount: { type: Number, select: false, default: 0 },
+    gdprDeletionRequested: { type: Boolean, default: false },
+    gdprDeletionRequestedAt: { type: Date, default: null },
+    gdprDeletionScheduledAt: { type: Date, default: null, index: true },
+    gdprDeletionReason: { type: String, default: null },
   },
   {
     timestamps: true,

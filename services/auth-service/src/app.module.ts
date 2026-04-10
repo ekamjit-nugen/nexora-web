@@ -19,12 +19,20 @@ import { ScheduledReportSchema } from './auth/schemas/scheduled-report.schema';
 import { AuthController } from './auth/auth.controller';
 import { AuthService } from './auth/auth.service';
 
+// GDPR domain
+import { GdprController } from './auth/gdpr.controller';
+import { GdprService } from './auth/gdpr.service';
+
 // Organization domain
 import { OrganizationController } from './auth/organization.controller';
 import { OrganizationService } from './auth/organization.service';
 
 // Settings domain
 import { SettingsController } from './auth/settings.controller';
+
+// SCIM 2.0 domain (enterprise provisioning: Okta, Azure AD, OneLogin)
+import { ScimController } from './auth/scim.controller';
+import { ScimService } from './auth/scim.service';
 
 // Extracted sub-services
 import { OtpService } from './auth/services/otp.service';
@@ -112,10 +120,14 @@ import { HealthModule } from './health/health.module';
   controllers: [
     // Auth
     AuthController,
+    // GDPR
+    GdprController,
     // Organizations
     OrganizationController,
     // Settings
     SettingsController,
+    // SCIM 2.0
+    ScimController,
     // Platform
     PlatformAdminController,
     SystemHealthController,
@@ -126,8 +138,12 @@ import { HealthModule } from './health/health.module';
   providers: [
     // Auth
     AuthService,
+    // GDPR
+    GdprService,
     // Organizations
     OrganizationService,
+    // SCIM 2.0
+    ScimService,
     // Extracted sub-services
     OtpService,
     TokenService,

@@ -18,6 +18,7 @@ import { OffboardingSchema } from './schemas/offboarding.schema';
 import { AnalyticsSnapshotSchema } from './schemas/analytics-snapshot.schema';
 import { JobPostingSchema } from './schemas/job-posting.schema';
 import { CandidateSchema } from './schemas/candidate.schema';
+import { StatutoryReportSchema } from './schemas/statutory-report.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { ExternalServicesService } from './external-services.service';
 
@@ -36,6 +37,7 @@ import { ExternalServicesService } from './external-services.service';
       { name: 'AnalyticsSnapshot', schema: AnalyticsSnapshotSchema },
       { name: 'JobPosting', schema: JobPostingSchema },
       { name: 'Candidate', schema: CandidateSchema },
+      { name: 'StatutoryReport', schema: StatutoryReportSchema },
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],

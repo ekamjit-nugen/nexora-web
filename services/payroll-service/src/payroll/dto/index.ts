@@ -536,3 +536,33 @@ export class OffboardingQueryDto {
   @IsOptional() @IsNumber() @Min(1) page?: number;
   @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
 }
+
+// ── Statutory Reports ──
+
+export class GenerateForm16Dto {
+  @IsString() employeeId: string;
+  @IsString() financialYear: string; // "2025-2026"
+}
+
+export class GeneratePFECRDto {
+  @IsNumber() @Min(1) @Max(12) month: number;
+  @IsNumber() @Min(2020) year: number;
+}
+
+export class GenerateESIReturnDto {
+  @IsNumber() @Min(1) @Max(12) month: number;
+  @IsNumber() @Min(2020) year: number;
+}
+
+export class GenerateTDSQuarterlyDto {
+  @IsNumber() @Min(1) @Max(4) quarter: number;
+  @IsNumber() @Min(2020) year: number;
+}
+
+export class StatutoryReportQueryDto {
+  @IsOptional() @IsString() reportType?: string;
+  @IsOptional() @IsString() financialYear?: string;
+  @IsOptional() @IsString() status?: string;
+  @IsOptional() @IsNumber() @Min(1) page?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
+}
