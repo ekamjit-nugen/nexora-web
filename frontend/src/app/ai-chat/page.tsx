@@ -2,10 +2,19 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import DOMPurify from "dompurify";
 import { Sidebar } from "@/components/sidebar";
 import { authApi, aiApi } from "@/lib/api";
 import type { User } from "@/lib/api";
 import { toast } from "sonner";
+
+// Sanitize HTML to prevent XSS from AI responses
+// Only allow safe formatting tags: strong, em, code, br
+const sanitize = (html: string): string =>
+  DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ["strong", "em", "code", "br"],
+    ALLOWED_ATTR: ["class"],
+  });
 
 // ── Types ──
 
@@ -123,7 +132,7 @@ function formatAIContent(text: string): React.ReactNode {
         <p
           key={i}
           className="font-bold text-[15px] mt-3 mb-1"
-          dangerouslySetInnerHTML={{ __html: formatted.slice(3) }}
+          dangerouslySetInnerHTML={{ __html: sanitize(formatted.slice(3)) }}
         />
       );
     }
@@ -134,7 +143,7 @@ function formatAIContent(text: string): React.ReactNode {
         <p
           key={i}
           className="font-semibold text-[14px] mt-2 mb-1"
-          dangerouslySetInnerHTML={{ __html: formatted.slice(4) }}
+          dangerouslySetInnerHTML={{ __html: sanitize(formatted.slice(4)) }}
         />
       );
     }
@@ -151,7 +160,7 @@ function formatAIContent(text: string): React.ReactNode {
           <span className="text-[#2E86C1] mt-0.5 shrink-0">-</span>
           <span
             dangerouslySetInnerHTML={{
-              __html: formatted.replace(/^[\s]*[-*]\s/, ""),
+              __html: sanitize(formatted.replace(/^[\s]*[-*]\s/, "")),
             }}
           />
         </div>
@@ -166,7 +175,7 @@ function formatAIContent(text: string): React.ReactNode {
           <span className="text-[#2E86C1] font-medium shrink-0">{num}.</span>
           <span
             dangerouslySetInnerHTML={{
-              __html: formatted.replace(/^\d+\.\s/, ""),
+              __html: sanitize(formatted.replace(/^\d+\.\s/, "")),
             }}
           />
         </div>
@@ -177,7 +186,7 @@ function formatAIContent(text: string): React.ReactNode {
     if (!line.trim()) return <div key={i} className="h-2" />;
 
     // Regular text
-    return <p key={i} dangerouslySetInnerHTML={{ __html: formatted }} />;
+    return <p key={i} dangerouslySetInnerHTML={{ __html: sanitize(formatted) }} />;
   });
 }
 
