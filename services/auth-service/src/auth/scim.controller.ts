@@ -42,6 +42,15 @@ export class ScimController {
     return auth.substring(7);
   }
 
+  // `X-SCIM-Org-Id` is only consulted when the dev-only master token is used.
+  // Under normal Bearer tokens the org ID is derived from the token itself.
+  private extractRequestedOrgId(req: Request): string | undefined {
+    const raw = req.headers['x-scim-org-id'];
+    if (!raw) return undefined;
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    return typeof value === 'string' && value.length > 0 ? value : undefined;
+  }
+
   // Service Provider Config (SCIM discovery)
   @Get('ServiceProviderConfig')
   getServiceProviderConfig(@Res() res: Response) {
@@ -114,17 +123,19 @@ export class ScimController {
   @Get('Users')
   async listUsers(@Query() query: any, @Req() req: Request, @Res() res: Response) {
     const token = this.extractScimToken(req);
+    const orgIdHint = this.extractRequestedOrgId(req);
     const startIndex = parseInt(query.startIndex || '1', 10);
     const count = parseInt(query.count || '100', 10);
     const filter = query.filter as string | undefined;
-    const result = await this.scimService.listUsers(token, { startIndex, count, filter });
+    const result = await this.scimService.listUsers(token, { startIndex, count, filter }, orgIdHint);
     return res.status(200).json(result);
   }
 
   @Get('Users/:id')
   async getUser(@Param('id') id: string, @Req() req: Request, @Res() res: Response) {
     const token = this.extractScimToken(req);
-    const user = await this.scimService.getUser(token, id);
+    const orgIdHint = this.extractRequestedOrgId(req);
+    const user = await this.scimService.getUser(token, id, orgIdHint);
     if (!user) {
       return res.status(404).json({
         schemas: ['urn:ietf:params:scim:api:messages:2.0:Error'],
@@ -138,7 +149,8 @@ export class ScimController {
   @Post('Users')
   async createUser(@Body() body: any, @Req() req: Request, @Res() res: Response) {
     const token = this.extractScimToken(req);
-    const user = await this.scimService.createUser(token, body);
+    const orgIdHint = this.extractRequestedOrgId(req);
+    const user = await this.scimService.createUser(token, body, orgIdHint);
     return res.status(201).json(user);
   }
 
@@ -150,7 +162,8 @@ export class ScimController {
     @Res() res: Response,
   ) {
     const token = this.extractScimToken(req);
-    const user = await this.scimService.replaceUser(token, id, body);
+    const orgIdHint = this.extractRequestedOrgId(req);
+    const user = await this.scimService.replaceUser(token, id, body, orgIdHint);
     return res.status(200).json(user);
   }
 
@@ -162,14 +175,16 @@ export class ScimController {
     @Res() res: Response,
   ) {
     const token = this.extractScimToken(req);
-    const user = await this.scimService.patchUser(token, id, body);
+    const orgIdHint = this.extractRequestedOrgId(req);
+    const user = await this.scimService.patchUser(token, id, body, orgIdHint);
     return res.status(200).json(user);
   }
 
   @Delete('Users/:id')
   async deleteUser(@Param('id') id: string, @Req() req: Request, @Res() res: Response) {
     const token = this.extractScimToken(req);
-    await this.scimService.deleteUser(token, id);
+    const orgIdHint = this.extractRequestedOrgId(req);
+    await this.scimService.deleteUser(token, id, orgIdHint);
     return res.status(204).send();
   }
 }

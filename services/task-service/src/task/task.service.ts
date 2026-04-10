@@ -1963,9 +1963,52 @@ export class TaskService {
       }
       case 'set_field': {
         // Generic field setter; supports "customFields.<key>" via dot-notation.
-        if (!params.field) return;
-        const setOp: any = { updatedBy: systemUser };
-        setOp[params.field] = params.value;
+        //
+        // SECURITY: The field path must be whitelisted. A manager can configure
+        // an automation rule via the UI, so allowing arbitrary paths would let
+        // them rewrite `organizationId` (cross-tenant move), `createdBy`
+        // (audit-trail forgery), or `__proto__.admin` (prototype pollution).
+        // Only a small set of user-managed metadata fields may be mutated.
+        if (!params.field || typeof params.field !== 'string') return;
+        const SET_FIELD_ALLOWLIST = /^(description|labels|customFields\.[a-zA-Z0-9_-]{1,64})$/;
+        if (!SET_FIELD_ALLOWLIST.test(params.field)) {
+          this.logger.warn(
+            `Automation set_field rejected: disallowed field path "${params.field}" on task ${taskId}`,
+          );
+          return;
+        }
+        // Defence-in-depth against prototype pollution — even though the regex
+        // already excludes it, we never want these landing in $set.
+        if (/(^|\.)(__proto__|constructor|prototype)(\.|$)/.test(params.field)) {
+          return;
+        }
+        // Labels must be an array of strings; description must be a string.
+        let safeValue: any = params.value;
+        if (params.field === 'description') {
+          if (typeof safeValue !== 'string') return;
+          if (safeValue.length > 10_000) safeValue = safeValue.slice(0, 10_000);
+        } else if (params.field === 'labels') {
+          if (!Array.isArray(safeValue)) return;
+          safeValue = safeValue
+            .filter((l: unknown) => typeof l === 'string')
+            .slice(0, 50)
+            .map((l: string) => l.slice(0, 64));
+        } else {
+          // customFields.<key> — accept primitive or short string/number/bool
+          if (
+            safeValue !== null &&
+            typeof safeValue !== 'string' &&
+            typeof safeValue !== 'number' &&
+            typeof safeValue !== 'boolean'
+          ) {
+            return;
+          }
+          if (typeof safeValue === 'string' && safeValue.length > 1_000) {
+            safeValue = safeValue.slice(0, 1_000);
+          }
+        }
+        const setOp: Record<string, unknown> = { updatedBy: systemUser };
+        setOp[params.field] = safeValue;
         await this.taskModel.updateOne(
           { _id: taskId, organizationId: orgId },
           { $set: setOp },

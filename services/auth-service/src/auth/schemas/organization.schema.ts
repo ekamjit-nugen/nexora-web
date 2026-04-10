@@ -321,6 +321,12 @@ export interface IOrganization extends Document {
   deletionRequestedBy?: string;
   deletionScheduledAt?: Date;
 
+  // SCIM 2.0 enterprise provisioning
+  scimEnabled?: boolean;
+  scimTokenHash?: string; // sha256 hex of token secret; select: false
+  scimTokenIssuedAt?: Date;
+  scimTokenIssuedBy?: string;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -421,6 +427,14 @@ export const OrganizationSchema = new Schema<IOrganization>(
     deletionRequestedAt: { type: Date, default: null },
     deletionRequestedBy: { type: String, default: null },
     deletionScheduledAt: { type: Date, default: null },
+
+    // SCIM 2.0 enterprise provisioning. scimTokenHash is excluded from default
+    // selects to prevent accidental leakage — must be explicitly requested with
+    // `.select('+scimTokenHash')` (see scim.service.ts validateToken).
+    scimEnabled: { type: Boolean, default: false },
+    scimTokenHash: { type: String, default: null, select: false },
+    scimTokenIssuedAt: { type: Date, default: null },
+    scimTokenIssuedBy: { type: String, default: null },
   },
   { timestamps: true },
 );

@@ -1,4 +1,10 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  ServiceUnavailableException,
+  ConflictException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
@@ -54,8 +60,16 @@ class RazorpayProvider implements IPayoutProvider {
   }
 
   async initiatePayout(req: PayoutRequest): Promise<PayoutResult> {
-    if (!this.keyId || !this.keySecret) {
-      this.logger.warn('Razorpay not configured, returning mock pending status');
+    if (!this.keyId || !this.keySecret || !this.accountNumber) {
+      // SECURITY: Never write a fake "success" when real money is expected to
+      // move. In production, missing credentials must fail closed so finance
+      // sees the error instead of a phantom "processed" transaction.
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException(
+          'Razorpay is not configured. Set RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET and RAZORPAY_ACCOUNT_NUMBER.',
+        );
+      }
+      this.logger.warn('Razorpay not configured (dev/test) — returning mock pending status');
       return { success: true, status: 'pending', providerTransactionId: `mock_${Date.now()}` };
     }
 
@@ -214,35 +228,102 @@ export class BankPayoutService {
     const transactions: any[] = [];
 
     for (const entry of entries) {
+      const idempotencyKey = `${payrollRunId}_${entry.employeeId}`;
+      let reserved: IBankTransaction | null = null;
       try {
-        const idempotencyKey = `${payrollRunId}_${entry.employeeId}`;
-
-        // Idempotency check — skip if already processed/processing
-        const existing = await this.bankTransactionModel.findOne({ idempotencyKey });
-        if (existing) {
-          if (existing.status === 'processed' || existing.status === 'processing') {
-            this.logger.log(`Skipping already-processed entry for ${entry.employeeId}`);
-            continue;
-          }
-        }
-
         const netPayable = entry.totals?.netPayable || 0;
         if (netPayable <= 0) {
           this.logger.warn(`Skipping zero/negative payout for ${entry.employeeId}`);
           continue;
         }
 
-        // Bank details should come from hr-service in production
-        const bankDetails = (entry as any).paymentDetails || {
-          accountNumber: 'XXXX',
-          ifsc: 'UNKNOWN',
-          accountHolder: 'Unknown',
-        };
-        if (!bankDetails.accountNumber || bankDetails.accountNumber === 'XXXX' || !bankDetails.ifsc) {
+        // Bank details should come from hr-service in production.
+        const bankDetails = (entry as any).paymentDetails;
+        if (
+          !bankDetails ||
+          !bankDetails.accountNumber ||
+          bankDetails.accountNumber === 'XXXX' ||
+          !bankDetails.ifsc
+        ) {
           this.logger.warn(`Skipping employee ${entry.employeeId} — bank details incomplete`);
           failed++;
           continue;
         }
+
+        // ATOMIC IDEMPOTENCY RESERVATION
+        //
+        // Use findOneAndUpdate with `upsert + $setOnInsert` to atomically
+        // reserve the idempotency slot. This closes the race window between
+        // "check" and "save" that previously allowed two concurrent callers
+        // to both fire real Razorpay payouts.
+        //
+        // A document already in `processed`/`processing` is a no-op skip.
+        // A document in `failed` state is reclaimed for retry inside the
+        // same call by flipping it back to `pending`.
+        const now = new Date();
+        const reservation = await this.bankTransactionModel.findOneAndUpdate(
+          { idempotencyKey },
+          {
+            $setOnInsert: {
+              organizationId: orgId,
+              payrollRunId,
+              payrollEntryId: (entry as any)._id?.toString(),
+              employeeId: entry.employeeId,
+              amount: netPayable,
+              status: 'pending',
+              mode: 'NEFT',
+              provider: this.provider.name,
+              bankDetails: {
+                accountNumber: String(bankDetails.accountNumber).slice(-4),
+                ifsc: bankDetails.ifsc,
+                accountHolder:
+                  bankDetails.accountHolder || bankDetails.bankName || 'Employee',
+              },
+              initiatedAt: now,
+              idempotencyKey,
+              auditTrail: [
+                {
+                  action: 'payout_reserved',
+                  performedBy: userId,
+                  performedAt: now,
+                  notes: 'Idempotency slot reserved',
+                },
+              ],
+              createdBy: userId,
+            },
+          },
+          { upsert: true, new: true, setDefaultsOnInsert: true },
+        );
+
+        if (!reservation) {
+          // Should not happen with upsert + new:true, but guard anyway.
+          failed++;
+          continue;
+        }
+
+        if (reservation.status === 'processed' || reservation.status === 'processing') {
+          this.logger.log(`Skipping already-${reservation.status} entry for ${entry.employeeId}`);
+          transactions.push(reservation);
+          continue;
+        }
+        if (reservation.status === 'failed') {
+          this.logger.log(
+            `Reclaiming failed transaction for ${entry.employeeId} (retry ${reservation.retryCount || 0})`,
+          );
+          reservation.status = 'pending';
+          reservation.failureReason = undefined;
+          reservation.failedAt = null as any;
+          reservation.retryCount = (reservation.retryCount || 0) + 1;
+          reservation.auditTrail.push({
+            action: 'retry',
+            performedBy: userId,
+            performedAt: now,
+            notes: `Bulk retry attempt ${reservation.retryCount}`,
+          });
+          await reservation.save();
+        }
+
+        reserved = reservation;
 
         const payoutReq: PayoutRequest = {
           amount: netPayable,
@@ -254,50 +335,63 @@ export class BankPayoutService {
           fundAccount: {
             accountNumber: bankDetails.accountNumber,
             ifsc: bankDetails.ifsc,
-            accountHolder: bankDetails.accountHolder || bankDetails.bankName || 'Employee',
+            accountHolder:
+              bankDetails.accountHolder || bankDetails.bankName || 'Employee',
           },
           idempotencyKey,
         };
 
         const result = await this.provider.initiatePayout(payoutReq);
 
-        const tx = new this.bankTransactionModel({
-          organizationId: orgId,
-          payrollRunId,
-          payrollEntryId: (entry as any)._id?.toString(),
-          employeeId: entry.employeeId,
-          amount: netPayable,
-          status: result.status,
-          mode: 'NEFT',
-          provider: this.provider.name,
-          providerTransactionId: result.providerTransactionId,
-          providerFundAccountId: result.providerFundAccountId,
-          bankDetails: {
-            accountNumber: String(bankDetails.accountNumber).slice(-4),
-            ifsc: bankDetails.ifsc,
-            accountHolder: bankDetails.accountHolder || bankDetails.bankName || 'Employee',
-          },
-          initiatedAt: new Date(),
-          processedAt: result.status === 'processed' ? new Date() : null,
-          failedAt: result.status === 'failed' ? new Date() : null,
-          failureReason: result.failureReason,
-          idempotencyKey,
-          auditTrail: [{
-            action: 'payout_initiated',
-            performedBy: userId,
-            performedAt: new Date(),
-            notes: `Status: ${result.status}`,
-          }],
-          createdBy: userId,
+        reserved.status = result.status;
+        reserved.providerTransactionId = result.providerTransactionId;
+        reserved.providerFundAccountId = result.providerFundAccountId;
+        reserved.processedAt = result.status === 'processed' ? new Date() : reserved.processedAt;
+        if (result.status === 'failed') {
+          reserved.failedAt = new Date();
+          reserved.failureReason = result.failureReason;
+        }
+        reserved.auditTrail.push({
+          action: 'payout_initiated',
+          performedBy: userId,
+          performedAt: new Date(),
+          notes: `Status: ${result.status}`,
         });
+        await reserved.save();
 
-        await tx.save();
-        transactions.push(tx);
+        transactions.push(reserved);
         if (result.success) initiated++;
         else failed++;
       } catch (err: any) {
-        this.logger.error(`Failed to initiate payout for ${entry.employeeId}: ${err.message}`);
+        this.logger.error(
+          `Failed to initiate payout for ${entry.employeeId}: ${err.message}`,
+        );
+        // If we reserved a slot but the provider call / save threw, mark the
+        // reservation as failed so it can be retried later via retryPayout().
+        if (reserved) {
+          try {
+            reserved.status = 'failed';
+            reserved.failedAt = new Date();
+            reserved.failureReason = err.message || 'Unknown error';
+            reserved.auditTrail.push({
+              action: 'payout_errored',
+              performedBy: userId,
+              performedAt: new Date(),
+              notes: err.message || 'Unknown error',
+            });
+            await reserved.save();
+          } catch (saveErr: any) {
+            this.logger.error(
+              `Failed to persist error state for ${entry.employeeId}: ${saveErr.message}`,
+            );
+          }
+        }
         failed++;
+        // Re-throw provider-config errors so bulk payout fails loudly instead
+        // of silently marking every employee as failed.
+        if (err instanceof ServiceUnavailableException) {
+          throw err;
+        }
       }
     }
 
@@ -306,27 +400,120 @@ export class BankPayoutService {
   }
 
   async retryPayout(transactionId: string, userId: string, orgId: string): Promise<IBankTransaction> {
-    const tx = await this.bankTransactionModel.findOne({
-      _id: transactionId,
+    // Atomically claim the retry slot so concurrent retry calls can't
+    // double-fire a second provider payout for the same failed transaction.
+    const now = new Date();
+    const tx = await this.bankTransactionModel.findOneAndUpdate(
+      {
+        _id: transactionId,
+        organizationId: orgId,
+        isDeleted: false,
+        status: 'failed',
+        $expr: { $lt: ['$retryCount', '$maxRetries'] },
+      },
+      {
+        $inc: { retryCount: 1 },
+        $set: { status: 'pending', failureReason: null, failedAt: null },
+        $push: {
+          auditTrail: {
+            action: 'retry',
+            performedBy: userId,
+            performedAt: now,
+            notes: 'Manual retry claim',
+          },
+        },
+      },
+      { new: true },
+    );
+
+    if (!tx) {
+      // Either not found, not failed, or max retries exceeded — give the
+      // caller a specific error per case for clarity.
+      const existing = await this.bankTransactionModel.findOne({
+        _id: transactionId,
+        organizationId: orgId,
+        isDeleted: false,
+      });
+      if (!existing) throw new BadRequestException('Transaction not found');
+      if (existing.status !== 'failed') {
+        throw new ConflictException(`Cannot retry transaction in status "${existing.status}"`);
+      }
+      throw new BadRequestException('Max retries exceeded');
+    }
+
+    // Fetch the original payroll entry to re-derive amount and bank details.
+    // We re-read from the authoritative source instead of trusting the
+    // potentially stale tx fields.
+    const entry = await this.payrollEntryModel.findOne({
+      _id: tx.payrollEntryId,
       organizationId: orgId,
-      isDeleted: false,
-    });
-    if (!tx) throw new BadRequestException('Transaction not found');
-    if (tx.status !== 'failed') throw new BadRequestException('Can only retry failed transactions');
-    if (tx.retryCount >= tx.maxRetries) throw new BadRequestException('Max retries exceeded');
+    }).lean();
 
-    tx.retryCount++;
-    tx.status = 'pending';
-    tx.failureReason = undefined;
-    tx.auditTrail.push({
-      action: 'retry',
-      performedBy: userId,
-      performedAt: new Date(),
-      notes: `Retry attempt ${tx.retryCount}`,
-    });
+    if (!entry) {
+      tx.status = 'failed';
+      tx.failedAt = new Date();
+      tx.failureReason = 'Payroll entry no longer exists';
+      await tx.save();
+      throw new BadRequestException('Payroll entry not found for this transaction');
+    }
 
-    await tx.save();
-    return tx;
+    const bankDetails = (entry as any).paymentDetails;
+    if (!bankDetails?.accountNumber || !bankDetails?.ifsc) {
+      tx.status = 'failed';
+      tx.failedAt = new Date();
+      tx.failureReason = 'Bank details incomplete';
+      await tx.save();
+      throw new BadRequestException('Bank details incomplete on payroll entry');
+    }
+
+    const payoutReq: PayoutRequest = {
+      amount: tx.amount,
+      currency: 'INR',
+      mode: 'NEFT',
+      purpose: 'salary',
+      reference: `${tx.payrollRunId}_${tx.employeeId}_r${tx.retryCount}`,
+      narration: `Salary retry - Payroll Run ${tx.payrollRunId}`,
+      fundAccount: {
+        accountNumber: bankDetails.accountNumber,
+        ifsc: bankDetails.ifsc,
+        accountHolder: bankDetails.accountHolder || bankDetails.bankName || 'Employee',
+      },
+      // New idempotency key per retry attempt — the original key is
+      // permanently claimed by the original failed attempt record.
+      idempotencyKey: `${tx.idempotencyKey}_r${tx.retryCount}`,
+    };
+
+    try {
+      const result = await this.provider.initiatePayout(payoutReq);
+      tx.status = result.status;
+      tx.providerTransactionId = result.providerTransactionId || tx.providerTransactionId;
+      tx.providerFundAccountId = result.providerFundAccountId || tx.providerFundAccountId;
+      if (result.status === 'processed') tx.processedAt = new Date();
+      if (result.status === 'failed') {
+        tx.failedAt = new Date();
+        tx.failureReason = result.failureReason;
+      }
+      tx.auditTrail.push({
+        action: 'retry_result',
+        performedBy: userId,
+        performedAt: new Date(),
+        notes: `Retry ${tx.retryCount} status: ${result.status}`,
+      });
+      await tx.save();
+      return tx;
+    } catch (err: any) {
+      tx.status = 'failed';
+      tx.failedAt = new Date();
+      tx.failureReason = err.message || 'Unknown error';
+      tx.auditTrail.push({
+        action: 'retry_errored',
+        performedBy: userId,
+        performedAt: new Date(),
+        notes: err.message || 'Unknown error',
+      });
+      await tx.save();
+      throw err;
+    }
   }
 
   async syncPayoutStatus(transactionId: string, orgId: string): Promise<IBankTransaction> {
