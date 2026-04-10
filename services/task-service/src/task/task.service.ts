@@ -1761,13 +1761,35 @@ export class TaskService {
    * Called whenever a task changes. Fetches enabled rules matching the event,
    * evaluates conditions, and executes actions. One rule failure does not block others.
    */
+  // Per-call AsyncLocalStorage-like tracking of automation chain depth + the
+  // set of (ruleId, taskId) pairs already fired in this chain. Using a plain
+  // Map keyed by a chainId passed through the call stack. A Node async store
+  // would be cleaner but adds infrastructure; the explicit option argument is
+  // a drop-in that covers the common cases (task_updated → set_field →
+  // task_updated → set_field → ...).
+  //
+  // MAX_AUTOMATION_DEPTH: caps a single originating event from fanning out
+  // into more than 5 chained automation invocations. Above that we assume a
+  // misconfigured loop (A sets field X → rule B fires on X → sets field Y →
+  // rule A fires on Y → ...).
+  private static readonly MAX_AUTOMATION_DEPTH = 5;
+
   async executeAutomationRules(
     event: AutomationEvent,
     task: any,
     orgId?: string,
     actorUserId?: string,
+    chain?: { depth: number; firedRules: Set<string> },
   ): Promise<void> {
     if (!orgId || !task) return;
+
+    const currentChain = chain || { depth: 0, firedRules: new Set<string>() };
+    if (currentChain.depth >= TaskService.MAX_AUTOMATION_DEPTH) {
+      this.logger.warn(
+        `Automation chain depth limit (${TaskService.MAX_AUTOMATION_DEPTH}) hit for task ${task?._id}; aborting to prevent infinite loop`,
+      );
+      return;
+    }
 
     const filter: any = {
       organizationId: orgId,
@@ -1781,6 +1803,17 @@ export class TaskService {
     if (rules.length === 0) return;
 
     for (const rule of rules) {
+      // Loop guard: each rule fires at most ONCE per originating event chain
+      // for a given task. Prevents A→B→A ping-pong even if the rules are
+      // individually correct.
+      const ruleTaskKey = `${rule._id}::${task._id}`;
+      if (currentChain.firedRules.has(ruleTaskKey)) {
+        this.logger.warn(
+          `Automation rule ${rule._id} already fired for task ${task._id} in this chain — skipping to prevent loop`,
+        );
+        continue;
+      }
+
       try {
         const conditionsMatch = this.evaluateConditions(rule, task);
         if (!conditionsMatch) {
@@ -1792,8 +1825,14 @@ export class TaskService {
           continue;
         }
 
+        currentChain.firedRules.add(ruleTaskKey);
+        const nextChain = {
+          depth: currentChain.depth + 1,
+          firedRules: currentChain.firedRules,
+        };
+
         for (const action of rule.actions || []) {
-          await this.executeAutomationAction(action, task, orgId, actorUserId, rule);
+          await this.executeAutomationAction(action, task, orgId, actorUserId, rule, nextChain);
         }
 
         rule.runCount = (rule.runCount || 0) + 1;
@@ -1821,6 +1860,7 @@ export class TaskService {
     orgId: string,
     actorUserId: string | undefined,
     rule: IAutomationRule,
+    _chain?: { depth: number; firedRules: Set<string> },
   ): Promise<void> {
     const params = action?.params || {};
     const taskId = task._id?.toString?.() || task.id || String(task._id);
@@ -1885,15 +1925,20 @@ export class TaskService {
         return;
       }
       case 'add_comment': {
-        const content = params.content || params.text;
-        if (!content) return;
+        const rawContent = params.content || params.text;
+        if (typeof rawContent !== 'string' || !rawContent.trim()) return;
+        // Cap length so a malicious rule can't shove a 10MB comment into
+        // every task it touches.
+        const content = rawContent.slice(0, 5_000);
+        // rule.name is also attacker-configurable; sanitize before embedding.
+        const safeRuleName = String(rule.name || 'rule').slice(0, 100).replace(/[\r\n\t]/g, ' ');
         await this.taskModel.updateOne(
           { _id: taskId, organizationId: orgId },
           {
             $push: {
               comments: {
                 userId: systemUser,
-                content: `[Automation: ${rule.name}] ${content}`,
+                content: `[Automation: ${safeRuleName}] ${content}`,
                 createdAt: new Date(),
               },
             },
@@ -1902,15 +1947,40 @@ export class TaskService {
         return;
       }
       case 'send_notification': {
-        // Fire-and-forget notification via notification service
+        // Fire-and-forget notification via notification service.
+        //
+        // SECURITY: A manager who can create automation rules can set
+        // params.title / params.message to anything — including phishing
+        // text ("Your password expired, click https://evil.com"). Enforce
+        // a hard prefix so recipients can tell the message was generated
+        // by an automation rule rather than a human, and strip any
+        // external URLs so the rule can't be used to distribute links to
+        // attacker-controlled domains.
         const recipients: string[] = Array.isArray(params.userIds)
-          ? params.userIds
+          ? params.userIds.slice(0, 50) // ArrayMaxSize DoS guard
           : params.userId
             ? [params.userId]
             : task.assigneeId
               ? [task.assigneeId]
               : [];
         if (recipients.length === 0) return;
+
+        const safeRuleName = String(rule.name || 'rule').slice(0, 100).replace(/[\r\n\t]/g, ' ');
+        const sanitizeText = (raw: unknown, max: number): string => {
+          if (typeof raw !== 'string') return '';
+          // Strip URLs and control characters; cap length.
+          return raw
+            .replace(/https?:\/\/\S+/gi, '[link removed]')
+            .replace(/[\r\n\t]+/g, ' ')
+            .replace(/[\x00-\x1f\x7f]/g, '')
+            .slice(0, max)
+            .trim();
+        };
+        const userTitle = sanitizeText(params.title, 120);
+        const userMessage = sanitizeText(params.message, 500);
+        const title = `[Automation] ${userTitle || `Rule "${safeRuleName}" triggered`}`;
+        const message = userMessage || `Task ${task.taskKey || task.title} triggered automation`;
+
         const actor = { userId: systemUser, userName: 'Automation', userEmail: 'automation@nexora' };
         for (const userId of recipients) {
           await this.notificationService
@@ -1918,8 +1988,8 @@ export class TaskService {
               organizationId: orgId,
               userId,
               type: 'mention',
-              title: params.title || `Automation rule "${rule.name}" triggered`,
-              message: params.message || `Task ${task.taskKey || task.title} triggered automation`,
+              title,
+              message,
               taskId,
               projectId: task.projectId,
               taskKey: task.taskKey,

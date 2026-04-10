@@ -178,18 +178,25 @@ export class ScimService {
     const email = String(body.userName).toLowerCase();
     const existing = await this.userModel.findOne({ email });
     if (existing) {
-      // If user exists but is not yet a member of this org, add them. This
-      // matches typical SCIM provisioning semantics where an identity provider
-      // attaches an existing identity to a new tenant.
-      if (!(existing.organizations || []).includes(orgId)) {
-        existing.organizations = [...(existing.organizations || []), orgId];
-        await existing.save();
-        this.logger.log(`SCIM: Attached existing user ${email} to org ${orgId}`);
-        return this.toScimUser(existing.toObject());
+      const alreadyMember = (existing.organizations || []).includes(orgId);
+      if (alreadyMember) {
+        throw new ConflictException({
+          schemas: ['urn:ietf:params:scim:api:messages:2.0:Error'],
+          detail: 'User already exists',
+          status: '409',
+        });
       }
+
+      // SECURITY: An existing identity (member of another org) must NOT be
+      // silently pulled into this org via SCIM. An attacker who controls an
+      // IdP mapping could otherwise gain access to arbitrary users' data by
+      // provisioning `ceo@bigcorp.com` in their own org. Return 409 so the
+      // IdP surfaces the collision to a human admin who can explicitly
+      // invite via the normal flow.
       throw new ConflictException({
         schemas: ['urn:ietf:params:scim:api:messages:2.0:Error'],
-        detail: 'User already exists',
+        detail:
+          'A user with this email already exists in another organization. Cross-organization attachment via SCIM is not permitted — invite the user through the regular org invitation flow.',
         status: '409',
       });
     }

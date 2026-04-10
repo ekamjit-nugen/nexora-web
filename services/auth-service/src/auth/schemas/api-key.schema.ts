@@ -5,6 +5,8 @@ export interface IApiKey extends Document {
   name: string;
   prefix: string;
   keyHash: string;
+  /** SHA-256(fullKey) for O(1) lookup. bcrypt keyHash is kept as secondary verification. */
+  keyLookupHash?: string;
   scopes: string[];
   createdBy: string;
   lastUsedAt?: Date;
@@ -27,6 +29,7 @@ export const ApiKeySchema = new Schema<IApiKey>(
     name: { type: String, required: true, trim: true },
     prefix: { type: String, required: true },
     keyHash: { type: String, required: true },
+    keyLookupHash: { type: String, default: null, index: true, sparse: true },
     scopes: { type: [String], default: [] },
     createdBy: { type: String, required: true },
     lastUsedAt: { type: Date, default: null },

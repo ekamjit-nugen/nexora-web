@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsDateString, IsNumber, Min, Max, IsBoolean, IsArray, ValidateNested, IsEmail } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsDateString, IsNumber, Min, Max, IsBoolean, IsArray, ValidateNested, IsEmail, MaxLength, ArrayMaxSize, ArrayMinSize, IsMongoId } from 'class-validator';
 import { Type } from 'class-transformer';
 
 // ── Salary Component DTO ──
@@ -504,21 +504,27 @@ export class CandidateQueryDto {
 
 // ── AI Resume Parsing & Smart Match DTOs ──
 
+// MAX_RESUME_LENGTH: caps resume payload before it hits the LLM. 100k chars
+// is ~25k tokens — well above a normal 2-page CV and well below the cost
+// cliff for a single request. Adjust via config if customers have legit
+// multi-page research CVs.
+const MAX_RESUME_LENGTH = 100_000;
+
 export class ParseResumeDto {
-  @IsString() resumeText: string; // raw text or URL
-  @IsOptional() @IsString() jobPostingId?: string; // for auto-match scoring
+  @IsString() @MaxLength(MAX_RESUME_LENGTH) resumeText: string; // raw text or URL
+  @IsOptional() @IsString() @MaxLength(64) jobPostingId?: string; // for auto-match scoring
 }
 
 export class SmartMatchDto {
-  @IsString() jobPostingId: string;
+  @IsString() @MaxLength(64) jobPostingId: string;
   @IsOptional() @IsNumber() @Min(0) @Max(100) minScore?: number;
   @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
 }
 
 export class ParseAndCreateCandidateDto {
-  @IsString() jobPostingId: string;
-  @IsString() resumeText: string;
-  @IsEmail() email: string;
+  @IsString() @MaxLength(64) jobPostingId: string;
+  @IsString() @MaxLength(MAX_RESUME_LENGTH) resumeText: string;
+  @IsEmail() @MaxLength(320) email: string;
 }
 
 // ── Missing DTOs for raw @Body() parameters ──
@@ -804,36 +810,42 @@ export class AnnouncementAttachmentDto {
 }
 
 export class CreateAnnouncementDto {
-  @IsString() title: string;
-  @IsString() content: string;
+  @IsString() @MaxLength(200) title: string;
+  @IsString() @MaxLength(20_000) content: string;
   @IsOptional() @IsEnum(['general', 'policy', 'event', 'celebration', 'company_update', 'urgent'])
   category?: string;
   @IsOptional() @IsEnum(['low', 'normal', 'high', 'critical']) priority?: string;
   @IsOptional() @IsEnum(['all', 'department', 'designation', 'specific']) targetAudience?: string;
-  @IsOptional() @IsArray() departments?: string[];
-  @IsOptional() @IsArray() designations?: string[];
-  @IsOptional() @IsArray() employeeIds?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(200) @IsString({ each: true }) @MaxLength(120, { each: true })
+  departments?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(200) @IsString({ each: true }) @MaxLength(120, { each: true })
+  designations?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(5_000) @IsString({ each: true }) @MaxLength(64, { each: true })
+  employeeIds?: string[];
   @IsOptional() @IsDateString() publishedAt?: string;
   @IsOptional() @IsDateString() expiresAt?: string;
   @IsOptional() @IsBoolean() isPinned?: boolean;
-  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => AnnouncementAttachmentDto)
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => AnnouncementAttachmentDto)
   attachments?: AnnouncementAttachmentDto[];
 }
 
 export class UpdateAnnouncementDto {
-  @IsOptional() @IsString() title?: string;
-  @IsOptional() @IsString() content?: string;
+  @IsOptional() @IsString() @MaxLength(200) title?: string;
+  @IsOptional() @IsString() @MaxLength(20_000) content?: string;
   @IsOptional() @IsEnum(['general', 'policy', 'event', 'celebration', 'company_update', 'urgent'])
   category?: string;
   @IsOptional() @IsEnum(['low', 'normal', 'high', 'critical']) priority?: string;
   @IsOptional() @IsEnum(['all', 'department', 'designation', 'specific']) targetAudience?: string;
-  @IsOptional() @IsArray() departments?: string[];
-  @IsOptional() @IsArray() designations?: string[];
-  @IsOptional() @IsArray() employeeIds?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(200) @IsString({ each: true }) @MaxLength(120, { each: true })
+  departments?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(200) @IsString({ each: true }) @MaxLength(120, { each: true })
+  designations?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(5_000) @IsString({ each: true }) @MaxLength(64, { each: true })
+  employeeIds?: string[];
   @IsOptional() @IsDateString() publishedAt?: string;
   @IsOptional() @IsDateString() expiresAt?: string;
   @IsOptional() @IsBoolean() isPinned?: boolean;
-  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => AnnouncementAttachmentDto)
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => AnnouncementAttachmentDto)
   attachments?: AnnouncementAttachmentDto[];
 }
 
@@ -855,7 +867,12 @@ export class AnnouncementReadDto {}
 // ===========================================================================
 
 export class CreateKudosDto {
-  @IsArray() toUserIds: string[];
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MaxLength(64, { each: true })
+  toUserIds: string[];
   @IsEnum([
     'teamwork',
     'innovation',
@@ -869,7 +886,7 @@ export class CreateKudosDto {
     'learning',
   ])
   type: string;
-  @IsString() message: string;
+  @IsString() @MaxLength(2_000) message: string;
   @IsOptional() @IsEnum(['public', 'team', 'private']) visibility?: string;
 }
 
