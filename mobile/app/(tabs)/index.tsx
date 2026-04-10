@@ -340,9 +340,27 @@ export default function HomeScreen() {
             </View>
             <View style={[styles.statCard, { borderLeftColor: COLORS.success }]}>
               <Text style={[styles.statNumber, { color: COLORS.success }]}>
-                {leaveBalanceData?.data
-                  ? leaveBalanceData.data.reduce((sum: number, b: any) => sum + (b.remaining ?? b.balance ?? 0), 0)
-                  : "--"}
+                {(() => {
+                  const data = leaveBalanceData?.data as any;
+                  if (!data) return "--";
+                  // Handle array format: [{ remaining: n, ... }]
+                  if (Array.isArray(data)) {
+                    return data.reduce((sum: number, b: any) => sum + (b.remaining ?? b.balance ?? 0), 0);
+                  }
+                  // Handle nested array: { balances: [...] }
+                  if (Array.isArray(data.balances)) {
+                    return data.balances.reduce((sum: number, b: any) => sum + (b.remaining ?? b.balance ?? 0), 0);
+                  }
+                  // Handle object format: { casual: 10, sick: 5, ... }
+                  if (typeof data === "object") {
+                    return Object.values(data).reduce((sum: number, v: any) => {
+                      if (typeof v === "number") return sum + v;
+                      if (v && typeof v === "object" && typeof v.remaining === "number") return sum + v.remaining;
+                      return sum;
+                    }, 0);
+                  }
+                  return "--";
+                })()}
               </Text>
               <Text style={styles.statLabel}>Leaves Left</Text>
             </View>
