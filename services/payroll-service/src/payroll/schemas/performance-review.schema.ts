@@ -44,6 +44,12 @@ export interface IPerformanceReview extends Document {
   cycleId: string;
   employeeId: string;
   managerId?: string;
+  /**
+   * Explicit roster of users who are permitted to submit a peer review for
+   * this review. Anyone not in this list is rejected, closing the "any
+   * employee can drop a 1-star review on anyone" career-sabotage vector.
+   */
+  assignedPeerReviewerIds: string[];
   status: string;
   goalIds: string[];
   selfReview?: ISelfReview;
@@ -72,6 +78,7 @@ export const PerformanceReviewSchema = new Schema<IPerformanceReview>(
     cycleId: { type: String, required: true, index: true },
     employeeId: { type: String, required: true, index: true },
     managerId: { type: String, default: null },
+    assignedPeerReviewerIds: { type: [String], default: [] },
     status: {
       type: String,
       enum: [

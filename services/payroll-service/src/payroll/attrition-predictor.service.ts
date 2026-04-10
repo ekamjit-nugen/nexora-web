@@ -124,13 +124,52 @@ export class AttritionPredictorService {
           : 12),
       );
 
-      // Get org median salary
-      const allStructures = await this.salaryStructureModel
-        .find({ organizationId: orgId, status: 'active', isDeleted: false })
-        .lean();
-      const salaries = allStructures.map(s => s.ctc || 0).filter(Boolean).sort((a, b) => a - b);
-      const medianSalary = salaries.length > 0 ? salaries[Math.floor(salaries.length / 2)] : 1;
-      const salaryVsMedian = medianSalary > 0 ? (salaryStructure.ctc || 0) / medianSalary : 1;
+      // B-H16/B-H17: previously compared this employee's CTC against the
+      // median of EVERY active structure in the org — comparing an intern
+      // to the CEO is garbage input. Segment by designation (the closest
+      // stand-in for "peer group" we have without an explicit role level)
+      // and fall back to the full-org median only when the peer group has
+      // too few data points to be reliable. When no salary data exists at
+      // all, return `null` instead of a fake `medianSalary = 1` which
+      // previously produced astronomical salaryVsMedian scores.
+      const MIN_PEER_GROUP_SIZE = 5;
+      const designation = (salaryStructure as any).designation || null;
+
+      let salaryVsMedian: number | null = null;
+      if (designation) {
+        const peerStructures = await this.salaryStructureModel
+          .find({
+            organizationId: orgId,
+            status: 'active',
+            isDeleted: false,
+            designation,
+          })
+          .lean();
+        const peerSalaries = peerStructures
+          .map((s) => s.ctc || 0)
+          .filter((v) => v > 0)
+          .sort((a, b) => a - b);
+        if (peerSalaries.length >= MIN_PEER_GROUP_SIZE) {
+          const median = peerSalaries[Math.floor(peerSalaries.length / 2)];
+          if (median > 0) salaryVsMedian = (salaryStructure.ctc || 0) / median;
+        }
+      }
+      if (salaryVsMedian === null) {
+        const allStructures = await this.salaryStructureModel
+          .find({ organizationId: orgId, status: 'active', isDeleted: false })
+          .lean();
+        const salaries = allStructures
+          .map((s) => s.ctc || 0)
+          .filter((v) => v > 0)
+          .sort((a, b) => a - b);
+        if (salaries.length >= MIN_PEER_GROUP_SIZE) {
+          const median = salaries[Math.floor(salaries.length / 2)];
+          if (median > 0) salaryVsMedian = (salaryStructure.ctc || 0) / median;
+        }
+      }
+      // Still null? Mark as "unknown" by treating the factor as neutral
+      // (1.0 = on-market) so it doesn't contribute false signal.
+      if (salaryVsMedian === null) salaryVsMedian = 1;
 
       // Try to get real attendance/leave data from other services
       let avgMonthlyLeaveDays = 2; // default
@@ -166,8 +205,13 @@ export class AttritionPredictorService {
         status: { $in: ['completed', 'fnf_approved'] },
         createdAt: { $gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) },
       });
-      const previousAttritionInTeam = allStructures.length > 0
-        ? Math.min(1, recentExits / allStructures.length)
+      const orgHeadcount = await this.salaryStructureModel.countDocuments({
+        organizationId: orgId,
+        status: 'active',
+        isDeleted: false,
+      });
+      const previousAttritionInTeam = orgHeadcount > 0
+        ? Math.min(1, recentExits / orgHeadcount)
         : 0;
 
       return {

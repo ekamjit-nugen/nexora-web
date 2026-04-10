@@ -31,6 +31,8 @@ export interface ICourseQuizQuestion {
 export interface ICourseQuiz {
   passingScore: number;
   questions: ICourseQuizQuestion[];
+  /** Max number of submissions before the learner is locked out. Default 5. */
+  maxAttempts?: number;
 }
 
 export interface ICourseStats {
@@ -125,6 +127,7 @@ export const CourseSchema = new Schema<ICourse>(
     quiz: {
       type: {
         passingScore: { type: Number, default: 70 },
+        maxAttempts: { type: Number, default: 5 },
         questions: [
           {
             id: { type: String, required: true },

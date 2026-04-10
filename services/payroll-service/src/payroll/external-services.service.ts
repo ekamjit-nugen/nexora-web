@@ -45,6 +45,25 @@ export class ExternalServicesService {
     return this.fetchJSON(`${this.hrServiceUrl}/api/v1/employees/${employeeId}`, token);
   }
 
+  // Fetch active employee roster for an org. Used for review-cycle startup
+  // to ensure new joiners are included even before they have a salary
+  // structure provisioned. Returns null on any failure so callers can fall
+  // back to an alternate source of truth.
+  async getActiveEmployees(orgId: string, token?: string): Promise<any[] | null> {
+    try {
+      const result = await this.fetchJSON(
+        `${this.hrServiceUrl}/api/v1/employees?status=active&limit=5000`,
+        token,
+      );
+      if (Array.isArray(result)) return result;
+      if (result && Array.isArray(result.data)) return result.data;
+      if (result && Array.isArray(result.items)) return result.items;
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   // Fetch attendance summary for a month from attendance-service
   async getMonthlyAttendance(employeeId: string, month: number, year: number, token?: string): Promise<any> {
     return this.fetchJSON(

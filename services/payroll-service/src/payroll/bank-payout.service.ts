@@ -539,25 +539,59 @@ export class BankPayoutService {
       .lean();
   }
 
-  async generateBankFile(payrollRunId: string, orgId: string): Promise<string> {
+  /**
+   * Generate a bank-file CSV for the given payroll run.
+   *
+   * B-H22: Previously exported the FULL bank account number, which
+   * violates PCI/RBI data-minimization rules and exposes finance staff to
+   * data-leak liability. By default we mask all but the last 4 digits.
+   * A caller with explicit write authority can request unmasked output
+   * via `options.unmasked = true` — but that path must be gated by a
+   * privileged RBAC role at the controller level and audited.
+   */
+  async generateBankFile(
+    payrollRunId: string,
+    orgId: string,
+    options?: { unmasked?: boolean; actorUserId?: string },
+  ): Promise<string> {
     const entries = await this.payrollEntryModel.find({
       payrollRunId,
       organizationId: orgId,
       isDeleted: false,
     }).lean();
 
+    const unmasked = options?.unmasked === true;
+    if (unmasked) {
+      this.logger.warn(
+        `[AUDIT] Unmasked bank file generated for payrollRun=${payrollRunId} org=${orgId} by user=${options?.actorUserId || 'unknown'}`,
+      );
+    }
+
+    const maskAccount = (account: string): string => {
+      if (!account) return '';
+      const s = String(account);
+      if (s.length <= 4) return '*'.repeat(s.length);
+      return '*'.repeat(s.length - 4) + s.slice(-4);
+    };
+    const csvEscape = (v: unknown): string => {
+      const s = String(v ?? '');
+      if (/[,"\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+
     const header = 'Sr No,Employee ID,Beneficiary Name,Account Number,IFSC,Amount,Transaction Type,Remarks';
     const rows = entries.map((e, idx) => {
       const details = (e as any).paymentDetails || {};
+      const account = unmasked ? (details.accountNumber || '') : maskAccount(details.accountNumber || '');
       return [
         idx + 1,
-        e.employeeId,
-        details.accountHolder || '',
-        details.accountNumber || '',
-        details.ifsc || '',
+        csvEscape(e.employeeId),
+        csvEscape(details.accountHolder || ''),
+        csvEscape(account),
+        csvEscape(details.ifsc || ''),
         ((e.totals?.netPayable || 0) / 100).toFixed(2),
         'NEFT',
-        `Salary-${payrollRunId}`,
+        csvEscape(`Salary-${payrollRunId}`),
       ].join(',');
     });
     return [header, ...rows].join('\n');
