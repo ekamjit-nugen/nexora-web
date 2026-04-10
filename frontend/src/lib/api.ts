@@ -51,10 +51,26 @@ async function request<T>(
     localStorage.setItem('accessToken', newAccessToken);
   }
 
-  const data = await res.json();
+  // Safely parse JSON — upstream services (crashing containers, proxy errors) may return plain text
+  let data: any;
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    try {
+      data = await res.json();
+    } catch {
+      data = { message: 'Invalid JSON response from server' };
+    }
+  } else {
+    const text = await res.text();
+    data = {
+      message: res.ok
+        ? 'Received non-JSON response'
+        : (text.length > 200 ? `Server error (${res.status})` : text || `Server error (${res.status})`),
+    };
+  }
 
   if (!res.ok) {
-    throw new Error(data.message || data.error?.message || "Request failed");
+    throw new Error(data.message || data.error?.message || `Request failed with status ${res.status}`);
   }
 
   return data;

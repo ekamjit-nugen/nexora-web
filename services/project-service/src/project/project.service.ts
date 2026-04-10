@@ -922,4 +922,30 @@ export class ProjectService {
 
     return project;
   }
+
+  async getManagerOverview(orgId?: string): Promise<any> {
+    const filter: any = { isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+
+    const [total, active, completed, onHold] = await Promise.all([
+      this.projectModel.countDocuments(filter),
+      this.projectModel.countDocuments({ ...filter, status: 'active' }),
+      this.projectModel.countDocuments({ ...filter, status: 'completed' }),
+      this.projectModel.countDocuments({ ...filter, status: 'on_hold' }),
+    ]);
+
+    const recentProjects = await this.projectModel
+      .find(filter)
+      .sort({ updatedAt: -1 })
+      .limit(5)
+      .lean();
+
+    return {
+      stats: { total, active, completed, onHold },
+      recentProjects,
+      teamWorkload: [],
+      upcomingDeadlines: [],
+      pendingApprovals: { leaveRequests: 0, timesheets: 0, expenses: 0 },
+    };
+  }
 }

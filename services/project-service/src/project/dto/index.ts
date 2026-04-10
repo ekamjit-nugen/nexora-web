@@ -495,17 +495,6 @@ export class BulkInviteDto {
 
 // ── Clone Task DTO ──
 
-export class CloneTaskDto {
-  @IsString()
-  title: string;
-
-  @IsString()
-  targetProjectId: string;
-
-  @IsOptional() @ValidateNested() @Type(() => CloneOptionsDto)
-  include?: CloneOptionsDto;
-}
-
 export class CloneOptionsDto {
   @IsOptional() @IsBoolean()
   description?: boolean;
@@ -521,4 +510,15 @@ export class CloneOptionsDto {
 
   @IsOptional() @IsBoolean()
   links?: boolean;
+}
+
+export class CloneTaskDto {
+  @IsString()
+  title: string;
+
+  @IsString()
+  targetProjectId: string;
+
+  @IsOptional() @ValidateNested() @Type(() => CloneOptionsDto)
+  include?: CloneOptionsDto;
 }
