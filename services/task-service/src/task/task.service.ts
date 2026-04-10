@@ -973,7 +973,7 @@ export class TaskService {
     return ts;
   }
 
-  async reviewTimesheet(id: string, dto: ReviewTimesheetDto, reviewerId: string, orgId?: string) {
+  async reviewTimesheet(id: string, dto: ReviewTimesheetDto, reviewerId: string, orgId?: string, userRole?: string) {
     const filter: any = { _id: id, isDeleted: false, status: 'submitted' };
     if (orgId) filter.organizationId = orgId;
     const ts = await this.timesheetModel.findOneAndUpdate(
@@ -1975,5 +1975,62 @@ export class TaskService {
       default:
         return;
     }
+  }
+
+  // ── Stubbed methods (incomplete features, prevent build failure) ──
+
+  async getTasksForExport(filters: any, orgId?: string): Promise<any[]> {
+    const filter: any = { isDeleted: false };
+    if (filters?.projectId) filter.projectId = filters.projectId;
+    if (filters?.status) filter.status = filters.status;
+    if (filters?.type) filter.type = filters.type;
+    if (filters?.assigneeId) filter.assigneeId = filters.assigneeId;
+    if (filters?.sprintId) filter.sprintId = filters.sprintId;
+    if (orgId) filter.organizationId = orgId;
+    return this.taskModel.find(filter).lean();
+  }
+
+  tasksToCSV(tasks: any[]): string {
+    if (!tasks || tasks.length === 0) return 'id,title,status,assigneeId,priority,dueDate\n';
+    const header = 'id,title,status,assigneeId,priority,dueDate';
+    const rows = tasks.map(t =>
+      [t._id, `"${(t.title || '').replace(/"/g, '""')}"`, t.status, t.assigneeId || '', t.priority || '', t.dueDate || ''].join(',')
+    );
+    return [header, ...rows].join('\n');
+  }
+
+  getImportTemplate(format?: string): string {
+    if (format === 'json') return '[]';
+    return 'title,description,status,priority,assigneeId,dueDate,storyPoints\n';
+  }
+
+  async importTasks(csvContent: any, projectId?: string, userId?: string, orgId?: string, projectKey?: string): Promise<{ created: number; failed: number }> {
+    this.logger.warn('importTasks is a stub — feature not fully implemented');
+    return { created: 0, failed: 0 };
+  }
+
+  async expireOldDelegations(): Promise<number> {
+    // Stub: would normally expire delegations past their endDate
+    return 0;
+  }
+
+  async createDelegation(dto: any, userId: string, orgId?: string): Promise<any> {
+    throw new BadRequestException('Delegation feature not yet implemented');
+  }
+
+  async getMyDelegations(userId: string, orgId?: string): Promise<any[]> {
+    return [];
+  }
+
+  async getDelegatedToMe(userId: string, orgId?: string): Promise<any[]> {
+    return [];
+  }
+
+  async getAutoDelegationRules(userIdOrOrgId?: string, orgId?: string): Promise<any[]> {
+    return [];
+  }
+
+  async revokeDelegation(id: string, userId: string, orgId?: string): Promise<any> {
+    throw new BadRequestException('Delegation feature not yet implemented');
   }
 }

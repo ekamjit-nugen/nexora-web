@@ -120,8 +120,8 @@ export class ChatController {
 
   @Get('conversations/:id/messages')
   @UseGuards(JwtAuthGuard)
-  async getMessages(@Param('id') id: string, @Query() query: MessageQueryDto) {
-    const result = await this.chatService.getMessages(id, query.page, query.limit);
+  async getMessages(@Param('id') id: string, @Query() query: MessageQueryDto, @Req() req: any) {
+    const result = await this.chatService.getMessages(id, req.user.userId, query.page, query.limit);
     return { success: true, message: 'Messages retrieved', data: result.data, pagination: result.pagination };
   }
 
@@ -160,8 +160,8 @@ export class ChatController {
 
   @Get('conversations/:id/search')
   @UseGuards(JwtAuthGuard)
-  async searchMessages(@Param('id') id: string, @Query() query: SearchMessageDto) {
-    const messages = await this.chatService.searchMessages(id, query.q);
+  async searchMessages(@Param('id') id: string, @Query() query: SearchMessageDto, @Req() req: any) {
+    const messages = await this.chatService.searchMessages(id, query.q, req.user.userId);
     return { success: true, message: 'Search results', data: messages };
   }
 

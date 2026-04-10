@@ -32,7 +32,7 @@ export class ExternalServicesService {
         this.logger.warn(`External call failed: ${url} → ${res.status}`);
         return null;
       }
-      const json = await res.json();
+      const json: any = await res.json();
       return json.data || json;
     } catch (err) {
       this.logger.warn(`External call error: ${url} → ${err.message}`);
@@ -104,7 +104,7 @@ Return only valid JSON, no markdown, no commentary.`;
         }),
       });
       if (!res.ok) return null;
-      const json = await res.json();
+      const json: any = await res.json();
       const text = json.data?.response || json.response || json.data?.content || '';
       // Extract JSON from response
       const match = text.match(/\{[\s\S]*\}/);
@@ -151,7 +151,7 @@ Return only valid JSON.`;
         }),
       });
       if (!res.ok) return null;
-      const json = await res.json();
+      const json: any = await res.json();
       const text = json.data?.response || json.response || '';
       const match = text.match(/\{[\s\S]*\}/);
       if (!match) return null;

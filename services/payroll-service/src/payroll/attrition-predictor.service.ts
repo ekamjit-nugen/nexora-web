@@ -6,7 +6,7 @@ import { IOffboarding } from './schemas/offboarding.schema';
 import { IPerformanceReview } from './schemas/performance-review.schema';
 import { ExternalServicesService } from './external-services.service';
 
-interface AttritionFeatures {
+export interface AttritionFeatures {
   employeeId: string;
   tenureMonths: number;
   avgMonthlyLeaveDays: number;
@@ -16,7 +16,7 @@ interface AttritionFeatures {
   previousAttritionInTeam: number; // 0-1
 }
 
-interface AttritionPrediction {
+export interface AttritionPrediction {
   employeeId: string;
   riskScore: number; // 0-100
   factors: string[]; // top 3 contributing factors
