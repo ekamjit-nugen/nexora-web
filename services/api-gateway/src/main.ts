@@ -24,6 +24,7 @@ const SERVICES = {
   policy: process.env.POLICY_SERVICE_URL || 'http://policy-service:3013',
   notification: process.env.NOTIFICATION_SERVICE_URL || 'http://notification-service:3053',
   media: process.env.MEDIA_SERVICE_URL || 'http://media-service:3052',
+  payroll: process.env.PAYROLL_SERVICE_URL || 'http://payroll-service:3014',
 };
 
 // Route map: path prefix -> service URL
@@ -38,6 +39,16 @@ const ROUTES: Array<{ paths: string[]; target: string; name: string }> = [
   { paths: ['/api/v1/projects'], target: SERVICES.project, name: 'project-service' },
   { paths: ['/api/v1/tasks', '/api/v1/boards', '/api/v1/sprints', '/api/v1/timesheets'], target: SERVICES.task, name: 'task-service' },
   { paths: ['/api/v1/calls', '/api/v1/meetings'], target: SERVICES.calling, name: 'calling-service' },
+  { paths: [
+    '/api/v1/salary-structures', '/api/v1/payroll-runs', '/api/v1/payslips',
+    '/api/v1/investment-declarations', '/api/v1/expense-claims', '/api/v1/onboarding',
+    '/api/v1/offboarding', '/api/v1/analytics', '/api/v1/loans', '/api/v1/jobs',
+    '/api/v1/candidates', '/api/v1/recruitment', '/api/v1/statutory-reports',
+    '/api/v1/goals', '/api/v1/review-cycles', '/api/v1/reviews',
+    '/api/v1/announcements', '/api/v1/kudos', '/api/v1/surveys',
+    '/api/v1/courses', '/api/v1/enrollments', '/api/v1/certificates',
+    '/api/v1/learning-paths', '/api/v1/bank-transactions',
+  ], target: SERVICES.payroll, name: 'payroll-service' },
   { paths: ['/api/v1/ai'], target: SERVICES.ai, name: 'ai-service' },
   { paths: ['/api/v1/chat'], target: SERVICES.chat, name: 'chat-service' },
   { paths: ['/api/v1/notifications'], target: SERVICES.notification, name: 'notification-service' },
