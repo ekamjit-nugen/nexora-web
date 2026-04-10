@@ -246,4 +246,59 @@ export class OrganizationController {
     await this.organizationService.deleteOrganization(orgId, req.user.userId);
     return { success: true, message: 'Organization deleted' };
   }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // SCIM 2.0 enterprise provisioning
+  //
+  // Only org owners/admins may issue, rotate, or disable the SCIM token.
+  // The plaintext token is returned exactly ONCE on enable/rotate and is
+  // never retrievable again. Customers store it in their IdP (Okta,
+  // Azure AD, OneLogin) configuration.
+  // ──────────────────────────────────────────────────────────────────────
+
+  @Get('organizations/:id/scim')
+  @UseGuards(JwtAuthGuard, OrgMembershipGuard)
+  @HttpCode(HttpStatus.OK)
+  async getScimStatus(@Param('id') orgId: string, @Req() req: any) {
+    requireAdminRole(req);
+    const status = await this.organizationService.getScimStatus(orgId);
+    return { success: true, data: status };
+  }
+
+  @Post('organizations/:id/scim/enable')
+  @UseGuards(JwtAuthGuard, OrgMembershipGuard)
+  @HttpCode(HttpStatus.OK)
+  async enableScim(@Param('id') orgId: string, @Req() req: any) {
+    requireAdminRole(req);
+    const result = await this.organizationService.enableScim(orgId, req.user.userId);
+    return {
+      success: true,
+      message:
+        'SCIM enabled. Store this token in your IdP — it will not be shown again.',
+      data: result,
+    };
+  }
+
+  @Post('organizations/:id/scim/rotate')
+  @UseGuards(JwtAuthGuard, OrgMembershipGuard)
+  @HttpCode(HttpStatus.OK)
+  async rotateScimToken(@Param('id') orgId: string, @Req() req: any) {
+    requireAdminRole(req);
+    const result = await this.organizationService.rotateScimToken(orgId, req.user.userId);
+    return {
+      success: true,
+      message:
+        'SCIM token rotated. Update your IdP with the new token — the old one has been invalidated.',
+      data: result,
+    };
+  }
+
+  @Post('organizations/:id/scim/disable')
+  @UseGuards(JwtAuthGuard, OrgMembershipGuard)
+  @HttpCode(HttpStatus.OK)
+  async disableScim(@Param('id') orgId: string, @Req() req: any) {
+    requireAdminRole(req);
+    await this.organizationService.disableScim(orgId, req.user.userId);
+    return { success: true, message: 'SCIM disabled for this organization' };
+  }
 }

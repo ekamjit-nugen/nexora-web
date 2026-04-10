@@ -148,7 +148,16 @@ class RazorpayProvider implements IPayoutProvider {
   }
 
   async getPayoutStatus(providerTransactionId: string): Promise<PayoutResult> {
-    if (!this.keyId || !this.keySecret) {
+    if (!this.keyId || !this.keySecret || !this.accountNumber) {
+      // SECURITY: Same rule as initiatePayout — do NOT fabricate a processed
+      // status when real money is expected to move. In production, missing
+      // credentials must fail loudly so reconciliation jobs don't silently
+      // mark every transaction as "paid" against a non-existent integration.
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException(
+          'Razorpay is not configured. Set RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET and RAZORPAY_ACCOUNT_NUMBER.',
+        );
+      }
       return { success: true, status: 'processed', providerTransactionId };
     }
     try {
@@ -307,20 +316,51 @@ export class BankPayoutService {
           continue;
         }
         if (reservation.status === 'failed') {
-          this.logger.log(
-            `Reclaiming failed transaction for ${entry.employeeId} (retry ${reservation.retryCount || 0})`,
+          // ATOMIC FAILED-RECLAIM
+          //
+          // Previously this was check-then-save, which under concurrent
+          // bulk calls allowed two callers to both observe status='failed'
+          // and both flip to 'pending', both calling provider.initiatePayout
+          // for the same employee. Even with Razorpay's idempotency header
+          // the double-fire window is real if neither request has been
+          // cached yet.
+          //
+          // Now we atomically claim the reclaim slot via a second
+          // findOneAndUpdate guarded on status === 'failed'. Only the
+          // winning caller proceeds; the loser skips this entry.
+          const claimed = await this.bankTransactionModel.findOneAndUpdate(
+            { idempotencyKey, status: 'failed' },
+            {
+              $set: {
+                status: 'pending',
+                failureReason: null,
+                failedAt: null,
+              },
+              $inc: { retryCount: 1 },
+              $push: {
+                auditTrail: {
+                  action: 'retry',
+                  performedBy: userId,
+                  performedAt: now,
+                  notes: 'Bulk retry claim',
+                },
+              },
+            },
+            { new: true },
           );
-          reservation.status = 'pending';
+          if (!claimed) {
+            // Another bulk caller already reclaimed this failed entry —
+            // skip to avoid double-firing the provider.
+            this.logger.log(
+              `Failed entry for ${entry.employeeId} was reclaimed by a concurrent caller — skipping`,
+            );
+            transactions.push(reservation);
+            continue;
+          }
+          reservation.status = claimed.status;
+          reservation.retryCount = claimed.retryCount;
           reservation.failureReason = undefined;
-          reservation.failedAt = null as any;
-          reservation.retryCount = (reservation.retryCount || 0) + 1;
-          reservation.auditTrail.push({
-            action: 'retry',
-            performedBy: userId,
-            performedAt: now,
-            notes: `Bulk retry attempt ${reservation.retryCount}`,
-          });
-          await reservation.save();
+          reservation.failedAt = undefined;
         }
 
         reserved = reservation;

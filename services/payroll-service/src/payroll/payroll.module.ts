@@ -31,6 +31,7 @@ import { CourseSchema } from './schemas/course.schema';
 import { EnrollmentSchema } from './schemas/enrollment.schema';
 import { CertificateSchema } from './schemas/certificate.schema';
 import { LearningPathSchema } from './schemas/learning-path.schema';
+import { CounterSchema } from './schemas/counter.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { ExternalServicesService } from './external-services.service';
 import { BankPayoutService } from './bank-payout.service';
@@ -64,6 +65,7 @@ import { AttritionPredictorService } from './attrition-predictor.service';
       { name: 'Enrollment', schema: EnrollmentSchema },
       { name: 'Certificate', schema: CertificateSchema },
       { name: 'LearningPath', schema: LearningPathSchema },
+      { name: 'Counter', schema: CounterSchema },
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],

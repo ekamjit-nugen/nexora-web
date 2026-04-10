@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Put, Delete,
+  Controller, Get, Post, Put, Patch, Delete,
   Body, Param, Query, UseGuards, Req,
   HttpCode, HttpStatus, Logger,
 } from '@nestjs/common';
@@ -28,7 +28,7 @@ import {
   CreateGoalDto, UpdateGoalDto, GoalCheckInDto, RateGoalDto, GoalQueryDto,
   CreateReviewCycleDto, UpdateReviewCycleDto, StartReviewCycleDto,
   UpdateCycleStatusDto, ReviewCycleQueryDto,
-  SubmitSelfReviewDto, SubmitPeerReviewDto, SubmitManagerReviewDto, FinalizeReviewDto,
+  SubmitSelfReviewDto, SubmitPeerReviewDto, SubmitManagerReviewDto, FinalizeReviewDto, AssignPeerReviewersDto,
   CreateAnnouncementDto, UpdateAnnouncementDto, AnnouncementQueryDto,
   AnnouncementReactDto, AnnouncementReadDto,
   CreateKudosDto, KudosQueryDto,
@@ -1330,6 +1330,25 @@ export class PayrollController {
     const userId = req.user.userId;
     const result = await this.payrollService.submitPeerReview(id, dto, userId, orgId);
     return { success: true, message: 'Peer review submitted', data: result };
+  }
+
+  @Patch('reviews/:id/peer-reviewers')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin', 'manager')
+  async assignPeerReviewers(
+    @Param('id') id: string,
+    @Body() dto: AssignPeerReviewersDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.assignPeerReviewers(
+      id,
+      dto.reviewerIds,
+      userId,
+      orgId,
+    );
+    return { success: true, message: 'Peer reviewers assigned', data: result };
   }
 
   @Post('reviews/:id/manager-review')

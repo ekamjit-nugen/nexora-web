@@ -33,6 +33,7 @@ import { ICourse } from './schemas/course.schema';
 import { IEnrollment } from './schemas/enrollment.schema';
 import { ICertificate } from './schemas/certificate.schema';
 import { ILearningPath } from './schemas/learning-path.schema';
+import { ICounter } from './schemas/counter.schema';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { ExternalServicesService } from './external-services.service';
 import { AttritionPredictorService } from './attrition-predictor.service';
@@ -145,6 +146,7 @@ export class PayrollService {
     @InjectModel('Enrollment') private enrollmentModel: Model<IEnrollment>,
     @InjectModel('Certificate') private certificateModel: Model<ICertificate>,
     @InjectModel('LearningPath') private learningPathModel: Model<ILearningPath>,
+    @InjectModel('Counter') private counterModel: Model<ICounter>,
     private calculationService: PayrollCalculationService,
     private externalServices: ExternalServicesService,
     private attritionPredictorService: AttritionPredictorService,
@@ -4998,10 +5000,34 @@ export class PayrollService {
 
   async getAllGoals(query: GoalQueryDto, userId: string, orgId: string) {
     if (!orgId) throw new ForbiddenException('Organization context required');
-    const filter: any = { organizationId: orgId, isDeleted: false };
+
+    // S-BH18: Scope the goal list to the caller's own goals plus their
+    // direct reports'. Previously any org member could read every goal
+    // in the org, including leadership performance targets. Managers
+    // (fetched via hr-service direct-reports lookup) see their team; ICs
+    // see only themselves; if hr-service is unavailable, fall closed to
+    // self-only.
+    const directReports = await this.externalServices.getDirectReports(userId);
+    const allowedEmployeeIds = Array.from(new Set([userId, ...directReports]));
+
+    // If the caller passes ?employeeId=X, enforce that X is within their
+    // allowed scope — otherwise return an empty page rather than 403 to
+    // avoid leaking which IDs exist.
+    let scopedEmployeeIds: string[] = allowedEmployeeIds;
+    if (query.employeeId) {
+      if (!allowedEmployeeIds.includes(query.employeeId)) {
+        return { records: [], total: 0, page: query.page || 1, limit: query.limit || 20, totalPages: 0 };
+      }
+      scopedEmployeeIds = [query.employeeId];
+    }
+
+    const filter: any = {
+      organizationId: orgId,
+      isDeleted: false,
+      employeeId: { $in: scopedEmployeeIds },
+    };
     if (query.status) filter.status = query.status;
     if (query.cycleId) filter.cycleId = query.cycleId;
-    if (query.employeeId) filter.employeeId = query.employeeId;
     if (query.type) filter.type = query.type;
     if (query.category) filter.category = query.category;
 
@@ -5030,6 +5056,13 @@ export class PayrollService {
       isDeleted: false,
     });
     if (!goal) throw new NotFoundException(`Goal ${id} not found`);
+    // S-BH18: read authorization — a caller can read a goal iff they own
+    // it or they are the owner's line manager. Mutating endpoints use
+    // isManagerOfOrSelf independently; keeping this consistent here
+    // prevents "read CEO's goal by guessing the ID" enumeration.
+    if (!(await this.isManagerOfOrSelf(userId, goal.employeeId))) {
+      throw new NotFoundException(`Goal ${id} not found`);
+    }
     return goal;
   }
 
@@ -5523,6 +5556,85 @@ export class PayrollService {
     return review.save();
   }
 
+  /**
+   * Assign the roster of users permitted to submit peer reviews for a given
+   * performance review.
+   *
+   * Authorization: only the reviewee's line manager (per hr-service) or an
+   * org admin/hr role may set the roster. The controller enforces the
+   * admin/hr role via @Roles; this method enforces manager-of-reviewee as
+   * an additional path.
+   *
+   * Idempotent: repeated calls replace the roster. A reviewer already
+   * included retains any prior submission.
+   */
+  async assignPeerReviewers(
+    id: string,
+    reviewerIds: string[],
+    userId: string,
+    orgId: string,
+  ): Promise<IPerformanceReview> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const review = await this.performanceReviewModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!review) throw new NotFoundException(`Performance review ${id} not found`);
+
+    // The reviewee themselves must NOT be in the roster.
+    const cleaned = Array.from(
+      new Set(
+        (reviewerIds || [])
+          .filter((r): r is string => typeof r === 'string' && r.length > 0)
+          .filter((r) => r !== review.employeeId),
+      ),
+    );
+    if (cleaned.length === 0) {
+      throw new BadRequestException('reviewerIds must contain at least one valid id');
+    }
+    if (cleaned.length > 20) {
+      throw new BadRequestException('Cannot assign more than 20 peer reviewers');
+    }
+
+    // Authorization: caller must be the reviewee's manager, the already-set
+    // managerId on the review, OR an admin/hr role (enforced at controller
+    // via @Roles). We re-check the manager path here so this method is
+    // safe to call from other privileged service code paths.
+    const isAssignedMgr = review.managerId === userId;
+    const isLineMgr = await this.isManagerOfOrSelf(userId, review.employeeId);
+    // Note: isManagerOfOrSelf returns true for self; exclude the reviewee
+    // from managing their own reviewer roster.
+    const isSelf = userId === review.employeeId;
+    if (isSelf || (!isAssignedMgr && !isLineMgr)) {
+      throw new ForbiddenException(
+        'Only the reviewee\'s line manager or an HR admin may assign peer reviewers',
+      );
+    }
+
+    // Cycle must be in a phase that still allows changing the roster.
+    // After peer_review phase has started, new reviewers may still be
+    // added, but not after calibration.
+    const cycle = await this.reviewCycleModel.findOne({
+      _id: review.cycleId,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!cycle) throw new NotFoundException('Review cycle not found');
+    if (['calibration', 'completed', 'cancelled'].includes(cycle.status)) {
+      throw new BadRequestException(
+        `Peer reviewer roster cannot be changed while cycle is in "${cycle.status}"`,
+      );
+    }
+
+    review.assignedPeerReviewerIds = cleaned;
+    await review.save();
+    this.logger.log(
+      `Assigned ${cleaned.length} peer reviewers for review ${id} by ${userId}`,
+    );
+    return review;
+  }
+
   async submitPeerReview(
     id: string,
     dto: SubmitPeerReviewDto,
@@ -5562,10 +5674,7 @@ export class PayrollService {
         `Peer reviews are not accepted while cycle is in "${cycle.status}"`,
       );
     }
-    const peerDeadline =
-      (cycle as any).phases?.peerReview?.endDate ||
-      (cycle as any).phaseDeadlines?.peerReview ||
-      cycle.endDate;
+    const peerDeadline = cycle.peerReviewDeadline || cycle.endDate;
     if (peerDeadline && new Date() > new Date(peerDeadline)) {
       throw new BadRequestException('Peer review phase has ended for this cycle');
     }
@@ -5638,10 +5747,7 @@ export class PayrollService {
         `Manager reviews are not accepted while cycle is in "${cycle.status}"`,
       );
     }
-    const mgrDeadline =
-      (cycle as any).phases?.managerReview?.endDate ||
-      (cycle as any).phaseDeadlines?.managerReview ||
-      cycle.endDate;
+    const mgrDeadline = cycle.managerReviewDeadline || cycle.endDate;
     if (mgrDeadline && new Date() > new Date(mgrDeadline)) {
       throw new BadRequestException('Manager review phase has ended for this cycle');
     }
@@ -7192,13 +7298,25 @@ export class PayrollService {
     const year = new Date().getFullYear();
     const prefix = `CERT-${year}-`;
 
-    // B-H12: Atomic counter prevents the race where two concurrent course
-    // completions read the same "latest" value and both write
-    // CERT-2026-000042. We retry on E11000 duplicate-key errors up to a
-    // small budget so even a second concurrent insert eventually gets a
-    // unique number.
-    for (let attempt = 0; attempt < 10; attempt++) {
-      const latest = await this.certificateModel
+    // B-H12 / S-BH08: Atomic counter via the Counter collection. Each org/
+    // year pair has its own document (`cert:<orgId>:<year>`). findOneAndUpdate
+    // with $inc + upsert is a single MongoDB operation under an implicit
+    // write lock, so concurrent callers receive strictly-increasing sequence
+    // numbers with zero TOCTOU window.
+    //
+    // Legacy note: existing CERT-YYYY-NNNNNN records (pre-counter) may
+    // already occupy some numbers. On first use per (org, year), we
+    // initialize the counter to max(existing, 0) so we don't collide with
+    // legacy certs. This one-time probe is non-racy because the subsequent
+    // $inc is atomic: if two callers race the initialization, one will
+    // set seq=N and the other's init is overridden by its own $inc which
+    // returns seq=N+1, etc.
+    const counterId = `cert:${orgId}:${year}`;
+
+    // Initialize from legacy data if no counter exists yet.
+    const existingCounter = await this.counterModel.findById(counterId).lean();
+    if (!existingCounter) {
+      const latestLegacy = await this.certificateModel
         .findOne({
           organizationId: orgId,
           certificateNumber: { $regex: `^${prefix}` },
@@ -7206,30 +7324,29 @@ export class PayrollService {
         .sort({ certificateNumber: -1 })
         .select('certificateNumber')
         .lean();
-
-      let nextNum = 1;
-      if (latest?.certificateNumber) {
-        const match = latest.certificateNumber.match(/(\d+)$/);
-        if (match) nextNum = parseInt(match[1], 10) + 1;
+      let initialSeq = 0;
+      if (latestLegacy?.certificateNumber) {
+        const match = latestLegacy.certificateNumber.match(/(\d+)$/);
+        if (match) initialSeq = parseInt(match[1], 10);
       }
-      const candidate = `${prefix}${String(nextNum).padStart(6, '0')}`;
-
-      // Reserve the number by inserting a placeholder and relying on the
-      // unique index on certificateNumber to reject races. The real
-      // certificate doc is created by the caller; we just need to know the
-      // number is unclaimed. Because certificateNumber has a unique index
-      // we just return the candidate and let the main insert fail-safe; if
-      // it collides the caller loops here again. The cheap existence probe
-      // below catches the 99% case without an insert.
-      const collision = await this.certificateModel.exists({
-        organizationId: orgId,
-        certificateNumber: candidate,
-      });
-      if (!collision) return candidate;
-      // tiny jitter to reduce tight-loop contention between concurrent callers
-      await new Promise((resolve) => setTimeout(resolve, 5 + Math.floor(Math.random() * 15)));
+      // upsert with $setOnInsert so if another caller has already created
+      // the counter, we don't stomp on their value.
+      await this.counterModel.updateOne(
+        { _id: counterId },
+        { $setOnInsert: { seq: initialSeq } },
+        { upsert: true },
+      );
     }
-    throw new ConflictException('Could not allocate a unique certificate number');
+
+    const counter = await this.counterModel.findOneAndUpdate(
+      { _id: counterId },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
+    );
+    if (!counter) {
+      throw new ConflictException('Failed to allocate certificate number');
+    }
+    return `${prefix}${String(counter.seq).padStart(6, '0')}`;
   }
 
   private generateVerificationCode(): string {
@@ -7265,9 +7382,6 @@ export class PayrollService {
       this.logger.warn(`Unable to fetch employee for certificate: ${err}`);
     }
 
-    const certificateNumber = await this.generateCertificateNumber(orgId);
-    const verificationCode = this.generateVerificationCode();
-
     const completionDays = enrollment.startedAt
       ? Math.ceil(
           (new Date().getTime() - new Date(enrollment.startedAt).getTime()) /
@@ -7275,25 +7389,52 @@ export class PayrollService {
         )
       : 0;
 
-    const cert = new this.certificateModel({
-      organizationId: orgId,
-      employeeId: enrollment.employeeId,
-      courseId: enrollment.courseId,
-      enrollmentId: (enrollment as any)._id.toString(),
-      certificateNumber,
-      courseName: course.title,
-      employeeName,
-      issuedAt: new Date(),
-      score: score ?? null,
-      completionDays,
-      verificationCode,
-      issuedBy: userId,
-      isRevoked: false,
-      downloadCount: 0,
-      isDeleted: false,
-    });
-
-    const saved = await cert.save();
+    // S-BH08 belt-and-braces: even with the atomic counter, if a legacy
+    // record happens to collide on certificateNumber we retry end-to-end
+    // (new number + new verification code). 5 attempts is plenty since the
+    // counter is already race-safe.
+    let saved: ICertificate | null = null;
+    let lastErr: any = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const certificateNumber = await this.generateCertificateNumber(orgId);
+      const verificationCode = this.generateVerificationCode();
+      const cert = new this.certificateModel({
+        organizationId: orgId,
+        employeeId: enrollment.employeeId,
+        courseId: enrollment.courseId,
+        enrollmentId: (enrollment as any)._id.toString(),
+        certificateNumber,
+        courseName: course.title,
+        employeeName,
+        issuedAt: new Date(),
+        score: score ?? null,
+        completionDays,
+        verificationCode,
+        issuedBy: userId,
+        isRevoked: false,
+        downloadCount: 0,
+        isDeleted: false,
+      });
+      try {
+        saved = await cert.save();
+        break;
+      } catch (err: any) {
+        lastErr = err;
+        // E11000 duplicate key — retry with fresh number.
+        if (err?.code === 11000) {
+          this.logger.warn(
+            `Certificate collision on attempt ${attempt + 1} (${certificateNumber}); retrying`,
+          );
+          continue;
+        }
+        throw err;
+      }
+    }
+    if (!saved) {
+      throw new ConflictException(
+        `Failed to issue certificate after 5 attempts: ${lastErr?.message || 'unknown'}`,
+      );
+    }
 
     // Update course avg completion days running average
     const stats = course.stats || ({} as any);

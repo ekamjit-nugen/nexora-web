@@ -4,6 +4,7 @@ import { Model } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
 import { v4 as uuidv4 } from 'uuid';
 import * as nodemailer from 'nodemailer';
+import * as crypto from 'crypto';
 import { IOrganization } from './schemas/organization.schema';
 import { IOrgMembership } from './schemas/org-membership.schema';
 import { IUser } from './schemas/user.schema';
@@ -1126,5 +1127,142 @@ export class OrganizationService {
             : null,
       };
     });
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // SCIM 2.0 enterprise provisioning
+  //
+  // Organizations opt in to SCIM by calling `enableScim`, which generates a
+  // cryptographically random secret, persists its sha256 hash on the org,
+  // and returns the plaintext token ONCE. The token format is
+  // `scim_<orgId>_<secret>` — the same format `ScimService.validateToken`
+  // verifies against `organization.scimTokenHash` using timingSafeEqual.
+  //
+  // The plaintext is never retrievable again. If the customer loses it,
+  // they must call `rotateScimToken` which invalidates the old hash and
+  // returns a new token.
+  // ──────────────────────────────────────────────────────────────────────
+
+  private generateScimTokenPair(orgId: string): { token: string; hash: string; secret: string } {
+    // 32 random bytes → 64 hex chars. Prefix is `scim_<orgId>_`. The secret
+    // must be at least 16 chars per ScimService.validateToken.
+    const secret = crypto.randomBytes(32).toString('hex');
+    const token = `scim_${orgId}_${secret}`;
+    const hash = crypto.createHash('sha256').update(secret).digest('hex');
+    return { token, hash, secret };
+  }
+
+  async enableScim(
+    orgId: string,
+    performedBy: string,
+  ): Promise<{ token: string; issuedAt: Date }> {
+    const org = await this.organizationModel.findById(orgId);
+    if (!org || org.isDeleted) {
+      throw new HttpException('Organization not found', HttpStatus.NOT_FOUND);
+    }
+
+    const { token, hash } = this.generateScimTokenPair(orgId);
+    const now = new Date();
+    (org as any).scimEnabled = true;
+    (org as any).scimTokenHash = hash;
+    (org as any).scimTokenIssuedAt = now;
+    (org as any).scimTokenIssuedBy = performedBy;
+    await org.save();
+
+    this.auditService
+      .log({
+        action: AuditAction.ORG_UPDATED,
+        resource: 'organization',
+        resourceId: orgId,
+        organizationId: orgId,
+        userId: performedBy,
+        details: { scimEnabled: true, scimTokenIssuedAt: now.toISOString() },
+      })
+      .catch((err: Error) =>
+        this.logger.warn(`SCIM enable audit log failed: ${err.message}`),
+      );
+
+    this.logger.log(`SCIM enabled for org ${orgId} by ${performedBy}`);
+    return { token, issuedAt: now };
+  }
+
+  async rotateScimToken(
+    orgId: string,
+    performedBy: string,
+  ): Promise<{ token: string; issuedAt: Date }> {
+    const org = await this.organizationModel.findById(orgId);
+    if (!org || org.isDeleted) {
+      throw new HttpException('Organization not found', HttpStatus.NOT_FOUND);
+    }
+    if (!(org as any).scimEnabled) {
+      throw new HttpException(
+        'SCIM is not enabled for this organization',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const { token, hash } = this.generateScimTokenPair(orgId);
+    const now = new Date();
+    (org as any).scimTokenHash = hash;
+    (org as any).scimTokenIssuedAt = now;
+    (org as any).scimTokenIssuedBy = performedBy;
+    await org.save();
+
+    this.auditService
+      .log({
+        action: AuditAction.ORG_UPDATED,
+        resource: 'organization',
+        resourceId: orgId,
+        organizationId: orgId,
+        userId: performedBy,
+        details: { scimTokenRotated: true, scimTokenIssuedAt: now.toISOString() },
+      })
+      .catch((err: Error) =>
+        this.logger.warn(`SCIM rotate audit log failed: ${err.message}`),
+      );
+
+    this.logger.warn(`SCIM token rotated for org ${orgId} by ${performedBy}`);
+    return { token, issuedAt: now };
+  }
+
+  async disableScim(orgId: string, performedBy: string): Promise<void> {
+    const org = await this.organizationModel.findById(orgId);
+    if (!org || org.isDeleted) {
+      throw new HttpException('Organization not found', HttpStatus.NOT_FOUND);
+    }
+    (org as any).scimEnabled = false;
+    (org as any).scimTokenHash = null;
+    (org as any).scimTokenIssuedAt = null;
+    (org as any).scimTokenIssuedBy = null;
+    await org.save();
+
+    this.auditService
+      .log({
+        action: AuditAction.ORG_UPDATED,
+        resource: 'organization',
+        resourceId: orgId,
+        organizationId: orgId,
+        userId: performedBy,
+        details: { scimDisabled: true },
+      })
+      .catch((err: Error) =>
+        this.logger.warn(`SCIM disable audit log failed: ${err.message}`),
+      );
+
+    this.logger.warn(`SCIM disabled for org ${orgId} by ${performedBy}`);
+  }
+
+  async getScimStatus(
+    orgId: string,
+  ): Promise<{ enabled: boolean; issuedAt: Date | null; issuedBy: string | null }> {
+    const org = await this.organizationModel.findById(orgId).lean();
+    if (!org || (org as any).isDeleted) {
+      throw new HttpException('Organization not found', HttpStatus.NOT_FOUND);
+    }
+    return {
+      enabled: Boolean((org as any).scimEnabled),
+      issuedAt: (org as any).scimTokenIssuedAt || null,
+      issuedBy: (org as any).scimTokenIssuedBy || null,
+    };
   }
 }

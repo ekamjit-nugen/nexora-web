@@ -781,6 +781,15 @@ export class SubmitPeerReviewDto {
   @IsOptional() @IsBoolean() isAnonymous?: boolean;
 }
 
+export class AssignPeerReviewersDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MaxLength(64, { each: true })
+  reviewerIds: string[];
+}
+
 export class SubmitManagerReviewDto {
   @IsNumber() @Min(1) @Max(5) overallRating: number;
   @IsOptional() @IsString() strengths?: string;

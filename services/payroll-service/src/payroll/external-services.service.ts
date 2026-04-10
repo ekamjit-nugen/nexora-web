@@ -45,6 +45,31 @@ export class ExternalServicesService {
     return this.fetchJSON(`${this.hrServiceUrl}/api/v1/employees/${employeeId}`, token);
   }
 
+  // Fetch the direct-report employeeIds for a given manager. Used for
+  // authorization scoping on manager-facing endpoints (e.g., getAllGoals).
+  // Returns [] on any failure so callers fall closed (caller sees only
+  // their own rows, not their reports').
+  async getDirectReports(managerId: string, token?: string): Promise<string[]> {
+    try {
+      const result = await this.fetchJSON(
+        `${this.hrServiceUrl}/api/v1/employees?managerId=${encodeURIComponent(managerId)}&limit=5000`,
+        token,
+      );
+      const list = Array.isArray(result)
+        ? result
+        : Array.isArray(result?.data)
+          ? result.data
+          : Array.isArray(result?.items)
+            ? result.items
+            : [];
+      return list
+        .map((e: any) => e.employeeId || e._id || e.id)
+        .filter((v: any): v is string => typeof v === 'string' && v.length > 0);
+    } catch {
+      return [];
+    }
+  }
+
   // Fetch active employee roster for an org. Used for review-cycle startup
   // to ensure new joiners are included even before they have a salary
   // structure provisioned. Returns null on any failure so callers can fall
