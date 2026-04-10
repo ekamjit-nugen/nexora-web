@@ -179,6 +179,19 @@ export const authApi = {
   revokeAllDevices: () =>
     request("/auth/devices/revoke-all", { method: "POST" }),
 
+  // Developer / Marketplace
+  createApiKey: (data: { name: string; scopes: string[]; expiresAt?: string }) =>
+    request("/developer/api-keys", { method: "POST", body: JSON.stringify(data) }),
+  listApiKeys: () => request("/developer/api-keys"),
+  revokeApiKey: (id: string, reason?: string) =>
+    request(`/developer/api-keys/${id}`, { method: "DELETE", body: JSON.stringify({ reason }) }),
+  createWebhook: (data: { name: string; url: string; events: string[] }) =>
+    request("/developer/webhooks", { method: "POST", body: JSON.stringify(data) }),
+  listWebhooks: () => request("/developer/webhooks"),
+  deleteWebhook: (id: string) =>
+    request(`/developer/webhooks/${id}`, { method: "DELETE" }),
+  listAvailableIntegrations: () => request("/developer/integrations/available"),
+
   // GDPR
   exportMyData: () => request("/gdpr/export"),
   downloadDataExport: () => request("/gdpr/export/download"),
@@ -2821,6 +2834,7 @@ export const payrollApi = {
     return request(`/analytics/attrition${qs}`);
   },
   getAttritionPredictions: () => request("/analytics/attrition/predictions"),
+  getLiveAttritionPredictions: () => request("/analytics/attrition/predictions/live"),
   getCostAnalytics: (params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";
     return request(`/analytics/cost${qs}`);
@@ -2866,6 +2880,14 @@ export const payrollApi = {
   convertToEmployee: (id: string) =>
     request(`/candidates/${id}/convert-to-employee`, { method: "POST" }),
   getRecruitmentAnalytics: () => request("/recruitment/analytics"),
+
+  // AI Recruitment
+  parseResume: (data: { resumeText: string; jobPostingId?: string }) =>
+    request("/candidates/parse-resume", { method: "POST", body: JSON.stringify(data) }),
+  parseAndCreateCandidate: (data: { jobPostingId: string; resumeText: string; email: string }) =>
+    request("/candidates/parse-and-create", { method: "POST", body: JSON.stringify(data) }),
+  smartMatchCandidates: (data: { jobPostingId: string; minScore?: number; limit?: number }) =>
+    request("/jobs/smart-match", { method: "POST", body: JSON.stringify(data) }),
 
   // Statutory Reports
   generateForm16: (data: { employeeId: string; financialYear: string }) =>
@@ -2993,4 +3015,82 @@ export const payrollApi = {
     request(`/surveys/${id}/respond`, { method: "POST", body: JSON.stringify(data) }),
   getSurveyResults: (id: string) => request(`/surveys/${id}/results`),
   getMySurveyResponse: (id: string) => request(`/surveys/${id}/my-response`),
+
+  // Learning Management System (LMS): Courses
+  createCourse: (data: Record<string, unknown>) =>
+    request("/courses", { method: "POST", body: JSON.stringify(data) }),
+  listCourses: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/courses${qs}`);
+  },
+  getMandatoryCourses: () => request("/courses/mandatory"),
+  getCourse: (id: string) => request(`/courses/${id}`),
+  updateCourse: (id: string, data: Record<string, unknown>) =>
+    request(`/courses/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  publishCourse: (id: string) =>
+    request(`/courses/${id}/publish`, { method: "POST" }),
+  archiveCourse: (id: string) =>
+    request(`/courses/${id}/archive`, { method: "POST" }),
+  rateCourse: (id: string, data: { rating: number; feedback?: string }) =>
+    request(`/courses/${id}/rate`, { method: "POST", body: JSON.stringify(data) }),
+  deleteCourse: (id: string) =>
+    request(`/courses/${id}`, { method: "DELETE" }),
+
+  // LMS: Enrollments
+  enrollInCourse: (data: { courseId: string }) =>
+    request("/enrollments", { method: "POST", body: JSON.stringify(data) }),
+  getMyEnrollments: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/enrollments/my${qs}`);
+  },
+  getMyActiveCourses: () => request("/enrollments/my/active"),
+  getCourseEnrollments: (courseId: string) =>
+    request(`/enrollments/course/${courseId}`),
+  getEnrollment: (id: string) => request(`/enrollments/${id}`),
+  markCourseStarted: (id: string) =>
+    request(`/enrollments/${id}/start`, { method: "POST" }),
+  updateLessonProgress: (
+    id: string,
+    data: { lessonId: string; status: string; timeSpent?: number },
+  ) =>
+    request(`/enrollments/${id}/lesson-progress`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  submitQuiz: (
+    id: string,
+    data: { answers: Array<{ questionId: string; answer: unknown }> },
+  ) =>
+    request(`/enrollments/${id}/quiz`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  dropCourse: (id: string) =>
+    request(`/enrollments/${id}/drop`, { method: "POST" }),
+
+  // LMS: Certificates
+  getMyCertificates: () => request("/certificates/my"),
+  getCertificate: (id: string) => request(`/certificates/${id}`),
+  downloadCertificate: (id: string) =>
+    request(`/certificates/${id}/download`, { method: "POST" }),
+  verifyCertificate: (code: string) =>
+    request(`/certificates/verify/${code}`),
+  revokeCertificate: (id: string, reason?: string) =>
+    request(`/certificates/${id}/revoke`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+
+  // LMS: Learning Paths
+  createLearningPath: (data: Record<string, unknown>) =>
+    request("/learning-paths", { method: "POST", body: JSON.stringify(data) }),
+  listLearningPaths: () => request("/learning-paths"),
+  getLearningPath: (id: string) => request(`/learning-paths/${id}`),
+  updateLearningPath: (id: string, data: Record<string, unknown>) =>
+    request(`/learning-paths/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteLearningPath: (id: string) =>
+    request(`/learning-paths/${id}`, { method: "DELETE" }),
 };

@@ -28,8 +28,13 @@ import { IAnnouncement } from './schemas/announcement.schema';
 import { IKudos } from './schemas/kudos.schema';
 import { ISurvey } from './schemas/survey.schema';
 import { ISurveyResponse } from './schemas/survey-response.schema';
+import { ICourse } from './schemas/course.schema';
+import { IEnrollment } from './schemas/enrollment.schema';
+import { ICertificate } from './schemas/certificate.schema';
+import { ILearningPath } from './schemas/learning-path.schema';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { ExternalServicesService } from './external-services.service';
+import { AttritionPredictorService } from './attrition-predictor.service';
 import {
   CreateSalaryStructureDto,
   UpdateSalaryStructureDto,
@@ -66,6 +71,9 @@ import {
   InterviewFeedbackDto,
   CreateOfferDto,
   RejectCandidateDto,
+  ParseResumeDto,
+  SmartMatchDto,
+  ParseAndCreateCandidateDto,
   GenerateForm16Dto,
   GeneratePFECRDto,
   GenerateESIReturnDto,
@@ -95,6 +103,16 @@ import {
   UpdateSurveyDto,
   SubmitSurveyResponseDto,
   SurveyQueryDto,
+  CreateCourseDto,
+  UpdateCourseDto,
+  CourseQueryDto,
+  EnrollCourseDto,
+  UpdateLessonProgressDto,
+  SubmitQuizDto,
+  RateCourseDto,
+  CreateLearningPathDto,
+  UpdateLearningPathDto,
+  EnrollmentQueryDto,
 } from './dto/index';
 
 @Injectable()
@@ -122,8 +140,13 @@ export class PayrollService {
     @InjectModel('Kudos') private kudosModel: Model<IKudos>,
     @InjectModel('Survey') private surveyModel: Model<ISurvey>,
     @InjectModel('SurveyResponse') private surveyResponseModel: Model<ISurveyResponse>,
+    @InjectModel('Course') private courseModel: Model<ICourse>,
+    @InjectModel('Enrollment') private enrollmentModel: Model<IEnrollment>,
+    @InjectModel('Certificate') private certificateModel: Model<ICertificate>,
+    @InjectModel('LearningPath') private learningPathModel: Model<ILearningPath>,
     private calculationService: PayrollCalculationService,
     private externalServices: ExternalServicesService,
+    private attritionPredictorService: AttritionPredictorService,
   ) {}
 
   // ===========================================================================
@@ -3226,6 +3249,14 @@ export class PayrollService {
   }
 
   // ===========================================================================
+  // Analytics: getLivePredictions (real-time attrition predictions)
+  // ===========================================================================
+  async getLivePredictions(orgId: string) {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    return this.attritionPredictorService.predictAllEmployees(orgId);
+  }
+
+  // ===========================================================================
   // Analytics: getCostAnalytics
   // ===========================================================================
   async getCostAnalytics(
@@ -3449,6 +3480,16 @@ export class PayrollService {
       (o) => ['termination'].includes(o.type),
     ).length;
 
+    // Compute real attrition predictions
+    let attritionPredictions: any[] = [];
+    try {
+      attritionPredictions = await this.attritionPredictorService.predictAllEmployees(orgId);
+      // Only keep top 20 highest risk
+      attritionPredictions = attritionPredictions.slice(0, 20);
+    } catch (err) {
+      this.logger.warn(`Attrition prediction failed: ${err.message}`);
+    }
+
     const snapshotData = {
       organizationId: orgId,
       snapshotDate: now,
@@ -3484,7 +3525,7 @@ export class PayrollService {
         avgLeaveUtilization: 0,
         topLeaveTypes: [],
       },
-      attritionPredictions: [],
+      attritionPredictions,
     };
 
     // Upsert to handle unique index on org+period
@@ -3802,6 +3843,138 @@ export class PayrollService {
     candidate.status = 'rejected';
     this.logger.log(`Candidate ${id} rejected by ${userId}: ${dto.reason}`);
     return candidate.save();
+  }
+
+  // ===========================================================================
+  // AI Recruitment: Resume Parsing & Smart Candidate Matching
+  // ===========================================================================
+
+  async parseResume(dto: ParseResumeDto, userId: string, orgId: string): Promise<any> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const parsed = await this.externalServices.parseResume(dto.resumeText);
+    if (!parsed) {
+      throw new BadRequestException('Failed to parse resume. AI service may be unavailable.');
+    }
+
+    // If jobPostingId provided, compute match score
+    let matchScore: number | undefined;
+    let matchDetails: any;
+    if (dto.jobPostingId) {
+      const job = await this.jobPostingModel.findOne({
+        _id: dto.jobPostingId,
+        organizationId: orgId,
+        isDeleted: false,
+      });
+      if (job) {
+        const jobDesc = `${job.title}\n${job.description}\nRequirements: ${(job.requirements || []).join(', ')}\nSkills: ${(job.skills || []).join(', ')}`;
+        const match = await this.externalServices.computeJobMatchScore(jobDesc, parsed);
+        if (match) {
+          matchScore = match.score;
+          matchDetails = match;
+        }
+      }
+    }
+
+    this.logger.log(`Resume parsed by ${userId} for org ${orgId}${dto.jobPostingId ? ` (job ${dto.jobPostingId})` : ''}`);
+
+    return {
+      parsed,
+      matchScore,
+      matchDetails,
+    };
+  }
+
+  async smartMatchCandidates(dto: SmartMatchDto, userId: string, orgId: string): Promise<any[]> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const job = await this.jobPostingModel.findOne({
+      _id: dto.jobPostingId,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!job) throw new NotFoundException('Job posting not found');
+
+    // Get all candidates for this job with parsed resumes
+    const candidates = await this.candidateModel
+      .find({
+        jobPostingId: dto.jobPostingId,
+        organizationId: orgId,
+        isDeleted: false,
+        parsedResume: { $exists: true },
+      })
+      .lean();
+
+    const jobDesc = `${job.title}\n${job.description}\nRequirements: ${(job.requirements || []).join(', ')}\nSkills: ${(job.skills || []).join(', ')}`;
+    const minScore = dto.minScore ?? 0;
+    const limit = dto.limit ?? 20;
+
+    // Score each candidate in parallel
+    const scored = await Promise.all(
+      candidates.map(async (c: any) => {
+        // Use cached matchScore if already computed and job hasn't changed
+        if (c.parsedResume?.matchScore && c.parsedResume.matchedJobId === dto.jobPostingId) {
+          return { ...c, matchScore: c.parsedResume.matchScore };
+        }
+        const match = await this.externalServices.computeJobMatchScore(jobDesc, c.parsedResume);
+        return { ...c, matchScore: match?.score || 0, matchReasoning: match?.reasoning };
+      }),
+    );
+
+    // Filter and sort by score
+    const filtered = scored.filter((c) => (c.matchScore || 0) >= minScore);
+    filtered.sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0));
+
+    this.logger.log(`Smart match run by ${userId} for job ${dto.jobPostingId}: ${filtered.length} candidates above score ${minScore}`);
+    return filtered.slice(0, limit);
+  }
+
+  async parseAndCreateCandidate(
+    dto: ParseAndCreateCandidateDto,
+    userId: string,
+    orgId: string,
+  ): Promise<any> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    // Parse resume
+    const parsed = await this.externalServices.parseResume(dto.resumeText);
+    if (!parsed) throw new BadRequestException('Failed to parse resume');
+
+    // Compute match score
+    const job = await this.jobPostingModel.findOne({
+      _id: dto.jobPostingId,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!job) throw new NotFoundException('Job posting not found');
+
+    const jobDesc = `${job.title}\n${job.description}\nRequirements: ${(job.requirements || []).join(', ')}`;
+    const match = await this.externalServices.computeJobMatchScore(jobDesc, parsed);
+
+    // Create candidate with parsed data
+    const candidate = new this.candidateModel({
+      organizationId: orgId,
+      jobPostingId: dto.jobPostingId,
+      name: parsed.name || 'Unknown',
+      email: dto.email || parsed.email,
+      phone: parsed.phone,
+      parsedResume: {
+        skills: parsed.skills || [],
+        experience: parsed.experience || [],
+        education: parsed.education || [],
+        totalExperienceYears: parsed.totalExperienceYears || 0,
+        matchScore: match?.score || 0,
+        matchedJobId: dto.jobPostingId,
+      },
+      currentStage: job.pipeline?.[0]?.stageName || 'Screening',
+      status: 'new',
+      source: 'ai_parsed',
+      createdBy: userId,
+    });
+    await candidate.save();
+
+    this.logger.log(`AI-parsed candidate ${candidate._id} created for job ${dto.jobPostingId} by ${userId}`);
+    return candidate;
   }
 
   async scheduleInterview(
@@ -6169,5 +6342,889 @@ export class PayrollService {
       employeeId: userId,
       isDeleted: false,
     });
+  }
+
+  // ===========================================================================
+  // Learning Management System (LMS)
+  // ===========================================================================
+
+  async createCourse(
+    dto: CreateCourseDto,
+    userId: string,
+    orgId: string,
+  ): Promise<ICourse> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const lessons = (dto.lessons || []).map((l) => ({
+      id: l.id,
+      title: l.title,
+      type: l.type,
+      content: l.content || null,
+      videoUrl: l.videoUrl || null,
+      duration: l.duration,
+      order: l.order,
+      isRequired: l.isRequired ?? true,
+      resources: l.resources || [],
+    }));
+
+    const quiz = dto.quiz
+      ? {
+          passingScore: dto.quiz.passingScore ?? 70,
+          questions: (dto.quiz.questions || []).map((q) => ({
+            id: q.id,
+            question: q.question,
+            type: q.type,
+            options: q.options || [],
+            correctAnswer: q.correctAnswer,
+            points: q.points ?? 1,
+            explanation: q.explanation || null,
+          })),
+        }
+      : null;
+
+    const course = new this.courseModel({
+      organizationId: orgId,
+      title: dto.title,
+      description: dto.description || '',
+      thumbnail: dto.thumbnail || null,
+      category: dto.category,
+      level: dto.level || 'all',
+      duration: dto.duration || 0,
+      instructor: dto.instructor || null,
+      tags: dto.tags || [],
+      lessons,
+      quiz,
+      certificateTemplate: dto.certificateTemplate || null,
+      prerequisites: dto.prerequisites || [],
+      skillsGained: dto.skillsGained || [],
+      targetAudience: dto.targetAudience || 'all',
+      departments: dto.departments || [],
+      designations: dto.designations || [],
+      employeeIds: dto.employeeIds || [],
+      isMandatory: dto.isMandatory ?? false,
+      dueInDays: dto.dueInDays || null,
+      status: 'draft',
+      stats: {
+        totalEnrolled: 0,
+        totalCompleted: 0,
+        avgRating: 0,
+        ratingCount: 0,
+        avgCompletionDays: 0,
+      },
+      isDeleted: false,
+      createdBy: userId,
+    });
+
+    return course.save();
+  }
+
+  async listCourses(
+    query: CourseQueryDto,
+    userId: string,
+    orgId: string,
+    roles: string[] = [],
+  ): Promise<{ items: ICourse[]; total: number; page: number; limit: number }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const filter: any = { organizationId: orgId, isDeleted: false };
+
+    const isAdmin =
+      roles.includes('admin') ||
+      roles.includes('hr') ||
+      roles.includes('super_admin');
+
+    if (query.status) {
+      filter.status = query.status;
+    } else if (!isAdmin) {
+      // Regular users only see published
+      filter.status = 'published';
+    }
+
+    if (query.category) filter.category = query.category;
+    if (query.level) filter.level = query.level;
+    if (query.search) {
+      filter.$or = [
+        { title: { $regex: query.search, $options: 'i' } },
+        { description: { $regex: query.search, $options: 'i' } },
+      ];
+    }
+
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+      this.courseModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      this.courseModel.countDocuments(filter),
+    ]);
+
+    return { items, total, page, limit };
+  }
+
+  async getMandatoryCourses(userId: string, orgId: string): Promise<ICourse[]> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const courses = await this.courseModel
+      .find({
+        organizationId: orgId,
+        isDeleted: false,
+        status: 'published',
+        isMandatory: true,
+      })
+      .sort({ createdAt: -1 });
+
+    return courses;
+  }
+
+  async getCourse(id: string, userId: string, orgId: string): Promise<ICourse> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const course = await this.courseModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!course) throw new NotFoundException('Course not found');
+    return course;
+  }
+
+  async updateCourse(
+    id: string,
+    dto: UpdateCourseDto,
+    userId: string,
+    orgId: string,
+  ): Promise<ICourse> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const course = await this.getCourse(id, userId, orgId);
+
+    if (dto.title !== undefined) course.title = dto.title;
+    if (dto.description !== undefined) course.description = dto.description;
+    if (dto.thumbnail !== undefined) course.thumbnail = dto.thumbnail;
+    if (dto.category !== undefined) course.category = dto.category;
+    if (dto.level !== undefined) course.level = dto.level;
+    if (dto.duration !== undefined) course.duration = dto.duration;
+    if (dto.instructor !== undefined) course.instructor = dto.instructor;
+    if (dto.tags !== undefined) course.tags = dto.tags;
+    if (dto.lessons !== undefined) {
+      course.lessons = dto.lessons.map((l) => ({
+        id: l.id,
+        title: l.title,
+        type: l.type,
+        content: l.content || null,
+        videoUrl: l.videoUrl || null,
+        duration: l.duration,
+        order: l.order,
+        isRequired: l.isRequired ?? true,
+        resources: l.resources || [],
+      })) as any;
+    }
+    if (dto.quiz !== undefined) {
+      course.quiz = {
+        passingScore: dto.quiz.passingScore ?? 70,
+        questions: (dto.quiz.questions || []).map((q) => ({
+          id: q.id,
+          question: q.question,
+          type: q.type,
+          options: q.options || [],
+          correctAnswer: q.correctAnswer,
+          points: q.points ?? 1,
+          explanation: q.explanation || null,
+        })),
+      } as any;
+    }
+    if (dto.certificateTemplate !== undefined) course.certificateTemplate = dto.certificateTemplate;
+    if (dto.prerequisites !== undefined) course.prerequisites = dto.prerequisites;
+    if (dto.skillsGained !== undefined) course.skillsGained = dto.skillsGained;
+    if (dto.targetAudience !== undefined) course.targetAudience = dto.targetAudience;
+    if (dto.departments !== undefined) course.departments = dto.departments;
+    if (dto.designations !== undefined) course.designations = dto.designations;
+    if (dto.employeeIds !== undefined) course.employeeIds = dto.employeeIds;
+    if (dto.isMandatory !== undefined) course.isMandatory = dto.isMandatory;
+    if (dto.dueInDays !== undefined) course.dueInDays = dto.dueInDays;
+
+    return course.save();
+  }
+
+  async publishCourse(id: string, userId: string, orgId: string): Promise<ICourse> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const course = await this.getCourse(id, userId, orgId);
+    if (course.status === 'published') {
+      throw new ConflictException('Course is already published');
+    }
+    if (!course.lessons || course.lessons.length === 0) {
+      throw new BadRequestException('Course must have at least one lesson to publish');
+    }
+    course.status = 'published';
+    return course.save();
+  }
+
+  async archiveCourse(id: string, userId: string, orgId: string): Promise<ICourse> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const course = await this.getCourse(id, userId, orgId);
+    course.status = 'archived';
+    return course.save();
+  }
+
+  async rateCourse(
+    id: string,
+    dto: RateCourseDto,
+    userId: string,
+    orgId: string,
+  ): Promise<ICourse> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const course = await this.getCourse(id, userId, orgId);
+
+    // Require enrollment & completed status to rate
+    const enrollment = await this.enrollmentModel.findOne({
+      organizationId: orgId,
+      courseId: id,
+      employeeId: userId,
+      isDeleted: false,
+    });
+    if (!enrollment) {
+      throw new BadRequestException('You must be enrolled in the course to rate it');
+    }
+    if (enrollment.status !== 'completed') {
+      throw new BadRequestException('You must complete the course before rating');
+    }
+
+    const prevRating = enrollment.rating;
+    enrollment.rating = dto.rating;
+    enrollment.feedback = dto.feedback || null;
+    await enrollment.save();
+
+    const stats = course.stats || ({} as any);
+    if (prevRating) {
+      // Replace existing rating in running average
+      const totalSum = stats.avgRating * stats.ratingCount - prevRating + dto.rating;
+      stats.avgRating = stats.ratingCount > 0
+        ? Math.round((totalSum / stats.ratingCount) * 100) / 100
+        : dto.rating;
+    } else {
+      const newCount = (stats.ratingCount || 0) + 1;
+      const newAvg = ((stats.avgRating || 0) * (stats.ratingCount || 0) + dto.rating) / newCount;
+      stats.avgRating = Math.round(newAvg * 100) / 100;
+      stats.ratingCount = newCount;
+    }
+    course.stats = stats;
+    return course.save();
+  }
+
+  async deleteCourse(id: string, userId: string, orgId: string): Promise<{ deleted: boolean }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const course = await this.getCourse(id, userId, orgId);
+    course.isDeleted = true;
+    await course.save();
+    return { deleted: true };
+  }
+
+  // ── Enrollments ──
+
+  async enrollInCourse(
+    dto: EnrollCourseDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IEnrollment> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const course = await this.getCourse(dto.courseId, userId, orgId);
+    if (course.status !== 'published') {
+      throw new BadRequestException('Cannot enroll in an unpublished course');
+    }
+
+    // Check if already enrolled
+    const existing = await this.enrollmentModel.findOne({
+      organizationId: orgId,
+      courseId: dto.courseId,
+      employeeId: userId,
+      isDeleted: false,
+    });
+    if (existing) {
+      throw new ConflictException('Already enrolled in this course');
+    }
+
+    const lessonProgress = (course.lessons || []).map((l) => ({
+      lessonId: l.id,
+      status: 'not_started',
+      startedAt: null,
+      completedAt: null,
+      timeSpent: 0,
+    }));
+
+    const now = new Date();
+    const dueDate = course.dueInDays
+      ? new Date(now.getTime() + course.dueInDays * 24 * 60 * 60 * 1000)
+      : null;
+
+    const enrollment = new this.enrollmentModel({
+      organizationId: orgId,
+      courseId: dto.courseId,
+      employeeId: userId,
+      status: 'enrolled',
+      enrolledAt: now,
+      dueDate,
+      progress: 0,
+      lessonProgress,
+      quizAttempts: [],
+      notes: [],
+      isDeleted: false,
+    });
+
+    const saved = await enrollment.save();
+
+    // Increment course stats.totalEnrolled
+    await this.courseModel.updateOne(
+      { _id: dto.courseId, organizationId: orgId },
+      { $inc: { 'stats.totalEnrolled': 1 } },
+    );
+
+    return saved;
+  }
+
+  async getMyEnrollments(
+    query: EnrollmentQueryDto,
+    userId: string,
+    orgId: string,
+  ): Promise<{ items: IEnrollment[]; total: number; page: number; limit: number }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const filter: any = { organizationId: orgId, employeeId: userId, isDeleted: false };
+    if (query.status) filter.status = query.status;
+    if (query.courseId) filter.courseId = query.courseId;
+
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+      this.enrollmentModel.find(filter).sort({ enrolledAt: -1 }).skip(skip).limit(limit),
+      this.enrollmentModel.countDocuments(filter),
+    ]);
+
+    return { items, total, page, limit };
+  }
+
+  async getMyActiveCourses(userId: string, orgId: string): Promise<IEnrollment[]> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    return this.enrollmentModel
+      .find({
+        organizationId: orgId,
+        employeeId: userId,
+        isDeleted: false,
+        status: { $in: ['enrolled', 'in_progress', 'overdue'] },
+      })
+      .sort({ enrolledAt: -1 });
+  }
+
+  async getCourseEnrollments(
+    courseId: string,
+    userId: string,
+    orgId: string,
+  ): Promise<IEnrollment[]> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    return this.enrollmentModel
+      .find({
+        organizationId: orgId,
+        courseId,
+        isDeleted: false,
+      })
+      .sort({ enrolledAt: -1 });
+  }
+
+  async getEnrollment(id: string, userId: string, orgId: string): Promise<IEnrollment> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const enrollment = await this.enrollmentModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!enrollment) throw new NotFoundException('Enrollment not found');
+    return enrollment;
+  }
+
+  async markCourseStarted(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<IEnrollment> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const enrollment = await this.getEnrollment(id, userId, orgId);
+    if (enrollment.employeeId !== userId) {
+      throw new ForbiddenException('Cannot modify another employee enrollment');
+    }
+    if (enrollment.status === 'enrolled') {
+      enrollment.status = 'in_progress';
+      enrollment.startedAt = new Date();
+    }
+    return enrollment.save();
+  }
+
+  async updateLessonProgress(
+    id: string,
+    dto: UpdateLessonProgressDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IEnrollment> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const enrollment = await this.getEnrollment(id, userId, orgId);
+    if (enrollment.employeeId !== userId) {
+      throw new ForbiddenException('Cannot modify another employee enrollment');
+    }
+
+    const course = await this.getCourse(enrollment.courseId, userId, orgId);
+    const lesson = (course.lessons || []).find((l) => l.id === dto.lessonId);
+    if (!lesson) {
+      throw new NotFoundException('Lesson not found in course');
+    }
+
+    const now = new Date();
+    let progressEntry = enrollment.lessonProgress.find((lp) => lp.lessonId === dto.lessonId);
+    if (!progressEntry) {
+      progressEntry = {
+        lessonId: dto.lessonId,
+        status: 'not_started',
+        startedAt: null,
+        completedAt: null,
+        timeSpent: 0,
+      } as any;
+      enrollment.lessonProgress.push(progressEntry);
+    }
+
+    if (dto.status === 'in_progress' && progressEntry.status === 'not_started') {
+      progressEntry.startedAt = now;
+    }
+    if (dto.status === 'completed') {
+      progressEntry.completedAt = now;
+      if (!progressEntry.startedAt) progressEntry.startedAt = now;
+    }
+    progressEntry.status = dto.status;
+    if (dto.timeSpent !== undefined) {
+      progressEntry.timeSpent = (progressEntry.timeSpent || 0) + dto.timeSpent;
+    }
+    enrollment.currentLessonId = dto.lessonId;
+
+    if (enrollment.status === 'enrolled') {
+      enrollment.status = 'in_progress';
+      enrollment.startedAt = now;
+    }
+
+    // Calculate overall progress
+    const totalLessons = (course.lessons || []).length;
+    const completedLessons = enrollment.lessonProgress.filter(
+      (lp) => lp.status === 'completed',
+    ).length;
+    enrollment.progress = totalLessons > 0
+      ? Math.round((completedLessons / totalLessons) * 100)
+      : 0;
+
+    // If 100% and no quiz, mark completed
+    const hasQuiz = course.quiz && course.quiz.questions && course.quiz.questions.length > 0;
+    if (enrollment.progress === 100 && !hasQuiz && enrollment.status !== 'completed') {
+      enrollment.status = 'completed';
+      enrollment.completedAt = now;
+
+      await this.courseModel.updateOne(
+        { _id: course._id, organizationId: orgId },
+        { $inc: { 'stats.totalCompleted': 1 } },
+      );
+
+      // Auto-issue certificate when no quiz
+      const cert = await this.issueCertificate(enrollment, course, userId, orgId);
+      enrollment.certificateId = (cert as any)._id.toString();
+      enrollment.certificateUrl = `/certificates/${(cert as any)._id.toString()}`;
+    }
+
+    return enrollment.save();
+  }
+
+  async submitQuiz(
+    id: string,
+    dto: SubmitQuizDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IEnrollment> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const enrollment = await this.getEnrollment(id, userId, orgId);
+    if (enrollment.employeeId !== userId) {
+      throw new ForbiddenException('Cannot submit quiz for another employee');
+    }
+
+    const course = await this.getCourse(enrollment.courseId, userId, orgId);
+    if (!course.quiz || !course.quiz.questions || course.quiz.questions.length === 0) {
+      throw new BadRequestException('Course does not have a quiz');
+    }
+
+    if (enrollment.progress < 100) {
+      throw new BadRequestException('Complete all lessons before submitting quiz');
+    }
+
+    const startedAt = new Date();
+    let totalPoints = 0;
+    let earnedPoints = 0;
+
+    const gradedAnswers = course.quiz.questions.map((q) => {
+      const submission = dto.answers.find((a) => a.questionId === q.id);
+      totalPoints += q.points || 1;
+
+      let isCorrect = false;
+      if (submission) {
+        if (q.type === 'multi_choice') {
+          const submittedArr = Array.isArray(submission.answer)
+            ? [...submission.answer].map(String).sort()
+            : [];
+          const correctArr = Array.isArray(q.correctAnswer)
+            ? [...q.correctAnswer].map(String).sort()
+            : [];
+          isCorrect =
+            submittedArr.length === correctArr.length &&
+            submittedArr.every((v, i) => v === correctArr[i]);
+        } else {
+          isCorrect = String(submission.answer) === String(q.correctAnswer);
+        }
+      }
+
+      if (isCorrect) earnedPoints += q.points || 1;
+
+      return {
+        questionId: q.id,
+        answer: submission ? submission.answer : null,
+        isCorrect,
+      };
+    });
+
+    const score = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
+    const passingScore = course.quiz.passingScore ?? 70;
+    const passed = score >= passingScore;
+    const completedAt = new Date();
+
+    const attemptNumber = (enrollment.quizAttempts || []).length + 1;
+    enrollment.quizAttempts.push({
+      attemptNumber,
+      score,
+      passed,
+      answers: gradedAnswers,
+      startedAt,
+      completedAt,
+    } as any);
+
+    if (passed && enrollment.status !== 'completed') {
+      enrollment.status = 'completed';
+      enrollment.completedAt = completedAt;
+
+      await this.courseModel.updateOne(
+        { _id: course._id, organizationId: orgId },
+        { $inc: { 'stats.totalCompleted': 1 } },
+      );
+
+      // Auto-issue certificate
+      const cert = await this.issueCertificate(enrollment, course, userId, orgId, score);
+      enrollment.certificateId = (cert as any)._id.toString();
+      enrollment.certificateUrl = `/certificates/${(cert as any)._id.toString()}`;
+    }
+
+    return enrollment.save();
+  }
+
+  async dropCourse(id: string, userId: string, orgId: string): Promise<IEnrollment> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const enrollment = await this.getEnrollment(id, userId, orgId);
+    if (enrollment.employeeId !== userId) {
+      throw new ForbiddenException('Cannot drop enrollment for another employee');
+    }
+    if (enrollment.status === 'completed') {
+      throw new BadRequestException('Cannot drop a completed course');
+    }
+    enrollment.status = 'dropped';
+    return enrollment.save();
+  }
+
+  // ── Certificates ──
+
+  private async generateCertificateNumber(orgId: string): Promise<string> {
+    const year = new Date().getFullYear();
+    const prefix = `CERT-${year}-`;
+
+    // Find the highest existing certificate number this year in this org
+    const latest = await this.certificateModel
+      .findOne({
+        organizationId: orgId,
+        certificateNumber: { $regex: `^${prefix}` },
+      })
+      .sort({ certificateNumber: -1 });
+
+    let nextNum = 1;
+    if (latest) {
+      const match = latest.certificateNumber.match(/(\d+)$/);
+      if (match) {
+        nextNum = parseInt(match[1], 10) + 1;
+      }
+    }
+    return `${prefix}${String(nextNum).padStart(6, '0')}`;
+  }
+
+  private generateVerificationCode(): string {
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 8; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+  }
+
+  private async issueCertificate(
+    enrollment: IEnrollment,
+    course: ICourse,
+    userId: string,
+    orgId: string,
+    score?: number,
+  ): Promise<ICertificate> {
+    let employeeName = userId;
+    try {
+      const emp = await this.externalServices.getEmployee(enrollment.employeeId);
+      if (emp) {
+        employeeName =
+          emp.fullName ||
+          [emp.firstName, emp.lastName].filter(Boolean).join(' ') ||
+          emp.name ||
+          userId;
+      }
+    } catch (err) {
+      this.logger.warn(`Unable to fetch employee for certificate: ${err}`);
+    }
+
+    const certificateNumber = await this.generateCertificateNumber(orgId);
+    const verificationCode = this.generateVerificationCode();
+
+    const completionDays = enrollment.startedAt
+      ? Math.ceil(
+          (new Date().getTime() - new Date(enrollment.startedAt).getTime()) /
+            (24 * 60 * 60 * 1000),
+        )
+      : 0;
+
+    const cert = new this.certificateModel({
+      organizationId: orgId,
+      employeeId: enrollment.employeeId,
+      courseId: enrollment.courseId,
+      enrollmentId: (enrollment as any)._id.toString(),
+      certificateNumber,
+      courseName: course.title,
+      employeeName,
+      issuedAt: new Date(),
+      score: score ?? null,
+      completionDays,
+      verificationCode,
+      issuedBy: userId,
+      isRevoked: false,
+      downloadCount: 0,
+      isDeleted: false,
+    });
+
+    const saved = await cert.save();
+
+    // Update course avg completion days running average
+    const stats = course.stats || ({} as any);
+    const prevCompleted = stats.totalCompleted || 1;
+    const prevAvgDays = stats.avgCompletionDays || 0;
+    const newAvgDays =
+      prevCompleted > 1
+        ? Math.round(
+            ((prevAvgDays * (prevCompleted - 1) + completionDays) / prevCompleted) * 10,
+          ) / 10
+        : completionDays;
+    await this.courseModel.updateOne(
+      { _id: course._id, organizationId: orgId },
+      { $set: { 'stats.avgCompletionDays': newAvgDays } },
+    );
+
+    return saved;
+  }
+
+  async getMyCertificates(userId: string, orgId: string): Promise<ICertificate[]> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    return this.certificateModel
+      .find({
+        organizationId: orgId,
+        employeeId: userId,
+        isDeleted: false,
+      })
+      .sort({ issuedAt: -1 });
+  }
+
+  async getCertificate(id: string, userId: string, orgId: string): Promise<ICertificate> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const cert = await this.certificateModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!cert) throw new NotFoundException('Certificate not found');
+    return cert;
+  }
+
+  async incrementCertificateDownload(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<ICertificate> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const cert = await this.getCertificate(id, userId, orgId);
+    cert.downloadCount = (cert.downloadCount || 0) + 1;
+    return cert.save();
+  }
+
+  async verifyCertificate(code: string): Promise<any> {
+    if (!code) throw new BadRequestException('Verification code required');
+    const cert = await this.certificateModel.findOne({
+      verificationCode: code,
+      isDeleted: false,
+    });
+    if (!cert) {
+      return { valid: false, message: 'Certificate not found' };
+    }
+    if (cert.isRevoked) {
+      return {
+        valid: false,
+        message: 'Certificate has been revoked',
+        revokedAt: cert.revokedAt,
+        revokedReason: cert.revokedReason,
+      };
+    }
+    return {
+      valid: true,
+      certificateNumber: cert.certificateNumber,
+      courseName: cert.courseName,
+      employeeName: cert.employeeName,
+      issuedAt: cert.issuedAt,
+      validUntil: cert.validUntil,
+      score: cert.score,
+    };
+  }
+
+  async revokeCertificate(
+    id: string,
+    reason: string,
+    userId: string,
+    orgId: string,
+  ): Promise<ICertificate> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const cert = await this.getCertificate(id, userId, orgId);
+    if (cert.isRevoked) {
+      throw new ConflictException('Certificate is already revoked');
+    }
+    cert.isRevoked = true;
+    cert.revokedAt = new Date();
+    cert.revokedReason = reason || null;
+    return cert.save();
+  }
+
+  // ── Learning Paths ──
+
+  async createLearningPath(
+    dto: CreateLearningPathDto,
+    userId: string,
+    orgId: string,
+  ): Promise<ILearningPath> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    if (!dto.courses || dto.courses.length === 0) {
+      throw new BadRequestException('Learning path must have at least one course');
+    }
+
+    const path = new this.learningPathModel({
+      organizationId: orgId,
+      name: dto.name,
+      description: dto.description || '',
+      category: dto.category || '',
+      courses: dto.courses.map((c) => ({
+        courseId: c.courseId,
+        order: c.order,
+        isRequired: c.isRequired ?? true,
+      })),
+      targetAudience: dto.targetAudience || 'all',
+      departments: dto.departments || [],
+      designations: dto.designations || [],
+      estimatedDurationDays: dto.estimatedDurationDays || 0,
+      isMandatory: dto.isMandatory ?? false,
+      status: 'draft',
+      isDeleted: false,
+      createdBy: userId,
+    });
+
+    return path.save();
+  }
+
+  async listLearningPaths(
+    userId: string,
+    orgId: string,
+    roles: string[] = [],
+  ): Promise<ILearningPath[]> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const filter: any = { organizationId: orgId, isDeleted: false };
+    const isAdmin =
+      roles.includes('admin') ||
+      roles.includes('hr') ||
+      roles.includes('super_admin');
+    if (!isAdmin) {
+      filter.status = 'published';
+    }
+
+    return this.learningPathModel.find(filter).sort({ createdAt: -1 });
+  }
+
+  async getLearningPath(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<ILearningPath> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const path = await this.learningPathModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!path) throw new NotFoundException('Learning path not found');
+    return path;
+  }
+
+  async updateLearningPath(
+    id: string,
+    dto: UpdateLearningPathDto,
+    userId: string,
+    orgId: string,
+  ): Promise<ILearningPath> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const path = await this.getLearningPath(id, userId, orgId);
+
+    if (dto.name !== undefined) path.name = dto.name;
+    if (dto.description !== undefined) path.description = dto.description;
+    if (dto.category !== undefined) path.category = dto.category;
+    if (dto.courses !== undefined) {
+      path.courses = dto.courses.map((c) => ({
+        courseId: c.courseId,
+        order: c.order,
+        isRequired: c.isRequired ?? true,
+      })) as any;
+    }
+    if (dto.targetAudience !== undefined) path.targetAudience = dto.targetAudience;
+    if (dto.departments !== undefined) path.departments = dto.departments;
+    if (dto.designations !== undefined) path.designations = dto.designations;
+    if (dto.estimatedDurationDays !== undefined) path.estimatedDurationDays = dto.estimatedDurationDays;
+    if (dto.isMandatory !== undefined) path.isMandatory = dto.isMandatory;
+    if (dto.status !== undefined) path.status = dto.status;
+
+    return path.save();
+  }
+
+  async deleteLearningPath(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<{ deleted: boolean }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const path = await this.getLearningPath(id, userId, orgId);
+    path.isDeleted = true;
+    await path.save();
+    return { deleted: true };
   }
 }

@@ -39,10 +39,15 @@ export interface IOffer {
 
 export interface IParsedResume {
   skills: string[];
-  experience: Array<{ company: string; role: string; duration: string }>;
+  experience: Array<{ company: string; role: string; duration: string; description?: string }>;
   education: Array<{ institution: string; degree: string; year: number }>;
   totalExperienceYears: number;
   matchScore?: number;
+  matchedJobId?: string;
+  summary?: string;
+  location?: string;
+  languages?: string[];
+  certifications?: string[];
 }
 
 export interface ICandidate extends Document {
@@ -84,6 +89,7 @@ export const CandidateSchema = new Schema<ICandidate>(
           company: { type: String },
           role: { type: String },
           duration: { type: String },
+          description: { type: String },
         },
       ],
       education: [
@@ -95,6 +101,11 @@ export const CandidateSchema = new Schema<ICandidate>(
       ],
       totalExperienceYears: { type: Number, default: 0 },
       matchScore: { type: Number, default: null },
+      matchedJobId: { type: String, default: null },
+      summary: { type: String, default: null },
+      location: { type: String, default: null },
+      languages: [{ type: String }],
+      certifications: [{ type: String }],
     },
     currentStage: { type: String, default: 'new' },
     stageHistory: [
@@ -154,7 +165,7 @@ export const CandidateSchema = new Schema<ICandidate>(
     },
     source: {
       type: String,
-      enum: ['portal', 'referral', 'linkedin', 'naukri', 'agency', 'direct', 'other'],
+      enum: ['portal', 'referral', 'linkedin', 'naukri', 'agency', 'direct', 'ai_parsed', 'other'],
       default: 'direct',
     },
     referredBy: { type: String, default: null },

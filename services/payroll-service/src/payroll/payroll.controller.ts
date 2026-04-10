@@ -19,6 +19,7 @@ import {
   CreateJobPostingDto, UpdateJobPostingDto, UpdateJobStatusDto, JobQueryDto,
   AddCandidateDto, CandidateQueryDto, ScheduleInterviewDto, InterviewFeedbackDto,
   CreateOfferDto, RejectCandidateDto,
+  ParseResumeDto, SmartMatchDto, ParseAndCreateCandidateDto,
   RejectSalaryStructureDto, VerifyInvestmentDto, UploadDocumentDto,
   UpdateOnboardingStatusDto, UpdateOffboardingStatusDto,
   OnboardingQueryDto, OffboardingQueryDto,
@@ -32,6 +33,9 @@ import {
   AnnouncementReactDto, AnnouncementReadDto,
   CreateKudosDto, KudosQueryDto,
   CreateSurveyDto, UpdateSurveyDto, SubmitSurveyResponseDto, SurveyQueryDto,
+  CreateCourseDto, UpdateCourseDto, CourseQueryDto,
+  EnrollCourseDto, UpdateLessonProgressDto, SubmitQuizDto, RateCourseDto,
+  CreateLearningPathDto, UpdateLearningPathDto, EnrollmentQueryDto,
 } from './dto/index';
 
 @Controller()
@@ -723,6 +727,15 @@ export class PayrollController {
     return { success: true, message: 'Attrition predictions retrieved', data: result };
   }
 
+  @Get('analytics/attrition/predictions/live')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async getLiveAttritionPredictions(@Req() req) {
+    const orgId = req.user?.organizationId;
+    const predictions = await this.payrollService.getLivePredictions(orgId);
+    return { success: true, data: predictions };
+  }
+
   @Get('analytics/cost')
   @UseGuards(JwtAuthGuard)
   @Roles('admin', 'super_admin')
@@ -938,6 +951,38 @@ export class PayrollController {
     const userId = req.user.userId;
     const result = await this.payrollService.rejectCandidate(id, dto, userId, orgId);
     return { success: true, message: 'Candidate rejected', data: result };
+  }
+
+  // ── AI Recruitment: Resume Parsing & Smart Matching ──
+
+  @Post('candidates/parse-resume')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async parseResume(@Body() dto: ParseResumeDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.parseResume(dto, userId, orgId);
+    return { success: true, message: 'Resume parsed', data: result };
+  }
+
+  @Post('candidates/parse-and-create')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async parseAndCreateCandidate(@Body() dto: ParseAndCreateCandidateDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const candidate = await this.payrollService.parseAndCreateCandidate(dto, userId, orgId);
+    return { success: true, message: 'Candidate created from resume', data: candidate };
+  }
+
+  @Post('jobs/smart-match')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async smartMatchCandidates(@Body() dto: SmartMatchDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const candidates = await this.payrollService.smartMatchCandidates(dto, userId, orgId);
+    return { success: true, message: 'Candidates scored and ranked', data: candidates };
   }
 
   @Post('candidates/:id/schedule-interview')
@@ -1580,5 +1625,305 @@ export class PayrollController {
     const userId = req.user.userId;
     const result = await this.payrollService.getMySurveyResponse(id, userId, orgId);
     return { success: true, message: 'My survey response retrieved', data: result };
+  }
+
+  // ===========================================================================
+  // Learning Management System (LMS): Courses
+  // ===========================================================================
+
+  @Post('courses')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async createCourse(@Body() dto: CreateCourseDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.createCourse(dto, userId, orgId);
+    return { success: true, message: 'Course created', data: result };
+  }
+
+  @Get('courses')
+  @UseGuards(JwtAuthGuard)
+  async listCourses(@Query() query: CourseQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const roles = req.user?.roles || [];
+    const result = await this.payrollService.listCourses(query, userId, orgId, roles);
+    return { success: true, message: 'Courses retrieved', data: result };
+  }
+
+  @Get('courses/mandatory')
+  @UseGuards(JwtAuthGuard)
+  async getMandatoryCourses(@Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getMandatoryCourses(userId, orgId);
+    return { success: true, message: 'Mandatory courses retrieved', data: result };
+  }
+
+  @Get('courses/:id')
+  @UseGuards(JwtAuthGuard)
+  async getCourse(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getCourse(id, userId, orgId);
+    return { success: true, message: 'Course retrieved', data: result };
+  }
+
+  @Put('courses/:id')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async updateCourse(
+    @Param('id') id: string,
+    @Body() dto: UpdateCourseDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.updateCourse(id, dto, userId, orgId);
+    return { success: true, message: 'Course updated', data: result };
+  }
+
+  @Post('courses/:id/publish')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async publishCourse(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.publishCourse(id, userId, orgId);
+    return { success: true, message: 'Course published', data: result };
+  }
+
+  @Post('courses/:id/archive')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async archiveCourse(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.archiveCourse(id, userId, orgId);
+    return { success: true, message: 'Course archived', data: result };
+  }
+
+  @Post('courses/:id/rate')
+  @UseGuards(JwtAuthGuard)
+  async rateCourse(
+    @Param('id') id: string,
+    @Body() dto: RateCourseDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.rateCourse(id, dto, userId, orgId);
+    return { success: true, message: 'Course rated', data: result };
+  }
+
+  @Delete('courses/:id')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async deleteCourse(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.deleteCourse(id, userId, orgId);
+    return { success: true, message: 'Course deleted', data: result };
+  }
+
+  // ── LMS: Enrollments ──
+
+  @Post('enrollments')
+  @UseGuards(JwtAuthGuard)
+  async enrollInCourse(@Body() dto: EnrollCourseDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.enrollInCourse(dto, userId, orgId);
+    return { success: true, message: 'Enrolled in course', data: result };
+  }
+
+  @Get('enrollments/my')
+  @UseGuards(JwtAuthGuard)
+  async getMyEnrollments(@Query() query: EnrollmentQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getMyEnrollments(query, userId, orgId);
+    return { success: true, message: 'My enrollments retrieved', data: result };
+  }
+
+  @Get('enrollments/my/active')
+  @UseGuards(JwtAuthGuard)
+  async getMyActiveCourses(@Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getMyActiveCourses(userId, orgId);
+    return { success: true, message: 'Active courses retrieved', data: result };
+  }
+
+  @Get('enrollments/course/:courseId')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'manager')
+  async getCourseEnrollments(@Param('courseId') courseId: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getCourseEnrollments(courseId, userId, orgId);
+    return { success: true, message: 'Course enrollments retrieved', data: result };
+  }
+
+  @Get('enrollments/:id')
+  @UseGuards(JwtAuthGuard)
+  async getEnrollment(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getEnrollment(id, userId, orgId);
+    return { success: true, message: 'Enrollment retrieved', data: result };
+  }
+
+  @Post('enrollments/:id/start')
+  @UseGuards(JwtAuthGuard)
+  async markCourseStarted(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.markCourseStarted(id, userId, orgId);
+    return { success: true, message: 'Course marked as started', data: result };
+  }
+
+  @Post('enrollments/:id/lesson-progress')
+  @UseGuards(JwtAuthGuard)
+  async updateLessonProgress(
+    @Param('id') id: string,
+    @Body() dto: UpdateLessonProgressDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.updateLessonProgress(id, dto, userId, orgId);
+    return { success: true, message: 'Lesson progress updated', data: result };
+  }
+
+  @Post('enrollments/:id/quiz')
+  @UseGuards(JwtAuthGuard)
+  async submitQuiz(
+    @Param('id') id: string,
+    @Body() dto: SubmitQuizDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.submitQuiz(id, dto, userId, orgId);
+    return { success: true, message: 'Quiz submitted', data: result };
+  }
+
+  @Post('enrollments/:id/drop')
+  @UseGuards(JwtAuthGuard)
+  async dropCourse(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.dropCourse(id, userId, orgId);
+    return { success: true, message: 'Course dropped', data: result };
+  }
+
+  // ── LMS: Certificates ──
+
+  @Get('certificates/my')
+  @UseGuards(JwtAuthGuard)
+  async getMyCertificates(@Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getMyCertificates(userId, orgId);
+    return { success: true, message: 'My certificates retrieved', data: result };
+  }
+
+  @Get('certificates/verify/:code')
+  async verifyCertificate(@Param('code') code: string) {
+    const result = await this.payrollService.verifyCertificate(code);
+    return { success: true, message: 'Verification result', data: result };
+  }
+
+  @Get('certificates/:id')
+  @UseGuards(JwtAuthGuard)
+  async getCertificate(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getCertificate(id, userId, orgId);
+    return { success: true, message: 'Certificate retrieved', data: result };
+  }
+
+  @Post('certificates/:id/download')
+  @UseGuards(JwtAuthGuard)
+  async incrementCertificateDownload(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.incrementCertificateDownload(id, userId, orgId);
+    return { success: true, message: 'Download recorded', data: result };
+  }
+
+  @Post('certificates/:id/revoke')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async revokeCertificate(
+    @Param('id') id: string,
+    @Body() body: { reason?: string },
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.revokeCertificate(
+      id,
+      body?.reason || '',
+      userId,
+      orgId,
+    );
+    return { success: true, message: 'Certificate revoked', data: result };
+  }
+
+  // ── LMS: Learning Paths ──
+
+  @Post('learning-paths')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async createLearningPath(@Body() dto: CreateLearningPathDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.createLearningPath(dto, userId, orgId);
+    return { success: true, message: 'Learning path created', data: result };
+  }
+
+  @Get('learning-paths')
+  @UseGuards(JwtAuthGuard)
+  async listLearningPaths(@Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const roles = req.user?.roles || [];
+    const result = await this.payrollService.listLearningPaths(userId, orgId, roles);
+    return { success: true, message: 'Learning paths retrieved', data: result };
+  }
+
+  @Get('learning-paths/:id')
+  @UseGuards(JwtAuthGuard)
+  async getLearningPath(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getLearningPath(id, userId, orgId);
+    return { success: true, message: 'Learning path retrieved', data: result };
+  }
+
+  @Put('learning-paths/:id')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async updateLearningPath(
+    @Param('id') id: string,
+    @Body() dto: UpdateLearningPathDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.updateLearningPath(id, dto, userId, orgId);
+    return { success: true, message: 'Learning path updated', data: result };
+  }
+
+  @Delete('learning-paths/:id')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async deleteLearningPath(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.deleteLearningPath(id, userId, orgId);
+    return { success: true, message: 'Learning path deleted', data: result };
   }
 }

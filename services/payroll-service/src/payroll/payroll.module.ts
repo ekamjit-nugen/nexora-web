@@ -27,9 +27,14 @@ import { KudosSchema } from './schemas/kudos.schema';
 import { SurveySchema } from './schemas/survey.schema';
 import { SurveyResponseSchema } from './schemas/survey-response.schema';
 import { BankTransactionSchema } from './schemas/bank-transaction.schema';
+import { CourseSchema } from './schemas/course.schema';
+import { EnrollmentSchema } from './schemas/enrollment.schema';
+import { CertificateSchema } from './schemas/certificate.schema';
+import { LearningPathSchema } from './schemas/learning-path.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { ExternalServicesService } from './external-services.service';
 import { BankPayoutService } from './bank-payout.service';
+import { AttritionPredictorService } from './attrition-predictor.service';
 
 @Module({
   imports: [
@@ -55,6 +60,10 @@ import { BankPayoutService } from './bank-payout.service';
       { name: 'Survey', schema: SurveySchema },
       { name: 'SurveyResponse', schema: SurveyResponseSchema },
       { name: 'BankTransaction', schema: BankTransactionSchema },
+      { name: 'Course', schema: CourseSchema },
+      { name: 'Enrollment', schema: EnrollmentSchema },
+      { name: 'Certificate', schema: CertificateSchema },
+      { name: 'LearningPath', schema: LearningPathSchema },
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -69,7 +78,7 @@ import { BankPayoutService } from './bank-payout.service';
     }),
   ],
   controllers: [PayrollController],
-  providers: [PayrollService, PayrollCalculationService, ExternalServicesService, BankPayoutService, JwtAuthGuard, Reflector],
-  exports: [PayrollService, ExternalServicesService, BankPayoutService],
+  providers: [PayrollService, PayrollCalculationService, ExternalServicesService, BankPayoutService, AttritionPredictorService, JwtAuthGuard, Reflector],
+  exports: [PayrollService, ExternalServicesService, BankPayoutService, AttritionPredictorService],
 })
 export class PayrollModule {}

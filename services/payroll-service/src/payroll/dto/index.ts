@@ -502,6 +502,25 @@ export class CandidateQueryDto {
   @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
 }
 
+// ── AI Resume Parsing & Smart Match DTOs ──
+
+export class ParseResumeDto {
+  @IsString() resumeText: string; // raw text or URL
+  @IsOptional() @IsString() jobPostingId?: string; // for auto-match scoring
+}
+
+export class SmartMatchDto {
+  @IsString() jobPostingId: string;
+  @IsOptional() @IsNumber() @Min(0) @Max(100) minScore?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
+}
+
+export class ParseAndCreateCandidateDto {
+  @IsString() jobPostingId: string;
+  @IsString() resumeText: string;
+  @IsEmail() email: string;
+}
+
 // ── Missing DTOs for raw @Body() parameters ──
 
 export class RejectSalaryStructureDto {
@@ -927,6 +946,188 @@ export class SubmitSurveyResponseDto {
 export class SurveyQueryDto {
   @IsOptional() @IsString() status?: string;
   @IsOptional() @IsString() type?: string;
+  @IsOptional() @IsNumber() @Min(1) page?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
+}
+
+// ===========================================================================
+// Learning Management System (LMS)
+// ===========================================================================
+
+export class CourseLessonResourceDto {
+  @IsString() title: string;
+  @IsString() url: string;
+  @IsString() type: string;
+}
+
+export class CourseLessonDto {
+  @IsString() id: string;
+  @IsString() title: string;
+  @IsEnum(['video', 'article', 'quiz', 'assignment', 'live_session', 'document'])
+  type: string;
+  @IsOptional() @IsString() content?: string;
+  @IsOptional() @IsString() videoUrl?: string;
+  @IsNumber() @Min(0) duration: number;
+  @IsNumber() @Min(0) order: number;
+  @IsOptional() @IsBoolean() isRequired?: boolean;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => CourseLessonResourceDto)
+  resources?: CourseLessonResourceDto[];
+}
+
+export class CourseQuizQuestionDto {
+  @IsString() id: string;
+  @IsString() question: string;
+  @IsEnum(['single_choice', 'multi_choice', 'true_false']) type: string;
+  @IsOptional() @IsArray() options?: string[];
+  correctAnswer: any;
+  @IsOptional() @IsNumber() points?: number;
+  @IsOptional() @IsString() explanation?: string;
+}
+
+export class CourseQuizDto {
+  @IsOptional() @IsNumber() @Min(0) @Max(100) passingScore?: number;
+  @IsArray() @ValidateNested({ each: true }) @Type(() => CourseQuizQuestionDto)
+  questions: CourseQuizQuestionDto[];
+}
+
+export class CreateCourseDto {
+  @IsString() title: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsString() thumbnail?: string;
+  @IsEnum([
+    'technical',
+    'soft_skills',
+    'compliance',
+    'leadership',
+    'onboarding',
+    'product',
+    'sales',
+    'customer_service',
+    'other',
+  ])
+  category: string;
+  @IsOptional() @IsEnum(['beginner', 'intermediate', 'advanced', 'all']) level?: string;
+  @IsOptional() @IsNumber() @Min(0) duration?: number;
+  @IsOptional() @IsString() instructor?: string;
+  @IsOptional() @IsArray() tags?: string[];
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => CourseLessonDto)
+  lessons?: CourseLessonDto[];
+  @IsOptional() @ValidateNested() @Type(() => CourseQuizDto) quiz?: CourseQuizDto;
+  @IsOptional() @IsString() certificateTemplate?: string;
+  @IsOptional() @IsArray() prerequisites?: string[];
+  @IsOptional() @IsArray() skillsGained?: string[];
+  @IsOptional() @IsEnum(['all', 'department', 'designation', 'specific']) targetAudience?: string;
+  @IsOptional() @IsArray() departments?: string[];
+  @IsOptional() @IsArray() designations?: string[];
+  @IsOptional() @IsArray() employeeIds?: string[];
+  @IsOptional() @IsBoolean() isMandatory?: boolean;
+  @IsOptional() @IsNumber() @Min(1) dueInDays?: number;
+}
+
+export class UpdateCourseDto {
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsString() thumbnail?: string;
+  @IsOptional() @IsEnum([
+    'technical',
+    'soft_skills',
+    'compliance',
+    'leadership',
+    'onboarding',
+    'product',
+    'sales',
+    'customer_service',
+    'other',
+  ])
+  category?: string;
+  @IsOptional() @IsEnum(['beginner', 'intermediate', 'advanced', 'all']) level?: string;
+  @IsOptional() @IsNumber() @Min(0) duration?: number;
+  @IsOptional() @IsString() instructor?: string;
+  @IsOptional() @IsArray() tags?: string[];
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => CourseLessonDto)
+  lessons?: CourseLessonDto[];
+  @IsOptional() @ValidateNested() @Type(() => CourseQuizDto) quiz?: CourseQuizDto;
+  @IsOptional() @IsString() certificateTemplate?: string;
+  @IsOptional() @IsArray() prerequisites?: string[];
+  @IsOptional() @IsArray() skillsGained?: string[];
+  @IsOptional() @IsEnum(['all', 'department', 'designation', 'specific']) targetAudience?: string;
+  @IsOptional() @IsArray() departments?: string[];
+  @IsOptional() @IsArray() designations?: string[];
+  @IsOptional() @IsArray() employeeIds?: string[];
+  @IsOptional() @IsBoolean() isMandatory?: boolean;
+  @IsOptional() @IsNumber() @Min(1) dueInDays?: number;
+}
+
+export class CourseQueryDto {
+  @IsOptional() @IsString() category?: string;
+  @IsOptional() @IsString() level?: string;
+  @IsOptional() @IsString() status?: string;
+  @IsOptional() @IsString() search?: string;
+  @IsOptional() @IsNumber() @Min(1) page?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
+}
+
+export class EnrollCourseDto {
+  @IsString() courseId: string;
+}
+
+export class UpdateLessonProgressDto {
+  @IsString() lessonId: string;
+  @IsEnum(['not_started', 'in_progress', 'completed']) status: string;
+  @IsOptional() @IsNumber() @Min(0) timeSpent?: number;
+}
+
+export class QuizAnswerDto {
+  @IsString() questionId: string;
+  answer: any;
+}
+
+export class SubmitQuizDto {
+  @IsArray() @ValidateNested({ each: true }) @Type(() => QuizAnswerDto)
+  answers: QuizAnswerDto[];
+}
+
+export class RateCourseDto {
+  @IsNumber() @Min(1) @Max(5) rating: number;
+  @IsOptional() @IsString() feedback?: string;
+}
+
+export class LearningPathCourseDto {
+  @IsString() courseId: string;
+  @IsNumber() @Min(0) order: number;
+  @IsOptional() @IsBoolean() isRequired?: boolean;
+}
+
+export class CreateLearningPathDto {
+  @IsString() name: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsString() category?: string;
+  @IsArray() @ValidateNested({ each: true }) @Type(() => LearningPathCourseDto)
+  courses: LearningPathCourseDto[];
+  @IsOptional() @IsEnum(['all', 'department', 'designation', 'specific']) targetAudience?: string;
+  @IsOptional() @IsArray() departments?: string[];
+  @IsOptional() @IsArray() designations?: string[];
+  @IsOptional() @IsNumber() @Min(0) estimatedDurationDays?: number;
+  @IsOptional() @IsBoolean() isMandatory?: boolean;
+}
+
+export class UpdateLearningPathDto {
+  @IsOptional() @IsString() name?: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsString() category?: string;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => LearningPathCourseDto)
+  courses?: LearningPathCourseDto[];
+  @IsOptional() @IsEnum(['all', 'department', 'designation', 'specific']) targetAudience?: string;
+  @IsOptional() @IsArray() departments?: string[];
+  @IsOptional() @IsArray() designations?: string[];
+  @IsOptional() @IsNumber() @Min(0) estimatedDurationDays?: number;
+  @IsOptional() @IsBoolean() isMandatory?: boolean;
+  @IsOptional() @IsEnum(['draft', 'published', 'archived']) status?: string;
+}
+
+export class EnrollmentQueryDto {
+  @IsOptional() @IsString() status?: string;
+  @IsOptional() @IsString() courseId?: string;
   @IsOptional() @IsNumber() @Min(1) page?: number;
   @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
 }

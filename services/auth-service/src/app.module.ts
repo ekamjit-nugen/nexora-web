@@ -15,6 +15,9 @@ import { AuditLogSchema } from './auth/schemas/audit-log.schema';
 import { ReportTemplateSchema } from './auth/schemas/report-template.schema';
 import { ScheduledReportSchema } from './auth/schemas/scheduled-report.schema';
 import { TrustedDeviceSchema } from './auth/schemas/trusted-device.schema';
+import { ApiKeySchema } from './auth/schemas/api-key.schema';
+import { IntegrationSchema } from './auth/schemas/integration.schema';
+import { WebhookEndpointSchema } from './auth/schemas/webhook-endpoint.schema';
 
 // Auth domain
 import { AuthController } from './auth/auth.controller';
@@ -47,6 +50,11 @@ import { DeviceFingerprintService } from './auth/device-fingerprint.service';
 
 // Audit domain
 import { AuditService } from './auth/audit.service';
+
+// Developer / Integration marketplace domain
+import { DeveloperController } from './auth/developer.controller';
+import { ApiKeyService } from './auth/api-key.service';
+import { WebhookEndpointService } from './auth/webhook-endpoint.service';
 
 // Platform domain
 import { PlatformAdminController } from './auth/platform-admin.controller';
@@ -100,6 +108,9 @@ import { HealthModule } from './health/health.module';
       { name: 'ReportTemplate', schema: ReportTemplateSchema },
       { name: 'ScheduledReport', schema: ScheduledReportSchema },
       { name: 'TrustedDevice', schema: TrustedDeviceSchema },
+      { name: 'ApiKey', schema: ApiKeySchema },
+      { name: 'Integration', schema: IntegrationSchema },
+      { name: 'WebhookEndpoint', schema: WebhookEndpointSchema },
     ]),
 
     // Auth infrastructure
@@ -131,6 +142,8 @@ import { HealthModule } from './health/health.module';
     SettingsController,
     // SCIM 2.0
     ScimController,
+    // Developer / Integration Marketplace
+    DeveloperController,
     // Platform
     PlatformAdminController,
     SystemHealthController,
@@ -147,6 +160,9 @@ import { HealthModule } from './health/health.module';
     OrganizationService,
     // SCIM 2.0
     ScimService,
+    // Developer / Integration Marketplace
+    ApiKeyService,
+    WebhookEndpointService,
     // Extracted sub-services
     OtpService,
     TokenService,
