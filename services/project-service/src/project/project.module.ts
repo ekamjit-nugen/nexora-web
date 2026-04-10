@@ -10,6 +10,7 @@ import { TimeTrackingController, TimesheetController, BillingController } from '
 import { ClientFeedbackController, ClientPortalController } from './wave4.controller';
 import { AssetPreviewController } from './controllers/asset-preview.controller';
 import { ProjectService } from './project.service';
+import { ProfitabilityService } from './profitability.service';
 import { ProjectSchema } from './schemas/project.schema';
 import { ProjectMemberSchema } from './schemas/project-member.schema';
 import { TimeLogSchema } from './schemas/time-log.schema';
@@ -55,6 +56,7 @@ import { AssetPreviewService } from './services/asset-preview.service';
   ],
   providers: [
     ProjectService,
+    ProfitabilityService,
     ProjectPermissionsService,
     Wave3MethodsService,
     ReportingService,
@@ -68,6 +70,7 @@ import { AssetPreviewService } from './services/asset-preview.service';
   ],
   exports: [
     ProjectService,
+    ProfitabilityService,
     ProjectPermissionsService,
     Wave3MethodsService,
     ReportingService,

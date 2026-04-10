@@ -4,6 +4,7 @@ import {
   HttpCode, HttpStatus, Logger,
 } from '@nestjs/common';
 import { ProjectService } from './project.service';
+import { ProfitabilityService } from './profitability.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard, Roles } from './guards/roles.guard';
 import {
@@ -16,7 +17,10 @@ import {
 export class ProjectController {
   private readonly logger = new Logger(ProjectController.name);
 
-  constructor(private projectService: ProjectService) {}
+  constructor(
+    private projectService: ProjectService,
+    private profitabilityService: ProfitabilityService,
+  ) {}
 
   // ── Projects ──
 
@@ -66,6 +70,24 @@ export class ProjectController {
   async getManagerOverview(@Req() req) {
     const overview = await this.projectService.getManagerOverview(req.user?.organizationId);
     return { success: true, message: 'Manager overview retrieved', data: overview };
+  }
+
+  // ── Profitability (Nexora's killer differentiator) ──
+
+  @Get('projects/profitability/portfolio')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
+  async getPortfolioProfitability(@Req() req) {
+    const data = await this.profitabilityService.getPortfolioProfitability(req.user?.organizationId);
+    return { success: true, message: 'Portfolio profitability retrieved', data };
+  }
+
+  @Get('projects/:id/profitability')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('manager', 'admin', 'owner')
+  async getProjectProfitability(@Param('id') id: string, @Req() req) {
+    const data = await this.profitabilityService.getProjectProfitability(id, req.user?.organizationId);
+    return { success: true, message: 'Project profitability retrieved', data };
   }
 
   @Get('projects/:id')

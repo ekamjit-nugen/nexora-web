@@ -1508,6 +1508,8 @@ export const projectApi = {
   updateBudget: (projectId: string, spent: number) =>
     request(`/projects/${projectId}/budget`, { method: "PUT", body: JSON.stringify({ spent }) }),
   getManagerOverview: () => request<any>("/projects/manager-overview"),
+  getProjectProfitability: (id: string) => request<any>(`/projects/${id}/profitability`),
+  getPortfolioProfitability: () => request<any>("/projects/profitability/portfolio"),
 
   // ── Templates ──
   getTemplates: (params?: Record<string, string>) => {
@@ -1532,6 +1534,12 @@ export const projectApi = {
     request<Project['releases']>(`/projects/${projectId}/releases`),
   getRelease: (projectId: string, releaseId: string) =>
     request<NonNullable<Project['releases']>[number]>(`/projects/${projectId}/releases/${releaseId}`),
+
+  // ── Profitability ──
+  getPortfolioProfitability: () => request<any>("/projects/profitability/portfolio"),
+  getProjectProfitability: (id: string) => request<any>(`/projects/${id}/profitability`),
+  slackAlertProject: (id: string, message?: string) =>
+    request(`/projects/${id}/profitability/alert`, { method: "POST", body: JSON.stringify({ message }) }),
 };
 
 // ── Project Reporting API ──
