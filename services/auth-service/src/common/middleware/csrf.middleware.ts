@@ -19,8 +19,18 @@ export class CsrfMiddleware implements NestMiddleware {
   private readonly EXEMPT_PATHS = [
     '/auth/oauth/',
     '/auth/saml/',
+    '/auth/send-otp',
+    '/auth/verify-otp',
+    '/auth/login',
+    '/auth/register',
+    '/auth/refresh',
     '/api/v1/auth/oauth/',
     '/api/v1/auth/saml/',
+    '/api/v1/auth/send-otp',
+    '/api/v1/auth/verify-otp',
+    '/api/v1/auth/login',
+    '/api/v1/auth/register',
+    '/api/v1/auth/refresh',
   ];
 
   use(req: Request, _res: Response, next: NextFunction): void {
@@ -29,8 +39,14 @@ export class CsrfMiddleware implements NestMiddleware {
       return next();
     }
 
-    // Skip exempt paths
+    // Skip exempt paths (public auth endpoints)
     if (this.EXEMPT_PATHS.some(path => req.path.startsWith(path))) {
+      return next();
+    }
+
+    // Skip CSRF for Bearer token auth (mobile/SPA clients use JWT in Authorization header)
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
       return next();
     }
 

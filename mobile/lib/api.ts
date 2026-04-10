@@ -28,6 +28,7 @@ async function refreshAccessToken(): Promise<string> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refreshToken }),
+    credentials: "omit",
   });
 
   if (!res.ok) {
@@ -63,6 +64,7 @@ async function request<T = any>(
   const res = await fetch(`${API_BASE}/api/v1${endpoint}`, {
     ...options,
     headers,
+    credentials: "omit", // Mobile uses Bearer token auth, never cookies
   });
 
   if (res.status === 401 && !endpoint.includes("/auth/refresh")) {
@@ -81,6 +83,7 @@ async function request<T = any>(
       const retryRes = await fetch(`${API_BASE}/api/v1${endpoint}`, {
         ...options,
         headers: retryHeaders,
+        credentials: "omit",
       });
 
       const retryJson = await retryRes.json();
