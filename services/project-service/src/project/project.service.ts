@@ -927,25 +927,66 @@ export class ProjectService {
     const filter: any = { isDeleted: false };
     if (orgId) filter.organizationId = orgId;
 
-    const [total, active, completed, onHold] = await Promise.all([
-      this.projectModel.countDocuments(filter),
-      this.projectModel.countDocuments({ ...filter, status: 'active' }),
-      this.projectModel.countDocuments({ ...filter, status: 'completed' }),
-      this.projectModel.countDocuments({ ...filter, status: 'on_hold' }),
-    ]);
-
-    const recentProjects = await this.projectModel
-      .find(filter)
+    // Fetch active projects with health metrics
+    const projects = await this.projectModel
+      .find({ ...filter, status: { $in: ['active', 'planning'] } })
       .sort({ updatedAt: -1 })
-      .limit(5)
+      .limit(20)
       .lean();
 
+    const projectHealth = projects.map((p: any) => ({
+      projectId: p._id?.toString() || '',
+      projectName: p.name || p.projectName || 'Untitled',
+      projectKey: p.projectKey || p.key || '',
+      status: p.status || 'active',
+      healthScore: p.healthScore ?? 75,
+      completionPercentage: p.completionPercentage ?? 0,
+      totalTasks: p.totalTasks ?? 0,
+      completedTasks: p.completedTasks ?? 0,
+      activeSprint: p.activeSprint ?? null,
+      managerId: p.managerId || '',
+      teamSize: Array.isArray(p.teamMembers) ? p.teamMembers.length : 0,
+    }));
+
+    // Extract upcoming milestones from projects
+    const upcomingMilestones: any[] = [];
+    const now = new Date();
+    for (const p of projects) {
+      const milestones = Array.isArray((p as any).milestones) ? (p as any).milestones : [];
+      for (const m of milestones) {
+        if (!m.targetDate) continue;
+        const target = new Date(m.targetDate);
+        const daysUntil = Math.ceil((target.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+        if (daysUntil < -30) continue; // Skip milestones past 30 days ago
+        upcomingMilestones.push({
+          projectName: (p as any).name || (p as any).projectName || 'Untitled',
+          milestoneName: m.name || m.title || 'Milestone',
+          targetDate: m.targetDate,
+          status: m.status || 'pending',
+          daysUntil,
+        });
+      }
+    }
+    upcomingMilestones.sort((a, b) => a.daysUntil - b.daysUntil);
+
     return {
-      stats: { total, active, completed, onHold },
-      recentProjects,
-      teamWorkload: [],
-      upcomingDeadlines: [],
-      pendingApprovals: { leaveRequests: 0, timesheets: 0, expenses: 0 },
+      projectHealth,
+      teamSummary: {
+        totalMembers: 0,
+        overAllocated: 0,
+        underAllocated: 0,
+      },
+      pendingApprovals: {
+        timesheets: 0,
+        leaveRequests: 0,
+      },
+      upcomingMilestones: upcomingMilestones.slice(0, 10),
+      weeklyMetrics: {
+        tasksCompleted: 0,
+        tasksCreated: 0,
+        hoursLogged: 0,
+        avgCycleTime: 0,
+      },
     };
   }
 }

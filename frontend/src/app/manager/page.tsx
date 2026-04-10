@@ -98,7 +98,15 @@ export default function ManagerDashboardPage() {
     setError(null);
     try {
       const res = await projectApi.getManagerOverview();
-      setOverview(res.data as ManagerOverview);
+      const raw = (res.data || {}) as Partial<ManagerOverview>;
+      // Defensive: ensure all required fields exist with sensible defaults
+      setOverview({
+        projectHealth: Array.isArray(raw.projectHealth) ? raw.projectHealth : [],
+        teamSummary: raw.teamSummary || { totalMembers: 0, overAllocated: 0, underAllocated: 0 },
+        pendingApprovals: raw.pendingApprovals || { timesheets: 0, leaveRequests: 0 },
+        upcomingMilestones: Array.isArray(raw.upcomingMilestones) ? raw.upcomingMilestones : [],
+        weeklyMetrics: raw.weeklyMetrics || { tasksCompleted: 0, tasksCreated: 0, hoursLogged: 0, avgCycleTime: 0 },
+      });
     } catch (err: any) {
       setError(err.message || "Failed to load manager overview");
     } finally {
