@@ -72,6 +72,15 @@ const entryStatusConfig: Record<string, { label: string; color: string; dot: str
   on_hold: { label: "On Hold", color: "bg-red-50 text-red-700 border-red-200", dot: "bg-red-500" },
 };
 
+const txStatusConfig: Record<string, { label: string; color: string }> = {
+  pending: { label: "Pending", color: "bg-gray-100 text-gray-600 border-gray-200" },
+  processing: { label: "Processing", color: "bg-blue-50 text-blue-700 border-blue-200" },
+  processed: { label: "Processed", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  failed: { label: "Failed", color: "bg-red-50 text-red-700 border-red-200" },
+  reversed: { label: "Reversed", color: "bg-amber-50 text-amber-700 border-amber-200" },
+  cancelled: { label: "Cancelled", color: "bg-gray-50 text-gray-500 border-gray-200" },
+};
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -104,6 +113,8 @@ export default function PayrollRunDetailPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [expandedEntry, setExpandedEntry] = useState<string | null>(null);
   const [showAuditTrail, setShowAuditTrail] = useState(false);
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [initiatingPayout, setInitiatingPayout] = useState(false);
 
   // Pagination
   const ITEMS_PER_PAGE = 20;
@@ -142,6 +153,20 @@ export default function PayrollRunDetailPage() {
   useEffect(() => {
     if (user && runId) fetchRun();
   }, [fetchRun, user, runId]);
+
+  const fetchTransactions = useCallback(async () => {
+    if (!runId) return;
+    try {
+      const res = await payrollApi.getPayoutTransactions(runId);
+      setTransactions(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      // silently ignore — payouts are optional
+    }
+  }, [runId]);
+
+  useEffect(() => {
+    if (run) fetchTransactions();
+  }, [run, fetchTransactions]);
 
   // ---------------------------------------------------------------------------
   // Action handlers
@@ -259,6 +284,68 @@ export default function PayrollRunDetailPage() {
     }
   };
 
+  const handleInitiatePayout = async () => {
+    if (!window.confirm(`Initiate bank payouts for ${(run as any)?.summary?.processedEmployees || 0} employees?`)) return;
+    setInitiatingPayout(true);
+    try {
+      const res = await payrollApi.initiateBulkPayout(runId);
+      const d = res.data as any;
+      toast.success(`Payouts initiated: ${d.initiated || 0} succeeded, ${d.failed || 0} failed`);
+      await fetchTransactions();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to initiate payouts");
+    } finally {
+      setInitiatingPayout(false);
+    }
+  };
+
+  const handleRetry = async (txId: string) => {
+    try {
+      await payrollApi.retryBankTransaction(txId);
+      toast.success("Retry initiated");
+      await fetchTransactions();
+    } catch (err: any) {
+      toast.error(err.message || "Retry failed");
+    }
+  };
+
+  const handleSync = async (txId: string) => {
+    try {
+      await payrollApi.syncBankTransaction(txId);
+      toast.success("Status synced");
+      await fetchTransactions();
+    } catch (err: any) {
+      toast.error(err.message || "Sync failed");
+    }
+  };
+
+  const handleSyncAllPayouts = async () => {
+    toast.info("Syncing all transactions...");
+    for (const tx of transactions.filter((t) => ["pending", "processing"].includes(t.status))) {
+      try { await payrollApi.syncBankTransaction(tx._id); } catch {}
+    }
+    await fetchTransactions();
+    toast.success("Sync complete");
+  };
+
+  const handleDownloadBankFile = async () => {
+    try {
+      const res = await payrollApi.downloadBankFile(runId);
+      const d = res.data as any;
+      const content = typeof d.content === "string" ? d.content : JSON.stringify(d.content, null, 2);
+      const blob = new Blob([content], { type: d.contentType || "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = d.filename || `bank-file-${runId}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Bank file downloaded");
+    } catch (err: any) {
+      toast.error(err.message || "Download failed");
+    }
+  };
+
   // ---------------------------------------------------------------------------
   // Loading / Auth gate
   // ---------------------------------------------------------------------------
@@ -280,6 +367,13 @@ export default function PayrollRunDetailPage() {
   const grossPay = run?.totalGrossPay ?? run?.grossPay ?? 0;
   const netPay = run?.totalNetPay ?? run?.netPay ?? 0;
   const totalDeductions = run?.totalDeductions ?? entries.reduce((sum, e) => sum + (e.totalDeductions || 0), 0);
+
+  // Bank payout stats
+  const canInitiatePayout = !!run && ["approved", "finalized", "paid"].includes(run.status);
+  const totalPayoutAmount = transactions.reduce((sum, t) => sum + (t.amount || 0), 0);
+  const payoutProcessedCount = transactions.filter((t) => t.status === "processed").length;
+  const payoutPendingCount = transactions.filter((t) => ["pending", "processing"].includes(t.status)).length;
+  const payoutFailedCount = transactions.filter((t) => t.status === "failed").length;
 
   // ---------------------------------------------------------------------------
   // Render
@@ -618,6 +712,136 @@ export default function PayrollRunDetailPage() {
                   </div>
                 );
               })()}
+            </div>
+
+            {/* Bank Payouts Section */}
+            <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
+              <div className="px-6 py-4 border-b border-[#E2E8F0] flex items-center justify-between">
+                <div>
+                  <h2 className="text-[16px] font-semibold text-[#0F172A]">Bank Payouts</h2>
+                  <p className="text-[12px] text-[#64748B] mt-0.5">
+                    {transactions.length > 0
+                      ? `${transactions.length} transactions initiated`
+                      : "No payouts initiated yet"}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    onClick={handleDownloadBankFile}
+                    variant="outline"
+                    disabled={!canInitiatePayout}
+                    className="h-9 text-[13px]"
+                  >
+                    Download Bank File
+                  </Button>
+                  {transactions.length === 0 ? (
+                    <Button
+                      onClick={handleInitiatePayout}
+                      disabled={!canInitiatePayout || initiatingPayout}
+                      className="h-9 text-[13px] bg-[#2E86C1] hover:bg-[#2471A3]"
+                    >
+                      {initiatingPayout ? "Initiating..." : "Initiate Payout"}
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={handleSyncAllPayouts}
+                      variant="outline"
+                      className="h-9 text-[13px]"
+                    >
+                      Sync Status
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* Stats */}
+              {transactions.length > 0 && (
+                <div className="grid grid-cols-4 gap-px bg-[#E2E8F0] border-b border-[#E2E8F0]">
+                  <div className="bg-white p-4">
+                    <p className="text-[11px] text-[#64748B] uppercase font-medium">Total Amount</p>
+                    <p className="text-[18px] font-bold text-[#0F172A] mt-1">{formatCurrency(totalPayoutAmount)}</p>
+                  </div>
+                  <div className="bg-white p-4">
+                    <p className="text-[11px] text-[#64748B] uppercase font-medium">Processed</p>
+                    <p className="text-[18px] font-bold text-emerald-600 mt-1">{payoutProcessedCount}</p>
+                  </div>
+                  <div className="bg-white p-4">
+                    <p className="text-[11px] text-[#64748B] uppercase font-medium">Pending</p>
+                    <p className="text-[18px] font-bold text-amber-600 mt-1">{payoutPendingCount}</p>
+                  </div>
+                  <div className="bg-white p-4">
+                    <p className="text-[11px] text-[#64748B] uppercase font-medium">Failed</p>
+                    <p className="text-[18px] font-bold text-red-600 mt-1">{payoutFailedCount}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Transactions Table */}
+              {transactions.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[12px]">
+                    <thead>
+                      <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
+                        <th className="text-left px-5 py-3 font-semibold text-[#475569]">Employee</th>
+                        <th className="text-left px-5 py-3 font-semibold text-[#475569]">Amount</th>
+                        <th className="text-left px-5 py-3 font-semibold text-[#475569]">Mode</th>
+                        <th className="text-left px-5 py-3 font-semibold text-[#475569]">Account</th>
+                        <th className="text-left px-5 py-3 font-semibold text-[#475569]">Status</th>
+                        <th className="text-left px-5 py-3 font-semibold text-[#475569]">Initiated</th>
+                        <th className="text-right px-5 py-3 font-semibold text-[#475569]">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#F1F5F9]">
+                      {transactions.map((tx) => (
+                        <tr key={tx._id} className="hover:bg-[#F8FAFC]">
+                          <td className="px-5 py-3 text-[#0F172A]">{tx.employeeId}</td>
+                          <td className="px-5 py-3 text-[#0F172A] font-medium">{formatCurrency(tx.amount)}</td>
+                          <td className="px-5 py-3 text-[#64748B]">{tx.mode}</td>
+                          <td className="px-5 py-3 text-[#64748B] font-mono">****{tx.bankDetails?.accountNumber}</td>
+                          <td className="px-5 py-3">
+                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${txStatusConfig[tx.status]?.color || ''}`}>
+                              {txStatusConfig[tx.status]?.label || tx.status}
+                            </span>
+                          </td>
+                          <td className="px-5 py-3 text-[#64748B]">
+                            {tx.initiatedAt ? new Date(tx.initiatedAt).toLocaleDateString() : "—"}
+                          </td>
+                          <td className="px-5 py-3 text-right">
+                            {tx.status === "failed" && (
+                              <button
+                                onClick={() => handleRetry(tx._id)}
+                                className="text-[11px] text-[#2E86C1] hover:underline font-medium mr-3"
+                              >
+                                Retry
+                              </button>
+                            )}
+                            {(tx.status === "pending" || tx.status === "processing") && (
+                              <button
+                                onClick={() => handleSync(tx._id)}
+                                className="text-[11px] text-[#64748B] hover:text-[#0F172A] hover:underline"
+                              >
+                                Sync
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <svg className="w-12 h-12 mx-auto text-[#E2E8F0]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                  </svg>
+                  <p className="text-[13px] text-[#64748B] mt-3">Payouts haven't been initiated for this run</p>
+                  {canInitiatePayout ? (
+                    <p className="text-[11px] text-[#94A3B8] mt-1">Once approved or finalized, you can initiate bulk bank transfers</p>
+                  ) : (
+                    <p className="text-[11px] text-[#94A3B8] mt-1">Approve or finalize the run first, then initiate payouts</p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Audit Trail */}

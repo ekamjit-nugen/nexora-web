@@ -93,6 +93,14 @@ const navSections: NavSection[] = [
     ],
   },
   {
+    title: "ENGAGEMENT",
+    items: [
+      { label: "Announcements", href: "/payroll/announcements", icon: "M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" },
+      { label: "Kudos", href: "/payroll/kudos", icon: "M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" },
+      { label: "Surveys", href: "/payroll/surveys", icon: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
+    ],
+  },
+  {
     title: "FINANCE",
     minRole: "manager",
     items: [
@@ -107,6 +115,8 @@ const navSections: NavSection[] = [
     items: [
       { label: "Roles", href: "/roles", icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" },
       { label: "Policies", href: "/policies", icon: "M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" },
+      { label: "Custom Fields", href: "/settings/custom-fields", minRole: "manager", icon: "M4 6h16M4 10h16M4 14h16M4 18h16" },
+      { label: "Automations", href: "/settings/automation-rules", minRole: "manager", icon: "M13 10V3L4 14h7v7l9-11h-7z" },
     ],
   },
 ];
