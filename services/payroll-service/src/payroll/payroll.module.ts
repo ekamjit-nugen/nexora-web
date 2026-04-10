@@ -22,8 +22,14 @@ import { StatutoryReportSchema } from './schemas/statutory-report.schema';
 import { GoalSchema } from './schemas/goal.schema';
 import { ReviewCycleSchema } from './schemas/review-cycle.schema';
 import { PerformanceReviewSchema } from './schemas/performance-review.schema';
+import { AnnouncementSchema } from './schemas/announcement.schema';
+import { KudosSchema } from './schemas/kudos.schema';
+import { SurveySchema } from './schemas/survey.schema';
+import { SurveyResponseSchema } from './schemas/survey-response.schema';
+import { BankTransactionSchema } from './schemas/bank-transaction.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { ExternalServicesService } from './external-services.service';
+import { BankPayoutService } from './bank-payout.service';
 
 @Module({
   imports: [
@@ -44,6 +50,11 @@ import { ExternalServicesService } from './external-services.service';
       { name: 'Goal', schema: GoalSchema },
       { name: 'ReviewCycle', schema: ReviewCycleSchema },
       { name: 'PerformanceReview', schema: PerformanceReviewSchema },
+      { name: 'Announcement', schema: AnnouncementSchema },
+      { name: 'Kudos', schema: KudosSchema },
+      { name: 'Survey', schema: SurveySchema },
+      { name: 'SurveyResponse', schema: SurveyResponseSchema },
+      { name: 'BankTransaction', schema: BankTransactionSchema },
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -58,7 +69,7 @@ import { ExternalServicesService } from './external-services.service';
     }),
   ],
   controllers: [PayrollController],
-  providers: [PayrollService, PayrollCalculationService, ExternalServicesService, JwtAuthGuard, Reflector],
-  exports: [PayrollService, ExternalServicesService],
+  providers: [PayrollService, PayrollCalculationService, ExternalServicesService, BankPayoutService, JwtAuthGuard, Reflector],
+  exports: [PayrollService, ExternalServicesService, BankPayoutService],
 })
 export class PayrollModule {}

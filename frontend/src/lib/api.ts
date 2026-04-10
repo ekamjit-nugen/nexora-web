@@ -2700,6 +2700,18 @@ export const payrollApi = {
   generatePayslips: (runId: string) =>
     request(`/payroll-runs/${runId}/generate-payslips`, { method: "POST" }),
 
+  // Bank Payouts
+  initiateBulkPayout: (runId: string) =>
+    request(`/payroll-runs/${runId}/payout`, { method: "POST" }),
+  getPayoutTransactions: (runId: string) =>
+    request(`/payroll-runs/${runId}/transactions`),
+  downloadBankFile: (runId: string) =>
+    request(`/payroll-runs/${runId}/bank-file`),
+  retryBankTransaction: (id: string) =>
+    request(`/bank-transactions/${id}/retry`, { method: "POST" }),
+  syncBankTransaction: (id: string) =>
+    request(`/bank-transactions/${id}/sync`, { method: "POST" }),
+
   // Payslips
   getMyPayslips: (params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";
@@ -2919,4 +2931,66 @@ export const payrollApi = {
     request(`/reviews/${id}/manager-review`, { method: "POST", body: JSON.stringify(data) }),
   finalizeReview: (id: string, data: Record<string, unknown>) =>
     request(`/reviews/${id}/finalize`, { method: "POST", body: JSON.stringify(data) }),
+
+  // Employee Engagement: Announcements
+  createAnnouncement: (data: Record<string, unknown>) =>
+    request("/announcements", { method: "POST", body: JSON.stringify(data) }),
+  listAnnouncements: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/announcements${qs}`);
+  },
+  getPinnedAnnouncements: () => request("/announcements/pinned"),
+  getAnnouncement: (id: string) => request(`/announcements/${id}`),
+  updateAnnouncement: (id: string, data: Record<string, unknown>) =>
+    request(`/announcements/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  publishAnnouncement: (id: string) =>
+    request(`/announcements/${id}/publish`, { method: "POST" }),
+  markAnnouncementRead: (id: string) =>
+    request(`/announcements/${id}/read`, { method: "POST", body: JSON.stringify({}) }),
+  reactToAnnouncement: (id: string, emoji: string) =>
+    request(`/announcements/${id}/react`, { method: "POST", body: JSON.stringify({ emoji }) }),
+  deleteAnnouncement: (id: string) =>
+    request(`/announcements/${id}`, { method: "DELETE" }),
+
+  // Employee Engagement: Kudos
+  giveKudos: (data: Record<string, unknown>) =>
+    request("/kudos", { method: "POST", body: JSON.stringify(data) }),
+  listKudos: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/kudos${qs}`);
+  },
+  getMyReceivedKudos: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/kudos/received${qs}`);
+  },
+  getMyGivenKudos: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/kudos/given${qs}`);
+  },
+  getKudosLeaderboard: (limit?: number) => {
+    const qs = limit ? `?limit=${limit}` : "";
+    return request(`/kudos/leaderboard${qs}`);
+  },
+  deleteKudos: (id: string) =>
+    request(`/kudos/${id}`, { method: "DELETE" }),
+
+  // Employee Engagement: Surveys / Polls / eNPS
+  createSurvey: (data: Record<string, unknown>) =>
+    request("/surveys", { method: "POST", body: JSON.stringify(data) }),
+  listSurveys: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/surveys${qs}`);
+  },
+  getActiveSurveysForUser: () => request("/surveys/active"),
+  getSurvey: (id: string) => request(`/surveys/${id}`),
+  updateSurvey: (id: string, data: Record<string, unknown>) =>
+    request(`/surveys/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  publishSurvey: (id: string) =>
+    request(`/surveys/${id}/publish`, { method: "POST" }),
+  closeSurvey: (id: string) =>
+    request(`/surveys/${id}/close`, { method: "POST" }),
+  submitSurveyResponse: (id: string, data: Record<string, unknown>) =>
+    request(`/surveys/${id}/respond`, { method: "POST", body: JSON.stringify(data) }),
+  getSurveyResults: (id: string) => request(`/surveys/${id}/results`),
+  getMySurveyResponse: (id: string) => request(`/surveys/${id}/my-response`),
 };

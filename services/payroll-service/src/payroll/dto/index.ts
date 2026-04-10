@@ -773,3 +773,160 @@ export class FinalizeReviewDto {
   @IsOptional() @IsString() finalLabel?: string;
   @IsOptional() @IsString() calibrationNotes?: string;
 }
+
+// ===========================================================================
+// Employee Engagement: Announcements
+// ===========================================================================
+
+export class AnnouncementAttachmentDto {
+  @IsString() name: string;
+  @IsString() url: string;
+  @IsString() type: string;
+}
+
+export class CreateAnnouncementDto {
+  @IsString() title: string;
+  @IsString() content: string;
+  @IsOptional() @IsEnum(['general', 'policy', 'event', 'celebration', 'company_update', 'urgent'])
+  category?: string;
+  @IsOptional() @IsEnum(['low', 'normal', 'high', 'critical']) priority?: string;
+  @IsOptional() @IsEnum(['all', 'department', 'designation', 'specific']) targetAudience?: string;
+  @IsOptional() @IsArray() departments?: string[];
+  @IsOptional() @IsArray() designations?: string[];
+  @IsOptional() @IsArray() employeeIds?: string[];
+  @IsOptional() @IsDateString() publishedAt?: string;
+  @IsOptional() @IsDateString() expiresAt?: string;
+  @IsOptional() @IsBoolean() isPinned?: boolean;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => AnnouncementAttachmentDto)
+  attachments?: AnnouncementAttachmentDto[];
+}
+
+export class UpdateAnnouncementDto {
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsString() content?: string;
+  @IsOptional() @IsEnum(['general', 'policy', 'event', 'celebration', 'company_update', 'urgent'])
+  category?: string;
+  @IsOptional() @IsEnum(['low', 'normal', 'high', 'critical']) priority?: string;
+  @IsOptional() @IsEnum(['all', 'department', 'designation', 'specific']) targetAudience?: string;
+  @IsOptional() @IsArray() departments?: string[];
+  @IsOptional() @IsArray() designations?: string[];
+  @IsOptional() @IsArray() employeeIds?: string[];
+  @IsOptional() @IsDateString() publishedAt?: string;
+  @IsOptional() @IsDateString() expiresAt?: string;
+  @IsOptional() @IsBoolean() isPinned?: boolean;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => AnnouncementAttachmentDto)
+  attachments?: AnnouncementAttachmentDto[];
+}
+
+export class AnnouncementQueryDto {
+  @IsOptional() @IsString() status?: string;
+  @IsOptional() @IsString() category?: string;
+  @IsOptional() @IsNumber() @Min(1) page?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
+}
+
+export class AnnouncementReactDto {
+  @IsString() emoji: string;
+}
+
+export class AnnouncementReadDto {}
+
+// ===========================================================================
+// Employee Engagement: Kudos
+// ===========================================================================
+
+export class CreateKudosDto {
+  @IsArray() toUserIds: string[];
+  @IsEnum([
+    'teamwork',
+    'innovation',
+    'leadership',
+    'customer_first',
+    'above_and_beyond',
+    'problem_solving',
+    'mentorship',
+    'reliability',
+    'positivity',
+    'learning',
+  ])
+  type: string;
+  @IsString() message: string;
+  @IsOptional() @IsEnum(['public', 'team', 'private']) visibility?: string;
+}
+
+export class KudosQueryDto {
+  @IsOptional() @IsString() fromUserId?: string;
+  @IsOptional() @IsString() toUserId?: string;
+  @IsOptional() @IsString() type?: string;
+  @IsOptional() @IsNumber() @Min(1) page?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
+}
+
+// ===========================================================================
+// Employee Engagement: Surveys
+// ===========================================================================
+
+export class SurveyQuestionDto {
+  @IsString() id: string;
+  @IsEnum(['single_choice', 'multi_choice', 'rating', 'nps', 'text', 'yes_no', 'scale'])
+  type: string;
+  @IsString() question: string;
+  @IsOptional() @IsArray() options?: string[];
+  @IsOptional() @IsBoolean() required?: boolean;
+  @IsOptional() @IsNumber() minValue?: number;
+  @IsOptional() @IsNumber() maxValue?: number;
+}
+
+export class CreateSurveyDto {
+  @IsString() title: string;
+  @IsOptional() @IsString() description?: string;
+  @IsEnum(['poll', 'pulse', 'enps', '360_feedback', 'exit', 'engagement', 'custom'])
+  type: string;
+  @IsArray() @ValidateNested({ each: true }) @Type(() => SurveyQuestionDto)
+  questions: SurveyQuestionDto[];
+  @IsDateString() startDate: string;
+  @IsDateString() endDate: string;
+  @IsOptional() @IsEnum(['all', 'department', 'designation', 'specific']) targetAudience?: string;
+  @IsOptional() @IsArray() departments?: string[];
+  @IsOptional() @IsArray() designations?: string[];
+  @IsOptional() @IsArray() employeeIds?: string[];
+  @IsOptional() @IsBoolean() isAnonymous?: boolean;
+  @IsOptional() @IsBoolean() allowComments?: boolean;
+  @IsOptional() @IsEnum(['never', 'after_submit', 'after_close', 'always']) showResults?: string;
+}
+
+export class UpdateSurveyDto {
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsEnum(['poll', 'pulse', 'enps', '360_feedback', 'exit', 'engagement', 'custom'])
+  type?: string;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => SurveyQuestionDto)
+  questions?: SurveyQuestionDto[];
+  @IsOptional() @IsDateString() startDate?: string;
+  @IsOptional() @IsDateString() endDate?: string;
+  @IsOptional() @IsEnum(['all', 'department', 'designation', 'specific']) targetAudience?: string;
+  @IsOptional() @IsArray() departments?: string[];
+  @IsOptional() @IsArray() designations?: string[];
+  @IsOptional() @IsArray() employeeIds?: string[];
+  @IsOptional() @IsBoolean() isAnonymous?: boolean;
+  @IsOptional() @IsBoolean() allowComments?: boolean;
+  @IsOptional() @IsEnum(['never', 'after_submit', 'after_close', 'always']) showResults?: string;
+}
+
+export class SurveyAnswerDto {
+  @IsString() questionId: string;
+  answer: any;
+}
+
+export class SubmitSurveyResponseDto {
+  @IsArray() @ValidateNested({ each: true }) @Type(() => SurveyAnswerDto)
+  answers: SurveyAnswerDto[];
+  @IsOptional() @IsString() comment?: string;
+}
+
+export class SurveyQueryDto {
+  @IsOptional() @IsString() status?: string;
+  @IsOptional() @IsString() type?: string;
+  @IsOptional() @IsNumber() @Min(1) page?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
+}

@@ -4,6 +4,7 @@ import {
   HttpCode, HttpStatus, Logger,
 } from '@nestjs/common';
 import { PayrollService } from './payroll.service';
+import { BankPayoutService } from './bank-payout.service';
 import { JwtAuthGuard, Roles } from './guards/jwt-auth.guard';
 import {
   CreateSalaryStructureDto, UpdateSalaryStructureDto, SimulateCTCDto,
@@ -27,13 +28,20 @@ import {
   CreateReviewCycleDto, UpdateReviewCycleDto, StartReviewCycleDto,
   UpdateCycleStatusDto, ReviewCycleQueryDto,
   SubmitSelfReviewDto, SubmitPeerReviewDto, SubmitManagerReviewDto, FinalizeReviewDto,
+  CreateAnnouncementDto, UpdateAnnouncementDto, AnnouncementQueryDto,
+  AnnouncementReactDto, AnnouncementReadDto,
+  CreateKudosDto, KudosQueryDto,
+  CreateSurveyDto, UpdateSurveyDto, SubmitSurveyResponseDto, SurveyQueryDto,
 } from './dto/index';
 
 @Controller()
 export class PayrollController {
   private readonly logger = new Logger(PayrollController.name);
 
-  constructor(private payrollService: PayrollService) {}
+  constructor(
+    private payrollService: PayrollService,
+    private bankPayoutService: BankPayoutService,
+  ) {}
 
   // ── Salary Structures ──
 
@@ -239,6 +247,63 @@ export class PayrollController {
     const userId = req.user.userId;
     const result = await this.payrollService.generatePayslips(id, userId, orgId);
     return { success: true, message: 'Payslips generated successfully', data: result };
+  }
+
+  // ── Bank Payouts ──
+
+  @Post('payroll-runs/:id/payout')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'super_admin')
+  async initiateBulkPayout(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.bankPayoutService.initiateBulkPayout(id, userId, orgId);
+    return { success: true, message: 'Bulk payout initiated', data: result };
+  }
+
+  @Get('payroll-runs/:id/transactions')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async getPayoutTransactions(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const result = await this.bankPayoutService.getTransactions(id, orgId);
+    return { success: true, message: 'Bank transactions retrieved', data: result };
+  }
+
+  @Get('payroll-runs/:id/bank-file')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'super_admin')
+  async downloadBankFile(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const csv = await this.bankPayoutService.generateBankFile(id, orgId);
+    return {
+      success: true,
+      message: 'Bank file generated',
+      data: {
+        filename: `bank-file-${id}.csv`,
+        contentType: 'text/csv',
+        content: csv,
+      },
+    };
+  }
+
+  @Post('bank-transactions/:id/retry')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'super_admin')
+  async retryBankTransaction(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.bankPayoutService.retryPayout(id, userId, orgId);
+    return { success: true, message: 'Payout retried', data: result };
+  }
+
+  @Post('bank-transactions/:id/sync')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async syncBankTransaction(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const result = await this.bankPayoutService.syncPayoutStatus(id, orgId);
+    return { success: true, message: 'Payout status synced', data: result };
   }
 
   // ── Payslips ──
@@ -1248,5 +1313,272 @@ export class PayrollController {
     const userId = req.user.userId;
     const result = await this.payrollService.finalizeReview(id, dto, userId, orgId);
     return { success: true, message: 'Review finalized', data: result };
+  }
+
+  // ── Employee Engagement: Announcements ──
+
+  @Post('announcements')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin', 'manager')
+  @HttpCode(HttpStatus.CREATED)
+  async createAnnouncement(@Body() dto: CreateAnnouncementDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.createAnnouncement(dto, userId, orgId);
+    return { success: true, message: 'Announcement created successfully', data: result };
+  }
+
+  @Get('announcements')
+  @UseGuards(JwtAuthGuard)
+  async listAnnouncements(@Query() query: AnnouncementQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.listAnnouncements(query, userId, orgId);
+    return { success: true, message: 'Announcements retrieved', data: result };
+  }
+
+  @Get('announcements/pinned')
+  @UseGuards(JwtAuthGuard)
+  async getPinnedAnnouncements(@Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getPinnedAnnouncements(userId, orgId);
+    return { success: true, message: 'Pinned announcements retrieved', data: result };
+  }
+
+  @Get('announcements/:id')
+  @UseGuards(JwtAuthGuard)
+  async getAnnouncement(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getAnnouncement(id, userId, orgId);
+    return { success: true, message: 'Announcement retrieved', data: result };
+  }
+
+  @Put('announcements/:id')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin', 'manager')
+  async updateAnnouncement(
+    @Param('id') id: string,
+    @Body() dto: UpdateAnnouncementDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.updateAnnouncement(id, dto, userId, orgId);
+    return { success: true, message: 'Announcement updated', data: result };
+  }
+
+  @Post('announcements/:id/publish')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin', 'manager')
+  async publishAnnouncement(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.publishAnnouncement(id, userId, orgId);
+    return { success: true, message: 'Announcement published', data: result };
+  }
+
+  @Post('announcements/:id/read')
+  @UseGuards(JwtAuthGuard)
+  async markAnnouncementRead(
+    @Param('id') id: string,
+    @Body() _dto: AnnouncementReadDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.markAnnouncementRead(id, userId, orgId);
+    return { success: true, message: 'Announcement marked as read', data: result };
+  }
+
+  @Post('announcements/:id/react')
+  @UseGuards(JwtAuthGuard)
+  async reactToAnnouncement(
+    @Param('id') id: string,
+    @Body() dto: AnnouncementReactDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.reactToAnnouncement(id, dto, userId, orgId);
+    return { success: true, message: 'Reaction updated', data: result };
+  }
+
+  @Delete('announcements/:id')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async deleteAnnouncement(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.deleteAnnouncement(id, userId, orgId);
+    return { success: true, message: 'Announcement deleted', data: result };
+  }
+
+  // ── Employee Engagement: Kudos ──
+
+  @Post('kudos')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.CREATED)
+  async giveKudos(@Body() dto: CreateKudosDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.giveKudos(dto, userId, orgId);
+    return { success: true, message: 'Kudos given successfully', data: result };
+  }
+
+  @Get('kudos')
+  @UseGuards(JwtAuthGuard)
+  async listKudos(@Query() query: KudosQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.listKudos(query, userId, orgId);
+    return { success: true, message: 'Kudos feed retrieved', data: result };
+  }
+
+  @Get('kudos/received')
+  @UseGuards(JwtAuthGuard)
+  async getMyReceivedKudos(@Query() query: KudosQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getMyReceivedKudos(query, userId, orgId);
+    return { success: true, message: 'Received kudos retrieved', data: result };
+  }
+
+  @Get('kudos/given')
+  @UseGuards(JwtAuthGuard)
+  async getMyGivenKudos(@Query() query: KudosQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getMyGivenKudos(query, userId, orgId);
+    return { success: true, message: 'Given kudos retrieved', data: result };
+  }
+
+  @Get('kudos/leaderboard')
+  @UseGuards(JwtAuthGuard)
+  async getKudosLeaderboard(@Query('limit') limit: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getKudosLeaderboard(
+      userId,
+      orgId,
+      limit ? parseInt(limit, 10) : 10,
+    );
+    return { success: true, message: 'Leaderboard retrieved', data: result };
+  }
+
+  @Delete('kudos/:id')
+  @UseGuards(JwtAuthGuard)
+  async deleteKudos(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.deleteKudos(id, userId, orgId);
+    return { success: true, message: 'Kudos deleted', data: result };
+  }
+
+  // ── Employee Engagement: Surveys / Polls / eNPS ──
+
+  @Post('surveys')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  @HttpCode(HttpStatus.CREATED)
+  async createSurvey(@Body() dto: CreateSurveyDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.createSurvey(dto, userId, orgId);
+    return { success: true, message: 'Survey created successfully', data: result };
+  }
+
+  @Get('surveys')
+  @UseGuards(JwtAuthGuard)
+  async listSurveys(@Query() query: SurveyQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.listSurveys(query, userId, orgId);
+    return { success: true, message: 'Surveys retrieved', data: result };
+  }
+
+  @Get('surveys/active')
+  @UseGuards(JwtAuthGuard)
+  async getActiveSurveysForUser(@Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getActiveSurveysForUser(userId, orgId);
+    return { success: true, message: 'Active surveys retrieved', data: result };
+  }
+
+  @Get('surveys/:id')
+  @UseGuards(JwtAuthGuard)
+  async getSurvey(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getSurvey(id, userId, orgId);
+    return { success: true, message: 'Survey retrieved', data: result };
+  }
+
+  @Put('surveys/:id')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async updateSurvey(
+    @Param('id') id: string,
+    @Body() dto: UpdateSurveyDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.updateSurvey(id, dto, userId, orgId);
+    return { success: true, message: 'Survey updated', data: result };
+  }
+
+  @Post('surveys/:id/publish')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async publishSurvey(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.publishSurvey(id, userId, orgId);
+    return { success: true, message: 'Survey published', data: result };
+  }
+
+  @Post('surveys/:id/close')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async closeSurvey(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.closeSurvey(id, userId, orgId);
+    return { success: true, message: 'Survey closed', data: result };
+  }
+
+  @Post('surveys/:id/respond')
+  @UseGuards(JwtAuthGuard)
+  async submitSurveyResponse(
+    @Param('id') id: string,
+    @Body() dto: SubmitSurveyResponseDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.submitSurveyResponse(id, dto, userId, orgId);
+    return { success: true, message: 'Survey response submitted', data: result };
+  }
+
+  @Get('surveys/:id/results')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async getSurveyResults(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getSurveyResults(id, userId, orgId);
+    return { success: true, message: 'Survey results retrieved', data: result };
+  }
+
+  @Get('surveys/:id/my-response')
+  @UseGuards(JwtAuthGuard)
+  async getMySurveyResponse(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getMySurveyResponse(id, userId, orgId);
+    return { success: true, message: 'My survey response retrieved', data: result };
   }
 }

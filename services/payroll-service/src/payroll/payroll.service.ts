@@ -24,6 +24,10 @@ import { IStatutoryReport } from './schemas/statutory-report.schema';
 import { IGoal } from './schemas/goal.schema';
 import { IReviewCycle } from './schemas/review-cycle.schema';
 import { IPerformanceReview } from './schemas/performance-review.schema';
+import { IAnnouncement } from './schemas/announcement.schema';
+import { IKudos } from './schemas/kudos.schema';
+import { ISurvey } from './schemas/survey.schema';
+import { ISurveyResponse } from './schemas/survey-response.schema';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { ExternalServicesService } from './external-services.service';
 import {
@@ -81,6 +85,16 @@ import {
   SubmitPeerReviewDto,
   SubmitManagerReviewDto,
   FinalizeReviewDto,
+  CreateAnnouncementDto,
+  UpdateAnnouncementDto,
+  AnnouncementQueryDto,
+  AnnouncementReactDto,
+  CreateKudosDto,
+  KudosQueryDto,
+  CreateSurveyDto,
+  UpdateSurveyDto,
+  SubmitSurveyResponseDto,
+  SurveyQueryDto,
 } from './dto/index';
 
 @Injectable()
@@ -104,6 +118,10 @@ export class PayrollService {
     @InjectModel('Goal') private goalModel: Model<IGoal>,
     @InjectModel('ReviewCycle') private reviewCycleModel: Model<IReviewCycle>,
     @InjectModel('PerformanceReview') private performanceReviewModel: Model<IPerformanceReview>,
+    @InjectModel('Announcement') private announcementModel: Model<IAnnouncement>,
+    @InjectModel('Kudos') private kudosModel: Model<IKudos>,
+    @InjectModel('Survey') private surveyModel: Model<ISurvey>,
+    @InjectModel('SurveyResponse') private surveyResponseModel: Model<ISurveyResponse>,
     private calculationService: PayrollCalculationService,
     private externalServices: ExternalServicesService,
   ) {}
@@ -5351,5 +5369,805 @@ export class PayrollService {
     );
 
     return review.save();
+  }
+
+  // ===========================================================================
+  // Employee Engagement: Announcements
+  // ===========================================================================
+
+  async createAnnouncement(
+    dto: CreateAnnouncementDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IAnnouncement> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    this.logger.log(`Creating announcement "${dto.title}" by user ${userId}`);
+
+    const data: Partial<IAnnouncement> = {
+      organizationId: orgId,
+      title: dto.title,
+      content: dto.content,
+      category: dto.category || 'general',
+      priority: dto.priority || 'normal',
+      targetAudience: dto.targetAudience || 'all',
+      departments: dto.departments || [],
+      designations: dto.designations || [],
+      employeeIds: dto.employeeIds || [],
+      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : undefined,
+      isPinned: dto.isPinned ?? false,
+      attachments: (dto.attachments || []) as any,
+      readBy: [],
+      reactions: [],
+      commentCount: 0,
+      status: 'draft',
+      isDeleted: false,
+      createdBy: userId,
+    };
+
+    if (dto.publishedAt) {
+      const publishDate = new Date(dto.publishedAt);
+      data.publishedAt = publishDate;
+      data.status = publishDate > new Date() ? 'scheduled' : 'published';
+    }
+
+    const announcement = new this.announcementModel(data);
+    return announcement.save();
+  }
+
+  async listAnnouncements(
+    query: AnnouncementQueryDto,
+    userId: string,
+    orgId: string,
+  ): Promise<{ items: IAnnouncement[]; total: number; page: number; limit: number }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const filter: any = { organizationId: orgId, isDeleted: false };
+    // Default: only show published announcements to regular users
+    if (query.status) {
+      filter.status = query.status;
+    } else {
+      filter.status = 'published';
+    }
+    if (query.category) filter.category = query.category;
+
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+      this.announcementModel
+        .find(filter)
+        .sort({ isPinned: -1, publishedAt: -1, createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      this.announcementModel.countDocuments(filter),
+    ]);
+
+    return { items, total, page, limit };
+  }
+
+  async getPinnedAnnouncements(userId: string, orgId: string): Promise<IAnnouncement[]> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    return this.announcementModel
+      .find({
+        organizationId: orgId,
+        isDeleted: false,
+        status: 'published',
+        isPinned: true,
+      })
+      .sort({ publishedAt: -1 });
+  }
+
+  async getAnnouncement(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<IAnnouncement> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const announcement = await this.announcementModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!announcement) throw new NotFoundException('Announcement not found');
+    return announcement;
+  }
+
+  async updateAnnouncement(
+    id: string,
+    dto: UpdateAnnouncementDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IAnnouncement> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const announcement = await this.getAnnouncement(id, userId, orgId);
+
+    if (dto.title !== undefined) announcement.title = dto.title;
+    if (dto.content !== undefined) announcement.content = dto.content;
+    if (dto.category !== undefined) announcement.category = dto.category;
+    if (dto.priority !== undefined) announcement.priority = dto.priority;
+    if (dto.targetAudience !== undefined) announcement.targetAudience = dto.targetAudience;
+    if (dto.departments !== undefined) announcement.departments = dto.departments;
+    if (dto.designations !== undefined) announcement.designations = dto.designations;
+    if (dto.employeeIds !== undefined) announcement.employeeIds = dto.employeeIds;
+    if (dto.publishedAt !== undefined) announcement.publishedAt = new Date(dto.publishedAt);
+    if (dto.expiresAt !== undefined) announcement.expiresAt = new Date(dto.expiresAt);
+    if (dto.isPinned !== undefined) announcement.isPinned = dto.isPinned;
+    if (dto.attachments !== undefined) announcement.attachments = dto.attachments as any;
+
+    return announcement.save();
+  }
+
+  async publishAnnouncement(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<IAnnouncement> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const announcement = await this.getAnnouncement(id, userId, orgId);
+    if (announcement.status === 'published') {
+      throw new ConflictException('Announcement already published');
+    }
+    announcement.status = 'published';
+    announcement.publishedAt = new Date();
+    return announcement.save();
+  }
+
+  async markAnnouncementRead(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<IAnnouncement> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const announcement = await this.getAnnouncement(id, userId, orgId);
+
+    const already = announcement.readBy.some((r) => r.userId === userId);
+    if (!already) {
+      announcement.readBy.push({ userId, readAt: new Date() });
+      await announcement.save();
+    }
+    return announcement;
+  }
+
+  async reactToAnnouncement(
+    id: string,
+    dto: AnnouncementReactDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IAnnouncement> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const announcement = await this.getAnnouncement(id, userId, orgId);
+
+    const existingIdx = announcement.reactions.findIndex(
+      (r) => r.userId === userId && r.emoji === dto.emoji,
+    );
+    if (existingIdx >= 0) {
+      // Toggle off
+      announcement.reactions.splice(existingIdx, 1);
+    } else {
+      announcement.reactions.push({ userId, emoji: dto.emoji });
+    }
+    return announcement.save();
+  }
+
+  async deleteAnnouncement(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<{ deleted: boolean }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const announcement = await this.getAnnouncement(id, userId, orgId);
+    announcement.isDeleted = true;
+    await announcement.save();
+    return { deleted: true };
+  }
+
+  // ===========================================================================
+  // Employee Engagement: Kudos / Recognition
+  // ===========================================================================
+
+  async giveKudos(
+    dto: CreateKudosDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IKudos> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    if (!dto.toUserIds || dto.toUserIds.length === 0) {
+      throw new BadRequestException('At least one recipient is required');
+    }
+    if (dto.toUserIds.includes(userId)) {
+      throw new BadRequestException('Cannot give kudos to yourself');
+    }
+
+    const kudos = new this.kudosModel({
+      organizationId: orgId,
+      fromUserId: userId,
+      toUserIds: dto.toUserIds,
+      type: dto.type,
+      message: dto.message,
+      visibility: dto.visibility || 'public',
+      points: 10,
+      reactions: [],
+      commentCount: 0,
+      isDeleted: false,
+    });
+
+    return kudos.save();
+  }
+
+  async listKudos(
+    query: KudosQueryDto,
+    userId: string,
+    orgId: string,
+  ): Promise<{ items: IKudos[]; total: number; page: number; limit: number }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const filter: any = {
+      organizationId: orgId,
+      isDeleted: false,
+      visibility: 'public',
+    };
+    if (query.fromUserId) filter.fromUserId = query.fromUserId;
+    if (query.toUserId) filter.toUserIds = query.toUserId;
+    if (query.type) filter.type = query.type;
+
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+      this.kudosModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      this.kudosModel.countDocuments(filter),
+    ]);
+
+    return { items, total, page, limit };
+  }
+
+  async getMyReceivedKudos(
+    query: KudosQueryDto,
+    userId: string,
+    orgId: string,
+  ): Promise<{ items: IKudos[]; total: number; page: number; limit: number }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const filter: any = {
+      organizationId: orgId,
+      isDeleted: false,
+      toUserIds: userId,
+    };
+    if (query.type) filter.type = query.type;
+
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+      this.kudosModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      this.kudosModel.countDocuments(filter),
+    ]);
+
+    return { items, total, page, limit };
+  }
+
+  async getMyGivenKudos(
+    query: KudosQueryDto,
+    userId: string,
+    orgId: string,
+  ): Promise<{ items: IKudos[]; total: number; page: number; limit: number }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const filter: any = {
+      organizationId: orgId,
+      isDeleted: false,
+      fromUserId: userId,
+    };
+    if (query.type) filter.type = query.type;
+
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+      this.kudosModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      this.kudosModel.countDocuments(filter),
+    ]);
+
+    return { items, total, page, limit };
+  }
+
+  async getKudosLeaderboard(
+    userId: string,
+    orgId: string,
+    limit = 10,
+  ): Promise<Array<{ userId: string; totalPoints: number; kudosCount: number }>> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const results = await this.kudosModel.aggregate([
+      {
+        $match: {
+          organizationId: orgId,
+          isDeleted: false,
+          visibility: { $in: ['public', 'team'] },
+        },
+      },
+      { $unwind: '$toUserIds' },
+      {
+        $group: {
+          _id: '$toUserIds',
+          totalPoints: { $sum: '$points' },
+          kudosCount: { $sum: 1 },
+        },
+      },
+      { $sort: { totalPoints: -1, kudosCount: -1 } },
+      { $limit: limit },
+      {
+        $project: {
+          _id: 0,
+          userId: '$_id',
+          totalPoints: 1,
+          kudosCount: 1,
+        },
+      },
+    ]);
+
+    return results;
+  }
+
+  async deleteKudos(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<{ deleted: boolean }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const kudos = await this.kudosModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!kudos) throw new NotFoundException('Kudos not found');
+    if (kudos.fromUserId !== userId) {
+      throw new ForbiddenException('Only the giver can delete kudos');
+    }
+    const ageMs = Date.now() - new Date((kudos as any).createdAt).getTime();
+    if (ageMs > 24 * 60 * 60 * 1000) {
+      throw new ForbiddenException('Kudos can only be deleted within 24 hours of giving');
+    }
+    kudos.isDeleted = true;
+    await kudos.save();
+    return { deleted: true };
+  }
+
+  // ===========================================================================
+  // Employee Engagement: Surveys / Polls / eNPS
+  // ===========================================================================
+
+  async createSurvey(
+    dto: CreateSurveyDto,
+    userId: string,
+    orgId: string,
+  ): Promise<ISurvey> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const startDate = new Date(dto.startDate);
+    const endDate = new Date(dto.endDate);
+    if (endDate <= startDate) {
+      throw new BadRequestException('endDate must be after startDate');
+    }
+    if (!dto.questions || dto.questions.length === 0) {
+      throw new BadRequestException('Survey must have at least one question');
+    }
+
+    const survey = new this.surveyModel({
+      organizationId: orgId,
+      title: dto.title,
+      description: dto.description || null,
+      type: dto.type,
+      status: 'draft',
+      isAnonymous: dto.isAnonymous ?? false,
+      targetAudience: dto.targetAudience || 'all',
+      departments: dto.departments || [],
+      designations: dto.designations || [],
+      employeeIds: dto.employeeIds || [],
+      questions: dto.questions.map((q) => ({
+        id: q.id,
+        type: q.type,
+        question: q.question,
+        options: q.options || [],
+        required: q.required ?? true,
+        minValue: q.minValue ?? null,
+        maxValue: q.maxValue ?? null,
+      })),
+      startDate,
+      endDate,
+      allowComments: dto.allowComments ?? true,
+      showResults: dto.showResults || 'after_close',
+      stats: {
+        totalInvited: 0,
+        totalResponses: 0,
+        responseRate: 0,
+      },
+      isDeleted: false,
+      createdBy: userId,
+    });
+
+    return survey.save();
+  }
+
+  async listSurveys(
+    query: SurveyQueryDto,
+    userId: string,
+    orgId: string,
+  ): Promise<{ items: ISurvey[]; total: number; page: number; limit: number }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const filter: any = { organizationId: orgId, isDeleted: false };
+    if (query.status) filter.status = query.status;
+    if (query.type) filter.type = query.type;
+
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+      this.surveyModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      this.surveyModel.countDocuments(filter),
+    ]);
+
+    return { items, total, page, limit };
+  }
+
+  async getActiveSurveysForUser(
+    userId: string,
+    orgId: string,
+  ): Promise<ISurvey[]> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const now = new Date();
+    const surveys = await this.surveyModel
+      .find({
+        organizationId: orgId,
+        isDeleted: false,
+        status: 'active',
+        startDate: { $lte: now },
+        endDate: { $gte: now },
+      })
+      .sort({ endDate: 1 });
+
+    // Filter out surveys already responded to (non-anonymous)
+    const result: ISurvey[] = [];
+    for (const s of surveys) {
+      if (s.isAnonymous) {
+        result.push(s);
+        continue;
+      }
+      const existing = await this.surveyResponseModel.findOne({
+        organizationId: orgId,
+        surveyId: (s as any)._id.toString(),
+        employeeId: userId,
+        isDeleted: false,
+      });
+      if (!existing) result.push(s);
+    }
+    return result;
+  }
+
+  async getSurvey(id: string, userId: string, orgId: string): Promise<ISurvey> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const survey = await this.surveyModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!survey) throw new NotFoundException('Survey not found');
+    return survey;
+  }
+
+  async updateSurvey(
+    id: string,
+    dto: UpdateSurveyDto,
+    userId: string,
+    orgId: string,
+  ): Promise<ISurvey> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const survey = await this.getSurvey(id, userId, orgId);
+
+    if (survey.status !== 'draft') {
+      throw new BadRequestException('Only draft surveys can be updated');
+    }
+
+    if (dto.title !== undefined) survey.title = dto.title;
+    if (dto.description !== undefined) survey.description = dto.description;
+    if (dto.type !== undefined) survey.type = dto.type;
+    if (dto.questions !== undefined) {
+      survey.questions = dto.questions.map((q) => ({
+        id: q.id,
+        type: q.type,
+        question: q.question,
+        options: q.options || [],
+        required: q.required ?? true,
+        minValue: q.minValue ?? null,
+        maxValue: q.maxValue ?? null,
+      })) as any;
+    }
+    if (dto.startDate !== undefined) survey.startDate = new Date(dto.startDate);
+    if (dto.endDate !== undefined) survey.endDate = new Date(dto.endDate);
+    if (dto.targetAudience !== undefined) survey.targetAudience = dto.targetAudience;
+    if (dto.departments !== undefined) survey.departments = dto.departments;
+    if (dto.designations !== undefined) survey.designations = dto.designations;
+    if (dto.employeeIds !== undefined) survey.employeeIds = dto.employeeIds;
+    if (dto.isAnonymous !== undefined) survey.isAnonymous = dto.isAnonymous;
+    if (dto.allowComments !== undefined) survey.allowComments = dto.allowComments;
+    if (dto.showResults !== undefined) survey.showResults = dto.showResults;
+
+    return survey.save();
+  }
+
+  async publishSurvey(id: string, userId: string, orgId: string): Promise<ISurvey> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const survey = await this.getSurvey(id, userId, orgId);
+    if (survey.status !== 'draft') {
+      throw new ConflictException(`Cannot publish survey in ${survey.status} status`);
+    }
+    survey.status = 'active';
+    return survey.save();
+  }
+
+  async closeSurvey(id: string, userId: string, orgId: string): Promise<ISurvey> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const survey = await this.getSurvey(id, userId, orgId);
+    if (survey.status === 'closed' || survey.status === 'archived') {
+      throw new ConflictException('Survey already closed');
+    }
+    survey.status = 'closed';
+    return survey.save();
+  }
+
+  async submitSurveyResponse(
+    surveyId: string,
+    dto: SubmitSurveyResponseDto,
+    userId: string,
+    orgId: string,
+  ): Promise<ISurveyResponse> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const survey = await this.getSurvey(surveyId, userId, orgId);
+    if (survey.status !== 'active') {
+      throw new BadRequestException('Survey is not currently active');
+    }
+    const now = new Date();
+    if (now > survey.endDate) {
+      throw new BadRequestException('Survey has ended');
+    }
+    if (now < survey.startDate) {
+      throw new BadRequestException('Survey has not started yet');
+    }
+
+    // Validate required questions answered
+    const answerMap = new Map(dto.answers.map((a) => [a.questionId, a.answer]));
+    for (const q of survey.questions) {
+      if (q.required && (answerMap.get(q.id) === undefined || answerMap.get(q.id) === null || answerMap.get(q.id) === '')) {
+        throw new BadRequestException(`Question "${q.question}" is required`);
+      }
+    }
+
+    // Prevent duplicate submissions (non-anonymous only)
+    if (!survey.isAnonymous) {
+      const existing = await this.surveyResponseModel.findOne({
+        organizationId: orgId,
+        surveyId,
+        employeeId: userId,
+        isDeleted: false,
+      });
+      if (existing) {
+        throw new ConflictException('You have already responded to this survey');
+      }
+    }
+
+    const response = new this.surveyResponseModel({
+      organizationId: orgId,
+      surveyId,
+      employeeId: survey.isAnonymous ? null : userId,
+      answers: dto.answers.map((a) => ({ questionId: a.questionId, answer: a.answer })),
+      comment: dto.comment || null,
+      submittedAt: new Date(),
+      isDeleted: false,
+    });
+
+    const saved = await response.save();
+
+    // Update survey stats
+    const totalResponses = await this.surveyResponseModel.countDocuments({
+      organizationId: orgId,
+      surveyId,
+      isDeleted: false,
+    });
+
+    const stats: any = {
+      ...(survey.stats || {}),
+      totalResponses,
+      lastResponseAt: new Date(),
+    };
+    if (stats.totalInvited > 0) {
+      stats.responseRate = Math.round((totalResponses / stats.totalInvited) * 100);
+    }
+
+    // Calculate eNPS score if applicable
+    if (survey.type === 'enps') {
+      const npsQuestion = survey.questions.find((q) => q.type === 'nps');
+      if (npsQuestion) {
+        const allResponses = await this.surveyResponseModel.find({
+          organizationId: orgId,
+          surveyId,
+          isDeleted: false,
+        });
+        let promoters = 0;
+        let detractors = 0;
+        let total = 0;
+        for (const r of allResponses) {
+          const ans = (r.answers || []).find((a) => a.questionId === npsQuestion.id);
+          if (ans && typeof ans.answer === 'number') {
+            total++;
+            if (ans.answer >= 9) promoters++;
+            else if (ans.answer <= 6) detractors++;
+          }
+        }
+        if (total > 0) {
+          stats.enpsScore = Math.round(((promoters - detractors) / total) * 100);
+        }
+      }
+    }
+
+    // Calculate avg rating if applicable
+    if (survey.type === 'pulse' || survey.type === 'engagement') {
+      const ratingQuestions = survey.questions.filter((q) => q.type === 'rating' || q.type === 'scale');
+      if (ratingQuestions.length > 0) {
+        const allResponses = await this.surveyResponseModel.find({
+          organizationId: orgId,
+          surveyId,
+          isDeleted: false,
+        });
+        let sum = 0;
+        let count = 0;
+        for (const r of allResponses) {
+          for (const q of ratingQuestions) {
+            const ans = (r.answers || []).find((a) => a.questionId === q.id);
+            if (ans && typeof ans.answer === 'number') {
+              sum += ans.answer;
+              count++;
+            }
+          }
+        }
+        if (count > 0) stats.avgRating = Math.round((sum / count) * 100) / 100;
+      }
+    }
+
+    await this.surveyModel.updateOne(
+      { _id: surveyId, organizationId: orgId },
+      { $set: { stats } },
+    );
+
+    return saved;
+  }
+
+  async getSurveyResults(
+    id: string,
+    userId: string,
+    orgId: string,
+  ): Promise<any> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const survey = await this.getSurvey(id, userId, orgId);
+
+    const responses = await this.surveyResponseModel.find({
+      organizationId: orgId,
+      surveyId: id,
+      isDeleted: false,
+    });
+
+    const questionResults = survey.questions.map((q) => {
+      const answers = responses
+        .map((r) => (r.answers || []).find((a) => a.questionId === q.id)?.answer)
+        .filter((a) => a !== undefined && a !== null);
+
+      const result: any = {
+        questionId: q.id,
+        question: q.question,
+        type: q.type,
+        totalAnswers: answers.length,
+      };
+
+      if (q.type === 'single_choice' || q.type === 'yes_no') {
+        const counts: Record<string, number> = {};
+        for (const a of answers) {
+          const key = String(a);
+          counts[key] = (counts[key] || 0) + 1;
+        }
+        result.distribution = Object.entries(counts).map(([option, count]) => ({
+          option,
+          count,
+          percentage: answers.length > 0 ? Math.round((count / answers.length) * 100) : 0,
+        }));
+      } else if (q.type === 'multi_choice') {
+        const counts: Record<string, number> = {};
+        for (const a of answers) {
+          const arr = Array.isArray(a) ? a : [a];
+          for (const v of arr) {
+            const key = String(v);
+            counts[key] = (counts[key] || 0) + 1;
+          }
+        }
+        result.distribution = Object.entries(counts).map(([option, count]) => ({
+          option,
+          count,
+          percentage: answers.length > 0 ? Math.round((count / answers.length) * 100) : 0,
+        }));
+      } else if (q.type === 'rating' || q.type === 'scale' || q.type === 'nps') {
+        const nums = answers.filter((a) => typeof a === 'number') as number[];
+        if (nums.length > 0) {
+          result.average = Math.round((nums.reduce((s, n) => s + n, 0) / nums.length) * 100) / 100;
+          result.min = Math.min(...nums);
+          result.max = Math.max(...nums);
+          const dist: Record<string, number> = {};
+          for (const n of nums) dist[String(n)] = (dist[String(n)] || 0) + 1;
+          result.distribution = Object.entries(dist).map(([value, count]) => ({
+            value: Number(value),
+            count,
+            percentage: Math.round((count / nums.length) * 100),
+          }));
+        }
+        if (q.type === 'nps') {
+          const promoters = nums.filter((n) => n >= 9).length;
+          const passives = nums.filter((n) => n >= 7 && n <= 8).length;
+          const detractors = nums.filter((n) => n <= 6).length;
+          result.nps = {
+            promoters,
+            passives,
+            detractors,
+            score: nums.length > 0 ? Math.round(((promoters - detractors) / nums.length) * 100) : 0,
+          };
+        }
+      } else if (q.type === 'text') {
+        result.responses = answers.map((a) => String(a));
+      }
+
+      return result;
+    });
+
+    const comments = responses
+      .filter((r) => r.comment)
+      .map((r) => ({
+        comment: r.comment,
+        submittedAt: r.submittedAt,
+        employeeId: survey.isAnonymous ? null : r.employeeId,
+      }));
+
+    return {
+      surveyId: id,
+      title: survey.title,
+      type: survey.type,
+      status: survey.status,
+      isAnonymous: survey.isAnonymous,
+      totalResponses: responses.length,
+      stats: survey.stats,
+      questionResults,
+      comments,
+    };
+  }
+
+  async getMySurveyResponse(
+    surveyId: string,
+    userId: string,
+    orgId: string,
+  ): Promise<ISurveyResponse | null> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const survey = await this.getSurvey(surveyId, userId, orgId);
+    if (survey.isAnonymous) {
+      throw new BadRequestException('Cannot retrieve responses for anonymous surveys');
+    }
+    return this.surveyResponseModel.findOne({
+      organizationId: orgId,
+      surveyId,
+      employeeId: userId,
+      isDeleted: false,
+    });
   }
 }
