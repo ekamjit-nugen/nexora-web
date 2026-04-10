@@ -21,6 +21,9 @@ import { IAnalyticsSnapshot } from './schemas/analytics-snapshot.schema';
 import { IJobPosting } from './schemas/job-posting.schema';
 import { ICandidate } from './schemas/candidate.schema';
 import { IStatutoryReport } from './schemas/statutory-report.schema';
+import { IGoal } from './schemas/goal.schema';
+import { IReviewCycle } from './schemas/review-cycle.schema';
+import { IPerformanceReview } from './schemas/performance-review.schema';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { ExternalServicesService } from './external-services.service';
 import {
@@ -64,6 +67,20 @@ import {
   GenerateESIReturnDto,
   GenerateTDSQuarterlyDto,
   StatutoryReportQueryDto,
+  CreateGoalDto,
+  UpdateGoalDto,
+  GoalCheckInDto,
+  RateGoalDto,
+  GoalQueryDto,
+  CreateReviewCycleDto,
+  UpdateReviewCycleDto,
+  StartReviewCycleDto,
+  UpdateCycleStatusDto,
+  ReviewCycleQueryDto,
+  SubmitSelfReviewDto,
+  SubmitPeerReviewDto,
+  SubmitManagerReviewDto,
+  FinalizeReviewDto,
 } from './dto/index';
 
 @Injectable()
@@ -84,6 +101,9 @@ export class PayrollService {
     @InjectModel('JobPosting') private jobPostingModel: Model<IJobPosting>,
     @InjectModel('Candidate') private candidateModel: Model<ICandidate>,
     @InjectModel('StatutoryReport') private statutoryReportModel: Model<IStatutoryReport>,
+    @InjectModel('Goal') private goalModel: Model<IGoal>,
+    @InjectModel('ReviewCycle') private reviewCycleModel: Model<IReviewCycle>,
+    @InjectModel('PerformanceReview') private performanceReviewModel: Model<IPerformanceReview>,
     private calculationService: PayrollCalculationService,
     private externalServices: ExternalServicesService,
   ) {}
@@ -4680,5 +4700,656 @@ export class PayrollService {
         isDeleted: false,
       })
       .sort({ 'period.year': -1, createdAt: -1 });
+  }
+
+  // ===========================================================================
+  // Performance Management: Goals
+  // ===========================================================================
+
+  private computeGoalProgress(keyResults: any[]): number {
+    if (!keyResults || keyResults.length === 0) return 0;
+    const total = keyResults.reduce((sum, kr) => sum + (kr.progress || 0), 0);
+    return Math.round(total / keyResults.length);
+  }
+
+  async createGoal(dto: CreateGoalDto, userId: string, orgId: string): Promise<IGoal> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    this.logger.log(`Creating goal "${dto.title}" by user ${userId}`);
+
+    const employeeId = dto.employeeId || userId;
+
+    if (dto.cycleId) {
+      const cycle = await this.reviewCycleModel.findOne({
+        _id: dto.cycleId,
+        organizationId: orgId,
+        isDeleted: false,
+      });
+      if (!cycle) throw new NotFoundException(`Review cycle ${dto.cycleId} not found`);
+      if (!['goal_setting', 'draft'].includes(cycle.status) && !cycle.config.allowGoalRevisions) {
+        throw new BadRequestException(`Goals cannot be added at cycle status "${cycle.status}"`);
+      }
+    }
+
+    const keyResults = (dto.keyResults || []).map((kr) => ({
+      title: kr.title,
+      metric: kr.metric || null,
+      targetValue: kr.targetValue,
+      currentValue: kr.currentValue ?? 0,
+      unit: kr.unit || null,
+      progress: kr.progress ?? 0,
+      status: kr.status || 'not_started',
+      notes: kr.notes || null,
+    }));
+
+    const goal = new this.goalModel({
+      organizationId: orgId,
+      employeeId,
+      cycleId: dto.cycleId || null,
+      title: dto.title,
+      description: dto.description || '',
+      type: dto.type || 'individual',
+      category: dto.category || 'performance',
+      status: 'draft',
+      priority: dto.priority || 'medium',
+      weightage: dto.weightage || 0,
+      startDate: new Date(dto.startDate),
+      targetDate: new Date(dto.targetDate),
+      progress: this.computeGoalProgress(keyResults),
+      keyResults,
+      checkIns: [],
+      parentGoalId: dto.parentGoalId || null,
+      alignedGoals: dto.alignedGoals || [],
+      tags: dto.tags || [],
+      isDeleted: false,
+      createdBy: userId,
+    });
+
+    return goal.save();
+  }
+
+  async getAllGoals(query: GoalQueryDto, userId: string, orgId: string) {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const filter: any = { organizationId: orgId, isDeleted: false };
+    if (query.status) filter.status = query.status;
+    if (query.cycleId) filter.cycleId = query.cycleId;
+    if (query.employeeId) filter.employeeId = query.employeeId;
+    if (query.type) filter.type = query.type;
+    if (query.category) filter.category = query.category;
+
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [records, total] = await Promise.all([
+      this.goalModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      this.goalModel.countDocuments(filter),
+    ]);
+
+    return { records, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async getMyGoals(query: GoalQueryDto, userId: string, orgId: string) {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    return this.getAllGoals({ ...query, employeeId: userId }, userId, orgId);
+  }
+
+  async getGoal(id: string, userId: string, orgId: string): Promise<IGoal> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const goal = await this.goalModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!goal) throw new NotFoundException(`Goal ${id} not found`);
+    return goal;
+  }
+
+  async updateGoal(
+    id: string,
+    dto: UpdateGoalDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IGoal> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const goal = await this.getGoal(id, userId, orgId);
+
+    if (goal.status === 'achieved' || goal.status === 'cancelled') {
+      throw new BadRequestException(`Cannot update goal in status "${goal.status}"`);
+    }
+
+    if (dto.status) {
+      const validTransitions: Record<string, string[]> = {
+        draft: ['active', 'cancelled'],
+        active: ['achieved', 'missed', 'cancelled', 'deferred'],
+        deferred: ['active', 'cancelled'],
+        missed: ['active'],
+      };
+      const allowed = validTransitions[goal.status] || [];
+      if (!allowed.includes(dto.status)) {
+        throw new BadRequestException(
+          `Invalid goal status transition from "${goal.status}" to "${dto.status}"`,
+        );
+      }
+      goal.status = dto.status;
+      if (dto.status === 'achieved') {
+        goal.completedAt = new Date();
+        goal.progress = 100;
+      }
+    }
+
+    if (dto.title !== undefined) goal.title = dto.title;
+    if (dto.description !== undefined) goal.description = dto.description;
+    if (dto.type !== undefined) goal.type = dto.type;
+    if (dto.category !== undefined) goal.category = dto.category;
+    if (dto.priority !== undefined) goal.priority = dto.priority;
+    if (dto.weightage !== undefined) goal.weightage = dto.weightage;
+    if (dto.startDate !== undefined) goal.startDate = new Date(dto.startDate);
+    if (dto.targetDate !== undefined) goal.targetDate = new Date(dto.targetDate);
+    if (dto.alignedGoals !== undefined) goal.alignedGoals = dto.alignedGoals;
+    if (dto.tags !== undefined) goal.tags = dto.tags;
+    if (dto.selfAssessment !== undefined) goal.selfAssessment = dto.selfAssessment;
+
+    if (dto.keyResults !== undefined) {
+      goal.keyResults = dto.keyResults.map((kr) => ({
+        title: kr.title,
+        metric: kr.metric || null,
+        targetValue: kr.targetValue,
+        currentValue: kr.currentValue ?? 0,
+        unit: kr.unit || null,
+        progress: kr.progress ?? 0,
+        status: kr.status || 'not_started',
+        notes: kr.notes || null,
+      }));
+      if (dto.status !== 'achieved') {
+        goal.progress = this.computeGoalProgress(goal.keyResults);
+      }
+    }
+
+    return goal.save();
+  }
+
+  async goalCheckIn(
+    id: string,
+    dto: GoalCheckInDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IGoal> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const goal = await this.getGoal(id, userId, orgId);
+
+    if (!['active', 'draft'].includes(goal.status)) {
+      throw new BadRequestException(`Cannot check-in on goal with status "${goal.status}"`);
+    }
+
+    if (goal.status === 'draft') goal.status = 'active';
+
+    if (dto.keyResults && dto.keyResults.length > 0) {
+      dto.keyResults.forEach((krUpdate, idx) => {
+        if (goal.keyResults[idx]) {
+          if (krUpdate.currentValue !== undefined) goal.keyResults[idx].currentValue = krUpdate.currentValue;
+          if (krUpdate.progress !== undefined) goal.keyResults[idx].progress = krUpdate.progress;
+          if (krUpdate.status !== undefined) goal.keyResults[idx].status = krUpdate.status;
+          if (krUpdate.notes !== undefined) goal.keyResults[idx].notes = krUpdate.notes;
+        }
+      });
+      goal.progress = this.computeGoalProgress(goal.keyResults);
+    } else {
+      goal.progress = dto.progress;
+    }
+
+    goal.checkIns.push({
+      date: new Date(),
+      progress: goal.progress,
+      notes: dto.notes || '',
+      updatedBy: userId,
+    });
+
+    if (goal.progress >= 100) {
+      goal.status = 'achieved';
+      goal.completedAt = new Date();
+    }
+
+    return goal.save();
+  }
+
+  async rateGoal(
+    id: string,
+    dto: RateGoalDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IGoal> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const goal = await this.getGoal(id, userId, orgId);
+
+    if (dto.managerRating === undefined && dto.selfRating === undefined) {
+      throw new BadRequestException('Either managerRating or selfRating must be provided');
+    }
+
+    if (dto.managerRating !== undefined) {
+      goal.managerRating = dto.managerRating;
+      if (dto.comment) goal.managerComment = dto.comment;
+    }
+    if (dto.selfRating !== undefined) {
+      goal.selfRating = dto.selfRating;
+      if (dto.comment) goal.selfAssessment = dto.comment;
+    }
+
+    // Compute weighted final score (average of self and manager if both present)
+    if (goal.managerRating !== null && goal.managerRating !== undefined) {
+      const base = goal.selfRating
+        ? (goal.managerRating * 0.7 + goal.selfRating * 0.3)
+        : goal.managerRating;
+      goal.finalScore = Number(((base * (goal.weightage || 100)) / 100).toFixed(2));
+    }
+
+    return goal.save();
+  }
+
+  async deleteGoal(id: string, userId: string, orgId: string): Promise<{ deleted: boolean }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const goal = await this.getGoal(id, userId, orgId);
+    goal.isDeleted = true;
+    await goal.save();
+    return { deleted: true };
+  }
+
+  // ===========================================================================
+  // Performance Management: Review Cycles
+  // ===========================================================================
+
+  async createReviewCycle(
+    dto: CreateReviewCycleDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IReviewCycle> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    this.logger.log(`Creating review cycle "${dto.name}" by user ${userId}`);
+
+    const startDate = new Date(dto.startDate);
+    const endDate = new Date(dto.endDate);
+    if (endDate <= startDate) {
+      throw new BadRequestException('endDate must be after startDate');
+    }
+
+    const cycle = new this.reviewCycleModel({
+      organizationId: orgId,
+      name: dto.name,
+      type: dto.type || 'annual',
+      status: 'draft',
+      startDate,
+      endDate,
+      goalSettingDeadline: dto.goalSettingDeadline ? new Date(dto.goalSettingDeadline) : null,
+      selfReviewDeadline: dto.selfReviewDeadline ? new Date(dto.selfReviewDeadline) : null,
+      peerReviewDeadline: dto.peerReviewDeadline ? new Date(dto.peerReviewDeadline) : null,
+      managerReviewDeadline: dto.managerReviewDeadline ? new Date(dto.managerReviewDeadline) : null,
+      completionDeadline: dto.completionDeadline ? new Date(dto.completionDeadline) : null,
+      applicableTo: dto.applicableTo || 'all',
+      departments: dto.departments || [],
+      designations: dto.designations || [],
+      employeeIds: dto.employeeIds || [],
+      config: {
+        enableSelfReview: dto.config?.enableSelfReview ?? true,
+        enablePeerReview: dto.config?.enablePeerReview ?? true,
+        enableManagerReview: dto.config?.enableManagerReview ?? true,
+        enable360: dto.config?.enable360 ?? false,
+        minPeerReviewers: dto.config?.minPeerReviewers ?? 3,
+        maxPeerReviewers: dto.config?.maxPeerReviewers ?? 5,
+        ratingScale: dto.config?.ratingScale ?? 5,
+        enableCalibration: dto.config?.enableCalibration ?? false,
+        allowGoalRevisions: dto.config?.allowGoalRevisions ?? true,
+      },
+      ratingGuide: dto.ratingGuide || [],
+      competencies: dto.competencies || [],
+      stats: {
+        totalEmployees: 0,
+        goalsSubmitted: 0,
+        selfReviewsCompleted: 0,
+        peerReviewsCompleted: 0,
+        managerReviewsCompleted: 0,
+        finalized: 0,
+      },
+      isDeleted: false,
+      createdBy: userId,
+    });
+
+    return cycle.save();
+  }
+
+  async listReviewCycles(query: ReviewCycleQueryDto, userId: string, orgId: string) {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const filter: any = { organizationId: orgId, isDeleted: false };
+    if (query.status) filter.status = query.status;
+    if (query.type) filter.type = query.type;
+    if (query.year) {
+      const yearStart = new Date(query.year, 0, 1);
+      const yearEnd = new Date(query.year + 1, 0, 1);
+      filter.startDate = { $gte: yearStart, $lt: yearEnd };
+    }
+
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [records, total] = await Promise.all([
+      this.reviewCycleModel.find(filter).sort({ startDate: -1 }).skip(skip).limit(limit),
+      this.reviewCycleModel.countDocuments(filter),
+    ]);
+
+    return { records, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async getReviewCycle(id: string, userId: string, orgId: string): Promise<IReviewCycle> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const cycle = await this.reviewCycleModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!cycle) throw new NotFoundException(`Review cycle ${id} not found`);
+    return cycle;
+  }
+
+  async updateReviewCycle(
+    id: string,
+    dto: UpdateReviewCycleDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IReviewCycle> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const cycle = await this.getReviewCycle(id, userId, orgId);
+
+    if (['completed', 'cancelled'].includes(cycle.status)) {
+      throw new BadRequestException(`Cannot update cycle in status "${cycle.status}"`);
+    }
+
+    if (dto.name !== undefined) cycle.name = dto.name;
+    if (dto.type !== undefined) cycle.type = dto.type;
+    if (dto.startDate !== undefined) cycle.startDate = new Date(dto.startDate);
+    if (dto.endDate !== undefined) cycle.endDate = new Date(dto.endDate);
+    if (dto.goalSettingDeadline !== undefined) cycle.goalSettingDeadline = new Date(dto.goalSettingDeadline);
+    if (dto.selfReviewDeadline !== undefined) cycle.selfReviewDeadline = new Date(dto.selfReviewDeadline);
+    if (dto.peerReviewDeadline !== undefined) cycle.peerReviewDeadline = new Date(dto.peerReviewDeadline);
+    if (dto.managerReviewDeadline !== undefined) cycle.managerReviewDeadline = new Date(dto.managerReviewDeadline);
+    if (dto.completionDeadline !== undefined) cycle.completionDeadline = new Date(dto.completionDeadline);
+    if (dto.applicableTo !== undefined) cycle.applicableTo = dto.applicableTo;
+    if (dto.departments !== undefined) cycle.departments = dto.departments;
+    if (dto.designations !== undefined) cycle.designations = dto.designations;
+    if (dto.employeeIds !== undefined) cycle.employeeIds = dto.employeeIds;
+    if (dto.ratingGuide !== undefined) cycle.ratingGuide = dto.ratingGuide as any;
+    if (dto.competencies !== undefined) cycle.competencies = dto.competencies as any;
+    if (dto.config !== undefined) {
+      cycle.config = { ...cycle.config, ...dto.config } as any;
+    }
+
+    return cycle.save();
+  }
+
+  async startReviewCycle(
+    id: string,
+    dto: StartReviewCycleDto,
+    userId: string,
+    orgId: string,
+  ): Promise<{ cycle: IReviewCycle; reviewsCreated: number }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const cycle = await this.getReviewCycle(id, userId, orgId);
+
+    if (cycle.status !== 'draft') {
+      throw new BadRequestException(`Cycle must be in draft status to start (current: ${cycle.status})`);
+    }
+
+    let employeeIds: string[] = [];
+    if (dto.employeeIds && dto.employeeIds.length > 0) {
+      employeeIds = dto.employeeIds;
+    } else if (cycle.applicableTo === 'specific' && cycle.employeeIds.length > 0) {
+      employeeIds = cycle.employeeIds;
+    } else {
+      // Derive from existing salary structures in org (proxy for active employees)
+      const structures = await this.salaryStructureModel
+        .find({ organizationId: orgId, status: { $in: ['approved', 'active'] } })
+        .distinct('employeeId');
+      employeeIds = structures;
+    }
+
+    if (employeeIds.length === 0) {
+      throw new BadRequestException('No applicable employees found for this cycle');
+    }
+
+    let reviewsCreated = 0;
+    for (const empId of employeeIds) {
+      const existing = await this.performanceReviewModel.findOne({
+        organizationId: orgId,
+        cycleId: String(cycle._id),
+        employeeId: empId,
+      });
+      if (existing) continue;
+
+      await this.performanceReviewModel.create({
+        organizationId: orgId,
+        cycleId: String(cycle._id),
+        employeeId: empId,
+        managerId: null,
+        status: 'goal_setting',
+        goalIds: [],
+        peerReviews: [],
+        isDeleted: false,
+        createdBy: userId,
+      });
+      reviewsCreated++;
+    }
+
+    cycle.status = 'goal_setting';
+    cycle.stats.totalEmployees = employeeIds.length;
+    await cycle.save();
+
+    return { cycle, reviewsCreated };
+  }
+
+  async updateCycleStatus(
+    id: string,
+    dto: UpdateCycleStatusDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IReviewCycle> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const cycle = await this.getReviewCycle(id, userId, orgId);
+
+    const validTransitions: Record<string, string[]> = {
+      draft: ['goal_setting', 'cancelled'],
+      goal_setting: ['self_review', 'cancelled'],
+      self_review: ['peer_review', 'manager_review', 'cancelled'],
+      peer_review: ['manager_review', 'cancelled'],
+      manager_review: ['calibration', 'completed', 'cancelled'],
+      calibration: ['completed', 'cancelled'],
+    };
+
+    const allowed = validTransitions[cycle.status] || [];
+    if (!allowed.includes(dto.status)) {
+      throw new BadRequestException(
+        `Invalid cycle status transition from "${cycle.status}" to "${dto.status}"`,
+      );
+    }
+
+    cycle.status = dto.status;
+    return cycle.save();
+  }
+
+  // ===========================================================================
+  // Performance Management: Reviews
+  // ===========================================================================
+
+  async getMyReviews(userId: string, orgId: string): Promise<IPerformanceReview[]> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    return this.performanceReviewModel
+      .find({ organizationId: orgId, employeeId: userId, isDeleted: false })
+      .sort({ createdAt: -1 });
+  }
+
+  async getPendingReviews(userId: string, orgId: string): Promise<IPerformanceReview[]> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    // Reviews where user is the manager and awaiting manager review,
+    // OR where user is listed as a peer reviewer (best-effort)
+    return this.performanceReviewModel
+      .find({
+        organizationId: orgId,
+        isDeleted: false,
+        $or: [
+          { managerId: userId, status: { $in: ['manager_review_pending', 'self_review_completed'] } },
+        ],
+      })
+      .sort({ updatedAt: -1 });
+  }
+
+  async getReview(id: string, userId: string, orgId: string): Promise<IPerformanceReview> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const review = await this.performanceReviewModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!review) throw new NotFoundException(`Performance review ${id} not found`);
+    return review;
+  }
+
+  async submitSelfReview(
+    id: string,
+    dto: SubmitSelfReviewDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IPerformanceReview> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const review = await this.getReview(id, userId, orgId);
+
+    if (review.employeeId !== userId) {
+      throw new ForbiddenException('Only the reviewee can submit their self-review');
+    }
+
+    if (review.selfReview) {
+      throw new ConflictException('Self-review already submitted');
+    }
+
+    review.selfReview = {
+      overallRating: dto.overallRating,
+      strengths: dto.strengths || '',
+      improvements: dto.improvements || '',
+      achievements: dto.achievements || '',
+      challenges: dto.challenges || '',
+      competencyRatings: (dto.competencyRatings || []) as any,
+      submittedAt: new Date(),
+    };
+    review.status = 'self_review_completed';
+
+    await this.reviewCycleModel.updateOne(
+      { _id: review.cycleId, organizationId: orgId },
+      { $inc: { 'stats.selfReviewsCompleted': 1 } },
+    );
+
+    return review.save();
+  }
+
+  async submitPeerReview(
+    id: string,
+    dto: SubmitPeerReviewDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IPerformanceReview> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const review = await this.getReview(id, userId, orgId);
+
+    if (review.employeeId === userId) {
+      throw new BadRequestException('Cannot submit peer review for yourself');
+    }
+
+    const already = review.peerReviews.find((p) => p.reviewerId === userId);
+    if (already) {
+      throw new ConflictException('Peer review already submitted by this user');
+    }
+
+    review.peerReviews.push({
+      reviewerId: userId,
+      relationship: dto.relationship,
+      overallRating: dto.overallRating,
+      strengths: dto.strengths || '',
+      improvements: dto.improvements || '',
+      competencyRatings: (dto.competencyRatings || []) as any,
+      isAnonymous: dto.isAnonymous ?? true,
+      submittedAt: new Date(),
+    });
+
+    if (review.status === 'self_review_completed' || review.status === 'peer_review_pending') {
+      review.status = 'peer_review_completed';
+    }
+
+    await this.reviewCycleModel.updateOne(
+      { _id: review.cycleId, organizationId: orgId },
+      { $inc: { 'stats.peerReviewsCompleted': 1 } },
+    );
+
+    return review.save();
+  }
+
+  async submitManagerReview(
+    id: string,
+    dto: SubmitManagerReviewDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IPerformanceReview> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const review = await this.getReview(id, userId, orgId);
+
+    if (review.managerReview) {
+      throw new ConflictException('Manager review already submitted');
+    }
+
+    review.managerReview = {
+      overallRating: dto.overallRating,
+      strengths: dto.strengths || '',
+      improvements: dto.improvements || '',
+      goalAchievement: dto.goalAchievement || '',
+      developmentPlan: dto.developmentPlan || '',
+      promotionRecommendation: dto.promotionRecommendation || 'no',
+      salaryIncreaseRecommendation: dto.salaryIncreaseRecommendation || 'no_change',
+      competencyRatings: (dto.competencyRatings || []) as any,
+      submittedAt: new Date(),
+    };
+    review.managerId = review.managerId || userId;
+    review.status = 'manager_review_completed';
+
+    await this.reviewCycleModel.updateOne(
+      { _id: review.cycleId, organizationId: orgId },
+      { $inc: { 'stats.managerReviewsCompleted': 1 } },
+    );
+
+    return review.save();
+  }
+
+  async finalizeReview(
+    id: string,
+    dto: FinalizeReviewDto,
+    userId: string,
+    orgId: string,
+  ): Promise<IPerformanceReview> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const review = await this.getReview(id, userId, orgId);
+
+    if (review.status === 'finalized') {
+      throw new ConflictException('Review already finalized');
+    }
+    if (!review.managerReview) {
+      throw new BadRequestException('Manager review must be submitted before finalization');
+    }
+
+    review.finalRating = dto.finalRating;
+    review.finalLabel = dto.finalLabel || null;
+    review.calibrationNotes = dto.calibrationNotes || null;
+    review.finalizedBy = userId;
+    review.finalizedAt = new Date();
+    review.status = 'finalized';
+
+    await this.reviewCycleModel.updateOne(
+      { _id: review.cycleId, organizationId: orgId },
+      { $inc: { 'stats.finalized': 1 } },
+    );
+
+    return review.save();
   }
 }

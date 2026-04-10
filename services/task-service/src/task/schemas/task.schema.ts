@@ -81,6 +81,7 @@ export interface ITask extends Document {
   isRecurringInstance?: boolean;
   recurringParentId?: string;
   gitLinks?: IGitLink[];
+  customFields?: Record<string, unknown>;
   isDeleted: boolean;
   deletedAt?: Date;
   createdBy: string;
@@ -189,6 +190,7 @@ export const TaskSchema = new Schema<ITask>(
     isRecurringInstance: { type: Boolean, default: false },
     recurringParentId: { type: String, default: null, index: true },
     gitLinks: [GitLinkSubSchema],
+    customFields: { type: Schema.Types.Mixed, default: {} },
     statusHistory: [{
       status: { type: String },
       changedAt: { type: Date, default: Date.now },

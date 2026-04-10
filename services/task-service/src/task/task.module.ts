@@ -28,6 +28,8 @@ import { SprintSchema } from './schemas/sprint.schema';
 import { ActivitySchema } from './schemas/activity.schema';
 import { NotificationSchema } from './schemas/notification.schema';
 import { GitIntegrationConfigSchema } from './schemas/git-integration.schema';
+import { CustomFieldSchema } from './schemas/custom-field.schema';
+import { AutomationRuleSchema } from './schemas/automation-rule.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 
@@ -44,6 +46,8 @@ import { RolesGuard } from './guards/roles.guard';
       { name: 'Activity', schema: ActivitySchema },
       { name: 'Notification', schema: NotificationSchema },
       { name: 'GitIntegrationConfig', schema: GitIntegrationConfigSchema },
+      { name: 'CustomField', schema: CustomFieldSchema },
+      { name: 'AutomationRule', schema: AutomationRuleSchema },
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],

@@ -173,6 +173,11 @@ export const authApi = {
     request(`/auth/sessions/${sessionId}`, { method: "DELETE" }),
   revokeAllSessions: () =>
     request("/auth/sessions", { method: "DELETE" }),
+  getMyDevices: () => request("/auth/devices"),
+  revokeDevice: (id: string, reason?: string) =>
+    request(`/auth/devices/${id}`, { method: "DELETE", body: JSON.stringify({ reason }) }),
+  revokeAllDevices: () =>
+    request("/auth/devices/revoke-all", { method: "POST" }),
 };
 
 // ── HR API ──
@@ -870,6 +875,40 @@ export const chatApi = {
     if (from) params.set('from', from);
     if (to) params.set('to', to);
     return request<any>(`/chat/analytics?${params.toString()}`);
+  },
+
+  // Chat Analytics (granular endpoints)
+  getAnalyticsOverview: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request<any>(`/chat/analytics/overview${qs}`);
+  },
+  getMessageVolume: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request<any>(`/chat/analytics/volume${qs}`);
+  },
+  getMessagesByType: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request<any>(`/chat/analytics/by-type${qs}`);
+  },
+  getActiveChannels: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request<any>(`/chat/analytics/channels${qs}`);
+  },
+  getTopChatUsers: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request<any>(`/chat/analytics/users${qs}`);
+  },
+  getPeakHours: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request<any>(`/chat/analytics/peak-hours${qs}`);
+  },
+  getReactionStats: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request<any>(`/chat/analytics/reactions${qs}`);
+  },
+  getResponseTimeMetrics: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request<any>(`/chat/analytics/response-time${qs}`);
   },
 };
 
@@ -1823,7 +1862,174 @@ export const taskApi = {
     if (!res.ok) throw new Error('Failed to get template');
     return res.blob();
   },
+
+  // Custom Fields
+  createCustomField: (data: CustomFieldInput) =>
+    request<CustomField>(`/tasks/custom-fields`, { method: "POST", body: JSON.stringify(data) }),
+  listCustomFields: (projectId?: string) => {
+    const qs = projectId ? `?projectId=${projectId}` : "";
+    return request<CustomField[]>(`/tasks/custom-fields${qs}`);
+  },
+  getCustomField: (id: string) =>
+    request<CustomField>(`/tasks/custom-fields/${id}`),
+  updateCustomField: (id: string, data: Partial<CustomFieldInput>) =>
+    request<CustomField>(`/tasks/custom-fields/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteCustomField: (id: string) =>
+    request(`/tasks/custom-fields/${id}`, { method: "DELETE" }),
+
+  // Automation Rules
+  createAutomationRule: (data: AutomationRuleInput) =>
+    request<AutomationRule>(`/tasks/automation-rules`, { method: "POST", body: JSON.stringify(data) }),
+  listAutomationRules: (projectId?: string) => {
+    const qs = projectId ? `?projectId=${projectId}` : "";
+    return request<AutomationRule[]>(`/tasks/automation-rules${qs}`);
+  },
+  getAutomationRule: (id: string) =>
+    request<AutomationRule>(`/tasks/automation-rules/${id}`),
+  updateAutomationRule: (id: string, data: Partial<AutomationRuleInput>) =>
+    request<AutomationRule>(`/tasks/automation-rules/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  toggleAutomationRule: (id: string) =>
+    request<AutomationRule>(`/tasks/automation-rules/${id}/toggle`, { method: "POST" }),
+  deleteAutomationRule: (id: string) =>
+    request(`/tasks/automation-rules/${id}`, { method: "DELETE" }),
+  testAutomationRule: (id: string, sampleTaskId: string) =>
+    request<AutomationRuleTestResult>(`/tasks/automation-rules/${id}/test`, {
+      method: "POST",
+      body: JSON.stringify({ sampleTaskId }),
+    }),
 };
+
+// ── Custom Field & Automation Rule Types ──
+
+export interface CustomFieldOption {
+  value: string;
+  label: string;
+  color?: string;
+}
+
+export interface CustomFieldValidation {
+  min?: number;
+  max?: number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+}
+
+export type CustomFieldType =
+  | 'text'
+  | 'number'
+  | 'date'
+  | 'dropdown'
+  | 'multi_select'
+  | 'checkbox'
+  | 'url'
+  | 'user'
+  | 'currency'
+  | 'percentage';
+
+export interface CustomFieldInput {
+  name: string;
+  key: string;
+  type: CustomFieldType;
+  projectId?: string;
+  description?: string;
+  required?: boolean;
+  defaultValue?: unknown;
+  options?: CustomFieldOption[];
+  validation?: CustomFieldValidation;
+  appliesTo?: 'all' | 'project_specific' | 'task_type';
+  taskTypes?: string[];
+  displayOrder?: number;
+  showInList?: boolean;
+  showInDetail?: boolean;
+}
+
+export interface CustomField extends CustomFieldInput {
+  _id: string;
+  organizationId: string;
+  isDeleted: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AutomationEvent =
+  | 'task_created'
+  | 'task_updated'
+  | 'status_changed'
+  | 'assignee_changed'
+  | 'priority_changed'
+  | 'due_date_approaching'
+  | 'comment_added'
+  | 'field_changed';
+
+export type AutomationOperator =
+  | 'equals'
+  | 'not_equals'
+  | 'contains'
+  | 'greater_than'
+  | 'less_than'
+  | 'in'
+  | 'is_empty'
+  | 'is_not_empty';
+
+export type AutomationActionType =
+  | 'change_status'
+  | 'assign_to'
+  | 'set_priority'
+  | 'add_label'
+  | 'remove_label'
+  | 'add_comment'
+  | 'send_notification'
+  | 'create_subtask'
+  | 'set_due_date'
+  | 'set_field';
+
+export interface AutomationCondition {
+  field: string;
+  operator: AutomationOperator;
+  value?: unknown;
+}
+
+export interface AutomationAction {
+  type: AutomationActionType;
+  params?: Record<string, unknown>;
+}
+
+export interface AutomationRuleInput {
+  name: string;
+  projectId?: string;
+  description?: string;
+  enabled?: boolean;
+  trigger: {
+    event: AutomationEvent;
+    conditions?: AutomationCondition[];
+  };
+  actions: AutomationAction[];
+}
+
+export interface AutomationRule extends AutomationRuleInput {
+  _id: string;
+  organizationId: string;
+  runCount: number;
+  lastRunAt?: string;
+  lastRunStatus?: 'success' | 'failure' | 'skipped';
+  lastRunError?: string;
+  isDeleted: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutomationRuleTestResult {
+  ruleId: string;
+  ruleName: string;
+  sampleTaskId: string;
+  conditionsMatch: boolean;
+  wouldExecute: boolean;
+  actions: AutomationAction[];
+  dryRun: boolean;
+}
 
 // ── Timesheet Types & API ──
 
@@ -2655,4 +2861,53 @@ export const payrollApi = {
   },
   getStatutoryReport: (id: string) => request(`/statutory-reports/${id}`),
   getMyForm16: () => request("/statutory-reports/my/form-16"),
+
+  // Performance Management: Goals
+  createGoal: (data: Record<string, unknown>) =>
+    request("/goals", { method: "POST", body: JSON.stringify(data) }),
+  getAllGoals: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/goals${qs}`);
+  },
+  getMyGoals: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/goals/my${qs}`);
+  },
+  getGoal: (id: string) => request(`/goals/${id}`),
+  updateGoal: (id: string, data: Record<string, unknown>) =>
+    request(`/goals/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  goalCheckIn: (id: string, data: Record<string, unknown>) =>
+    request(`/goals/${id}/check-in`, { method: "POST", body: JSON.stringify(data) }),
+  rateGoal: (id: string, data: Record<string, unknown>) =>
+    request(`/goals/${id}/rate`, { method: "POST", body: JSON.stringify(data) }),
+  deleteGoal: (id: string) =>
+    request(`/goals/${id}`, { method: "DELETE" }),
+
+  // Performance Management: Review Cycles
+  createReviewCycle: (data: Record<string, unknown>) =>
+    request("/review-cycles", { method: "POST", body: JSON.stringify(data) }),
+  listReviewCycles: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return request(`/review-cycles${qs}`);
+  },
+  getReviewCycle: (id: string) => request(`/review-cycles/${id}`),
+  updateReviewCycle: (id: string, data: Record<string, unknown>) =>
+    request(`/review-cycles/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  startReviewCycle: (id: string, data?: Record<string, unknown>) =>
+    request(`/review-cycles/${id}/start`, { method: "POST", body: JSON.stringify(data || {}) }),
+  updateCycleStatus: (id: string, status: string) =>
+    request(`/review-cycles/${id}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
+
+  // Performance Management: Reviews
+  getMyReviews: () => request("/reviews/my"),
+  getPendingReviews: () => request("/reviews/pending"),
+  getReview: (id: string) => request(`/reviews/${id}`),
+  submitSelfReview: (id: string, data: Record<string, unknown>) =>
+    request(`/reviews/${id}/self-review`, { method: "POST", body: JSON.stringify(data) }),
+  submitPeerReview: (id: string, data: Record<string, unknown>) =>
+    request(`/reviews/${id}/peer-review`, { method: "POST", body: JSON.stringify(data) }),
+  submitManagerReview: (id: string, data: Record<string, unknown>) =>
+    request(`/reviews/${id}/manager-review`, { method: "POST", body: JSON.stringify(data) }),
+  finalizeReview: (id: string, data: Record<string, unknown>) =>
+    request(`/reviews/${id}/finalize`, { method: "POST", body: JSON.stringify(data) }),
 };

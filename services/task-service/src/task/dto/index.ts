@@ -77,6 +77,9 @@ export class CreateTaskDto {
 
   @IsOptional() @IsNumber()
   remainingEstimate?: number;
+
+  @IsOptional()
+  customFields?: Record<string, unknown>;
 }
 
 export class UpdateTaskDto {
@@ -145,6 +148,9 @@ export class UpdateTaskDto {
 
   @IsOptional() @IsNumber()
   remainingEstimate?: number;
+
+  @IsOptional()
+  customFields?: Record<string, unknown>;
 }
 
 export class AddCommentDto {

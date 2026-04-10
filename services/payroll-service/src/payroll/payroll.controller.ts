@@ -23,6 +23,10 @@ import {
   OnboardingQueryDto, OffboardingQueryDto,
   GenerateForm16Dto, GeneratePFECRDto, GenerateESIReturnDto,
   GenerateTDSQuarterlyDto, StatutoryReportQueryDto,
+  CreateGoalDto, UpdateGoalDto, GoalCheckInDto, RateGoalDto, GoalQueryDto,
+  CreateReviewCycleDto, UpdateReviewCycleDto, StartReviewCycleDto,
+  UpdateCycleStatusDto, ReviewCycleQueryDto,
+  SubmitSelfReviewDto, SubmitPeerReviewDto, SubmitManagerReviewDto, FinalizeReviewDto,
 } from './dto/index';
 
 @Controller()
@@ -1006,5 +1010,243 @@ export class PayrollController {
     const userId = req.user.userId;
     const result = await this.payrollService.getStatutoryReport(id, userId, orgId);
     return { success: true, message: 'Statutory report retrieved', data: result };
+  }
+
+  // ========================================================================
+  // Performance Management: Goals
+  // ========================================================================
+
+  @Post('goals')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.CREATED)
+  async createGoal(@Body() dto: CreateGoalDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.createGoal(dto, userId, orgId);
+    return { success: true, message: 'Goal created successfully', data: result };
+  }
+
+  @Get('goals')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin', 'manager')
+  async getAllGoals(@Query() query: GoalQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getAllGoals(query, userId, orgId);
+    return { success: true, message: 'Goals retrieved', data: result };
+  }
+
+  @Get('goals/my')
+  @UseGuards(JwtAuthGuard)
+  async getMyGoals(@Query() query: GoalQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getMyGoals(query, userId, orgId);
+    return { success: true, message: 'My goals retrieved', data: result };
+  }
+
+  @Get('goals/:id')
+  @UseGuards(JwtAuthGuard)
+  async getGoal(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getGoal(id, userId, orgId);
+    return { success: true, message: 'Goal retrieved', data: result };
+  }
+
+  @Put('goals/:id')
+  @UseGuards(JwtAuthGuard)
+  async updateGoal(@Param('id') id: string, @Body() dto: UpdateGoalDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.updateGoal(id, dto, userId, orgId);
+    return { success: true, message: 'Goal updated successfully', data: result };
+  }
+
+  @Post('goals/:id/check-in')
+  @UseGuards(JwtAuthGuard)
+  async goalCheckIn(@Param('id') id: string, @Body() dto: GoalCheckInDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.goalCheckIn(id, dto, userId, orgId);
+    return { success: true, message: 'Goal check-in recorded', data: result };
+  }
+
+  @Post('goals/:id/rate')
+  @UseGuards(JwtAuthGuard)
+  async rateGoal(@Param('id') id: string, @Body() dto: RateGoalDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.rateGoal(id, dto, userId, orgId);
+    return { success: true, message: 'Goal rated successfully', data: result };
+  }
+
+  @Delete('goals/:id')
+  @UseGuards(JwtAuthGuard)
+  async deleteGoal(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.deleteGoal(id, userId, orgId);
+    return { success: true, message: 'Goal deleted successfully', data: result };
+  }
+
+  // ========================================================================
+  // Performance Management: Review Cycles
+  // ========================================================================
+
+  @Post('review-cycles')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  @HttpCode(HttpStatus.CREATED)
+  async createReviewCycle(@Body() dto: CreateReviewCycleDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.createReviewCycle(dto, userId, orgId);
+    return { success: true, message: 'Review cycle created successfully', data: result };
+  }
+
+  @Get('review-cycles')
+  @UseGuards(JwtAuthGuard)
+  async listReviewCycles(@Query() query: ReviewCycleQueryDto, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.listReviewCycles(query, userId, orgId);
+    return { success: true, message: 'Review cycles retrieved', data: result };
+  }
+
+  @Get('review-cycles/:id')
+  @UseGuards(JwtAuthGuard)
+  async getReviewCycle(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getReviewCycle(id, userId, orgId);
+    return { success: true, message: 'Review cycle retrieved', data: result };
+  }
+
+  @Put('review-cycles/:id')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async updateReviewCycle(
+    @Param('id') id: string,
+    @Body() dto: UpdateReviewCycleDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.updateReviewCycle(id, dto, userId, orgId);
+    return { success: true, message: 'Review cycle updated successfully', data: result };
+  }
+
+  @Post('review-cycles/:id/start')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async startReviewCycle(
+    @Param('id') id: string,
+    @Body() dto: StartReviewCycleDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.startReviewCycle(id, dto, userId, orgId);
+    return { success: true, message: 'Review cycle started', data: result };
+  }
+
+  @Put('review-cycles/:id/status')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async updateCycleStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateCycleStatusDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.updateCycleStatus(id, dto, userId, orgId);
+    return { success: true, message: 'Cycle status updated', data: result };
+  }
+
+  // ========================================================================
+  // Performance Management: Reviews
+  // ========================================================================
+
+  @Get('reviews/my')
+  @UseGuards(JwtAuthGuard)
+  async getMyReviews(@Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getMyReviews(userId, orgId);
+    return { success: true, message: 'My reviews retrieved', data: result };
+  }
+
+  @Get('reviews/pending')
+  @UseGuards(JwtAuthGuard)
+  async getPendingReviews(@Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getPendingReviews(userId, orgId);
+    return { success: true, message: 'Pending reviews retrieved', data: result };
+  }
+
+  @Get('reviews/:id')
+  @UseGuards(JwtAuthGuard)
+  async getReview(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.getReview(id, userId, orgId);
+    return { success: true, message: 'Review retrieved', data: result };
+  }
+
+  @Post('reviews/:id/self-review')
+  @UseGuards(JwtAuthGuard)
+  async submitSelfReview(
+    @Param('id') id: string,
+    @Body() dto: SubmitSelfReviewDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.submitSelfReview(id, dto, userId, orgId);
+    return { success: true, message: 'Self-review submitted', data: result };
+  }
+
+  @Post('reviews/:id/peer-review')
+  @UseGuards(JwtAuthGuard)
+  async submitPeerReview(
+    @Param('id') id: string,
+    @Body() dto: SubmitPeerReviewDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.submitPeerReview(id, dto, userId, orgId);
+    return { success: true, message: 'Peer review submitted', data: result };
+  }
+
+  @Post('reviews/:id/manager-review')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin', 'manager')
+  async submitManagerReview(
+    @Param('id') id: string,
+    @Body() dto: SubmitManagerReviewDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.submitManagerReview(id, dto, userId, orgId);
+    return { success: true, message: 'Manager review submitted', data: result };
+  }
+
+  @Post('reviews/:id/finalize')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async finalizeReview(
+    @Param('id') id: string,
+    @Body() dto: FinalizeReviewDto,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.finalizeReview(id, dto, userId, orgId);
+    return { success: true, message: 'Review finalized', data: result };
   }
 }

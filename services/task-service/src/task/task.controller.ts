@@ -17,6 +17,12 @@ import {
   ReviewTimesheetDto, TimesheetQueryDto,
   CreateDelegationDto,
 } from './dto/timesheet.dto';
+import {
+  CreateCustomFieldDto, UpdateCustomFieldDto,
+} from './dto/custom-field.dto';
+import {
+  CreateAutomationRuleDto, UpdateAutomationRuleDto,
+} from './dto/automation-rule.dto';
 
 @Controller('tasks')
 export class TaskController {
@@ -106,6 +112,110 @@ export class TaskController {
   async bulkUpdate(@Body() dto: BulkUpdateDto, @Req() req) {
     const result = await this.taskService.bulkUpdate(dto, req.user.userId, req.user?.organizationId);
     return { success: true, message: 'Tasks updated', data: result };
+  }
+
+  // ── Custom Fields ──
+
+  @Post('custom-fields')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'manager', 'owner')
+  @HttpCode(HttpStatus.CREATED)
+  async createCustomField(@Body() dto: CreateCustomFieldDto, @Req() req) {
+    const field = await this.taskService.createCustomField(dto, req.user.userId, req.user?.organizationId);
+    return { success: true, message: 'Custom field created', data: field };
+  }
+
+  @Get('custom-fields')
+  @UseGuards(JwtAuthGuard)
+  async listCustomFields(@Query('projectId') projectId: string, @Req() req) {
+    const data = await this.taskService.listCustomFields(req.user?.organizationId, projectId);
+    return { success: true, message: 'Custom fields retrieved', data };
+  }
+
+  @Get('custom-fields/:id')
+  @UseGuards(JwtAuthGuard)
+  async getCustomField(@Param('id') id: string, @Req() req) {
+    const field = await this.taskService.getCustomField(id, req.user?.organizationId);
+    return { success: true, message: 'Custom field retrieved', data: field };
+  }
+
+  @Put('custom-fields/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'manager', 'owner')
+  async updateCustomField(@Param('id') id: string, @Body() dto: UpdateCustomFieldDto, @Req() req) {
+    const field = await this.taskService.updateCustomField(id, dto, req.user?.organizationId);
+    return { success: true, message: 'Custom field updated', data: field };
+  }
+
+  @Delete('custom-fields/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'owner')
+  async deleteCustomField(@Param('id') id: string, @Req() req) {
+    const result = await this.taskService.deleteCustomField(id, req.user?.organizationId);
+    return { success: true, ...result };
+  }
+
+  // ── Automation Rules ──
+
+  @Post('automation-rules')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'manager', 'owner')
+  @HttpCode(HttpStatus.CREATED)
+  async createAutomationRule(@Body() dto: CreateAutomationRuleDto, @Req() req) {
+    const rule = await this.taskService.createAutomationRule(dto, req.user.userId, req.user?.organizationId);
+    return { success: true, message: 'Automation rule created', data: rule };
+  }
+
+  @Get('automation-rules')
+  @UseGuards(JwtAuthGuard)
+  async listAutomationRules(@Query('projectId') projectId: string, @Req() req) {
+    const data = await this.taskService.listAutomationRules(req.user?.organizationId, projectId);
+    return { success: true, message: 'Automation rules retrieved', data };
+  }
+
+  @Get('automation-rules/:id')
+  @UseGuards(JwtAuthGuard)
+  async getAutomationRule(@Param('id') id: string, @Req() req) {
+    const rule = await this.taskService.getAutomationRule(id, req.user?.organizationId);
+    return { success: true, message: 'Automation rule retrieved', data: rule };
+  }
+
+  @Put('automation-rules/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'manager', 'owner')
+  async updateAutomationRule(@Param('id') id: string, @Body() dto: UpdateAutomationRuleDto, @Req() req) {
+    const rule = await this.taskService.updateAutomationRule(id, dto, req.user?.organizationId);
+    return { success: true, message: 'Automation rule updated', data: rule };
+  }
+
+  @Post('automation-rules/:id/toggle')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'manager', 'owner')
+  @HttpCode(HttpStatus.OK)
+  async toggleAutomationRule(@Param('id') id: string, @Req() req) {
+    const rule = await this.taskService.toggleAutomationRule(id, req.user?.organizationId);
+    return { success: true, message: 'Automation rule toggled', data: rule };
+  }
+
+  @Delete('automation-rules/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'owner')
+  async deleteAutomationRule(@Param('id') id: string, @Req() req) {
+    const result = await this.taskService.deleteAutomationRule(id, req.user?.organizationId);
+    return { success: true, ...result };
+  }
+
+  @Post('automation-rules/:id/test')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'manager', 'owner')
+  @HttpCode(HttpStatus.OK)
+  async testAutomationRule(
+    @Param('id') id: string,
+    @Body() body: { sampleTaskId: string },
+    @Req() req,
+  ) {
+    const result = await this.taskService.testRule(id, body.sampleTaskId, req.user?.organizationId);
+    return { success: true, message: 'Automation rule test completed', data: result };
   }
 
   @Get(':id')

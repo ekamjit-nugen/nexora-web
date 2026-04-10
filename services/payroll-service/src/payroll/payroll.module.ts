@@ -19,6 +19,9 @@ import { AnalyticsSnapshotSchema } from './schemas/analytics-snapshot.schema';
 import { JobPostingSchema } from './schemas/job-posting.schema';
 import { CandidateSchema } from './schemas/candidate.schema';
 import { StatutoryReportSchema } from './schemas/statutory-report.schema';
+import { GoalSchema } from './schemas/goal.schema';
+import { ReviewCycleSchema } from './schemas/review-cycle.schema';
+import { PerformanceReviewSchema } from './schemas/performance-review.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { ExternalServicesService } from './external-services.service';
 
@@ -38,6 +41,9 @@ import { ExternalServicesService } from './external-services.service';
       { name: 'JobPosting', schema: JobPostingSchema },
       { name: 'Candidate', schema: CandidateSchema },
       { name: 'StatutoryReport', schema: StatutoryReportSchema },
+      { name: 'Goal', schema: GoalSchema },
+      { name: 'ReviewCycle', schema: ReviewCycleSchema },
+      { name: 'PerformanceReview', schema: PerformanceReviewSchema },
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],

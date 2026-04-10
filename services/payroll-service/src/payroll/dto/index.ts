@@ -566,3 +566,210 @@ export class StatutoryReportQueryDto {
   @IsOptional() @IsNumber() @Min(1) page?: number;
   @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
 }
+
+// ── Performance Management ──
+
+export class KeyResultDto {
+  @IsString() title: string;
+  @IsOptional() @IsString() metric?: string;
+  @IsNumber() targetValue: number;
+  @IsOptional() @IsNumber() currentValue?: number;
+  @IsOptional() @IsString() unit?: string;
+  @IsOptional() @IsNumber() @Min(0) @Max(100) progress?: number;
+  @IsOptional() @IsEnum(['not_started', 'in_progress', 'achieved', 'missed']) status?: string;
+  @IsOptional() @IsString() notes?: string;
+}
+
+export class CreateGoalDto {
+  @IsString() title: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsEnum(['individual', 'team', 'company', 'okr']) type?: string;
+  @IsOptional() @IsEnum(['performance', 'learning', 'behavior', 'project', 'revenue', 'quality']) category?: string;
+  @IsOptional() @IsEnum(['low', 'medium', 'high', 'critical']) priority?: string;
+  @IsOptional() @IsNumber() @Min(0) @Max(100) weightage?: number;
+  @IsDateString() startDate: string;
+  @IsDateString() targetDate: string;
+  @IsOptional() @IsString() cycleId?: string;
+  @IsOptional() @IsString() employeeId?: string;
+  @IsOptional() @IsString() parentGoalId?: string;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => KeyResultDto)
+  keyResults?: KeyResultDto[];
+  @IsOptional() @IsArray() alignedGoals?: string[];
+  @IsOptional() @IsArray() tags?: string[];
+}
+
+export class UpdateGoalDto {
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsEnum(['individual', 'team', 'company', 'okr']) type?: string;
+  @IsOptional() @IsEnum(['performance', 'learning', 'behavior', 'project', 'revenue', 'quality']) category?: string;
+  @IsOptional() @IsEnum(['draft', 'active', 'achieved', 'missed', 'cancelled', 'deferred']) status?: string;
+  @IsOptional() @IsEnum(['low', 'medium', 'high', 'critical']) priority?: string;
+  @IsOptional() @IsNumber() @Min(0) @Max(100) weightage?: number;
+  @IsOptional() @IsDateString() startDate?: string;
+  @IsOptional() @IsDateString() targetDate?: string;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => KeyResultDto)
+  keyResults?: KeyResultDto[];
+  @IsOptional() @IsArray() alignedGoals?: string[];
+  @IsOptional() @IsArray() tags?: string[];
+  @IsOptional() @IsString() selfAssessment?: string;
+}
+
+export class GoalCheckInDto {
+  @IsNumber() @Min(0) @Max(100) progress: number;
+  @IsOptional() @IsString() notes?: string;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => KeyResultDto)
+  keyResults?: KeyResultDto[];
+}
+
+export class RateGoalDto {
+  @IsOptional() @IsNumber() @Min(1) @Max(5) managerRating?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(5) selfRating?: number;
+  @IsOptional() @IsString() comment?: string;
+}
+
+export class GoalQueryDto {
+  @IsOptional() @IsString() status?: string;
+  @IsOptional() @IsString() cycleId?: string;
+  @IsOptional() @IsString() employeeId?: string;
+  @IsOptional() @IsString() type?: string;
+  @IsOptional() @IsString() category?: string;
+  @IsOptional() @IsNumber() @Min(1) page?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
+}
+
+export class RatingGuideEntryDto {
+  @IsNumber() rating: number;
+  @IsString() label: string;
+  @IsOptional() @IsString() description?: string;
+}
+
+export class CompetencyDto {
+  @IsString() name: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsNumber() weightage?: number;
+}
+
+export class ReviewCycleConfigDto {
+  @IsOptional() @IsBoolean() enableSelfReview?: boolean;
+  @IsOptional() @IsBoolean() enablePeerReview?: boolean;
+  @IsOptional() @IsBoolean() enableManagerReview?: boolean;
+  @IsOptional() @IsBoolean() enable360?: boolean;
+  @IsOptional() @IsNumber() minPeerReviewers?: number;
+  @IsOptional() @IsNumber() maxPeerReviewers?: number;
+  @IsOptional() @IsNumber() ratingScale?: number;
+  @IsOptional() @IsBoolean() enableCalibration?: boolean;
+  @IsOptional() @IsBoolean() allowGoalRevisions?: boolean;
+}
+
+export class CreateReviewCycleDto {
+  @IsString() name: string;
+  @IsOptional() @IsEnum(['annual', 'half_yearly', 'quarterly', 'monthly', 'continuous', 'adhoc']) type?: string;
+  @IsDateString() startDate: string;
+  @IsDateString() endDate: string;
+  @IsOptional() @IsDateString() goalSettingDeadline?: string;
+  @IsOptional() @IsDateString() selfReviewDeadline?: string;
+  @IsOptional() @IsDateString() peerReviewDeadline?: string;
+  @IsOptional() @IsDateString() managerReviewDeadline?: string;
+  @IsOptional() @IsDateString() completionDeadline?: string;
+  @IsOptional() @IsEnum(['all', 'department', 'designation', 'specific']) applicableTo?: string;
+  @IsOptional() @IsArray() departments?: string[];
+  @IsOptional() @IsArray() designations?: string[];
+  @IsOptional() @IsArray() employeeIds?: string[];
+  @IsOptional() @ValidateNested() @Type(() => ReviewCycleConfigDto) config?: ReviewCycleConfigDto;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => RatingGuideEntryDto)
+  ratingGuide?: RatingGuideEntryDto[];
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => CompetencyDto)
+  competencies?: CompetencyDto[];
+}
+
+export class UpdateReviewCycleDto {
+  @IsOptional() @IsString() name?: string;
+  @IsOptional() @IsEnum(['annual', 'half_yearly', 'quarterly', 'monthly', 'continuous', 'adhoc']) type?: string;
+  @IsOptional() @IsDateString() startDate?: string;
+  @IsOptional() @IsDateString() endDate?: string;
+  @IsOptional() @IsDateString() goalSettingDeadline?: string;
+  @IsOptional() @IsDateString() selfReviewDeadline?: string;
+  @IsOptional() @IsDateString() peerReviewDeadline?: string;
+  @IsOptional() @IsDateString() managerReviewDeadline?: string;
+  @IsOptional() @IsDateString() completionDeadline?: string;
+  @IsOptional() @IsEnum(['all', 'department', 'designation', 'specific']) applicableTo?: string;
+  @IsOptional() @IsArray() departments?: string[];
+  @IsOptional() @IsArray() designations?: string[];
+  @IsOptional() @IsArray() employeeIds?: string[];
+  @IsOptional() @ValidateNested() @Type(() => ReviewCycleConfigDto) config?: ReviewCycleConfigDto;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => RatingGuideEntryDto)
+  ratingGuide?: RatingGuideEntryDto[];
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => CompetencyDto)
+  competencies?: CompetencyDto[];
+}
+
+export class StartReviewCycleDto {
+  @IsOptional() @IsArray() employeeIds?: string[];
+}
+
+export class UpdateCycleStatusDto {
+  @IsEnum([
+    'draft',
+    'goal_setting',
+    'self_review',
+    'peer_review',
+    'manager_review',
+    'calibration',
+    'completed',
+    'cancelled',
+  ])
+  status: string;
+}
+
+export class ReviewCycleQueryDto {
+  @IsOptional() @IsString() status?: string;
+  @IsOptional() @IsNumber() year?: number;
+  @IsOptional() @IsString() type?: string;
+  @IsOptional() @IsNumber() @Min(1) page?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
+}
+
+export class CompetencyRatingDto {
+  @IsString() name: string;
+  @IsNumber() rating: number;
+  @IsOptional() @IsString() comment?: string;
+}
+
+export class SubmitSelfReviewDto {
+  @IsNumber() @Min(1) @Max(5) overallRating: number;
+  @IsOptional() @IsString() strengths?: string;
+  @IsOptional() @IsString() improvements?: string;
+  @IsOptional() @IsString() achievements?: string;
+  @IsOptional() @IsString() challenges?: string;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => CompetencyRatingDto)
+  competencyRatings?: CompetencyRatingDto[];
+}
+
+export class SubmitPeerReviewDto {
+  @IsEnum(['peer', 'cross_functional', 'skip_level', 'subordinate']) relationship: string;
+  @IsNumber() @Min(1) @Max(5) overallRating: number;
+  @IsOptional() @IsString() strengths?: string;
+  @IsOptional() @IsString() improvements?: string;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => CompetencyRatingDto)
+  competencyRatings?: CompetencyRatingDto[];
+  @IsOptional() @IsBoolean() isAnonymous?: boolean;
+}
+
+export class SubmitManagerReviewDto {
+  @IsNumber() @Min(1) @Max(5) overallRating: number;
+  @IsOptional() @IsString() strengths?: string;
+  @IsOptional() @IsString() improvements?: string;
+  @IsOptional() @IsString() goalAchievement?: string;
+  @IsOptional() @IsString() developmentPlan?: string;
+  @IsOptional() @IsEnum(['yes', 'no', 'consider_next_cycle']) promotionRecommendation?: string;
+  @IsOptional() @IsEnum(['no_change', 'small', 'medium', 'large']) salaryIncreaseRecommendation?: string;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => CompetencyRatingDto)
+  competencyRatings?: CompetencyRatingDto[];
+}
+
+export class FinalizeReviewDto {
+  @IsNumber() @Min(1) @Max(5) finalRating: number;
+  @IsOptional() @IsString() finalLabel?: string;
+  @IsOptional() @IsString() calibrationNotes?: string;
+}

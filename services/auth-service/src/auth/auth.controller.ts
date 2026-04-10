@@ -18,6 +18,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { AuthService, AuthTokens } from './auth.service';
 import { OrganizationService } from './organization.service';
 import { AuditService, AuditAction } from './audit.service';
+import { DeviceFingerprintService } from './device-fingerprint.service';
 import { LoginDto, RegisterDto, RefreshTokenDto, MFASetupDto, MFAVerifyDto, UpdateProfileDto, ChangePasswordDto } from './dto/index';
 import { CreateRoleDto, UpdateRoleDto, AssignRolesDto } from './dto/role.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -42,6 +43,7 @@ export class AuthController {
     private authService: AuthService,
     private organizationService: OrganizationService,
     private auditService: AuditService,
+    private deviceFingerprintService: DeviceFingerprintService,
   ) {}
 
   private setCookies(response: any, tokens: AuthTokens): void {
@@ -268,6 +270,39 @@ export class AuthController {
     return { success: true, message: 'All other sessions revoked' };
   }
 
+  // ── Trusted Device Management ──
+
+  @Get('devices')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async getMyDevices(@Req() req: any) {
+    const userId = req.user.userId;
+    const devices = await this.deviceFingerprintService.listUserDevices(userId);
+    return { success: true, data: devices };
+  }
+
+  @Delete('devices/:id')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async revokeDevice(
+    @Param('id') id: string,
+    @Body() body: { reason?: string },
+    @Req() req: any,
+  ) {
+    const userId = req.user.userId;
+    await this.deviceFingerprintService.revokeDevice(userId, id, body?.reason);
+    return { success: true, message: 'Device revoked' };
+  }
+
+  @Post('devices/revoke-all')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async revokeAllDevices(@Req() req: any) {
+    const userId = req.user.userId;
+    const count = await this.deviceFingerprintService.revokeAllDevices(userId);
+    return { success: true, message: `Revoked ${count} devices` };
+  }
+
   // ── Role Management ──
 
   @Post('roles')
@@ -353,6 +388,27 @@ export class AuthController {
     // Set cookies
     this.setCookies(response, result.tokens);
 
+    // Record device login and detect new device
+    let isNewDevice = false;
+    try {
+      const userAgent = req.headers?.['user-agent'];
+      const acceptLanguage = req.headers?.['accept-language'];
+      const deviceCheck = await this.deviceFingerprintService.recordDeviceLogin(
+        result.user._id.toString(),
+        { userAgent, ipAddress, acceptLanguage },
+        result.user.organizations?.[0],
+      );
+      isNewDevice = deviceCheck.isNewDevice;
+      if (isNewDevice) {
+        this.logger.warn(
+          `New device login alert for user ${result.user.email}: ${deviceCheck.device.deviceName} from ${ipAddress}`,
+        );
+        // Notification service call is out of scope; alert is logged for now.
+      }
+    } catch (err) {
+      this.logger.warn(`Device fingerprinting failed for ${result.user.email}: ${err?.message || err}`);
+    }
+
     return {
       success: true,
       message: 'OTP verified',
@@ -371,6 +427,7 @@ export class AuthController {
         routeReason: result.route.reason,
         organizationId: result.route.organizationId,
         isNewUser: result.isNewUser,
+        isNewDevice,
       },
     };
   }

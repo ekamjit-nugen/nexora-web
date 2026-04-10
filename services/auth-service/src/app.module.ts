@@ -14,6 +14,7 @@ import { SessionSchema } from './auth/schemas/session.schema';
 import { AuditLogSchema } from './auth/schemas/audit-log.schema';
 import { ReportTemplateSchema } from './auth/schemas/report-template.schema';
 import { ScheduledReportSchema } from './auth/schemas/scheduled-report.schema';
+import { TrustedDeviceSchema } from './auth/schemas/trusted-device.schema';
 
 // Auth domain
 import { AuthController } from './auth/auth.controller';
@@ -42,6 +43,7 @@ import { InviteService } from './auth/services/invite.service';
 import { MembershipService } from './auth/services/membership.service';
 import { CompletenessService } from './auth/services/completeness.service';
 import { HrSyncService } from './auth/services/hr-sync.service';
+import { DeviceFingerprintService } from './auth/device-fingerprint.service';
 
 // Audit domain
 import { AuditService } from './auth/audit.service';
@@ -97,6 +99,7 @@ import { HealthModule } from './health/health.module';
       { name: 'AuditLog', schema: AuditLogSchema },
       { name: 'ReportTemplate', schema: ReportTemplateSchema },
       { name: 'ScheduledReport', schema: ScheduledReportSchema },
+      { name: 'TrustedDevice', schema: TrustedDeviceSchema },
     ]),
 
     // Auth infrastructure
@@ -152,6 +155,7 @@ import { HealthModule } from './health/health.module';
     MembershipService,
     CompletenessService,
     HrSyncService,
+    DeviceFingerprintService,
     // Audit
     AuditService,
     // Platform

@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ITask } from './schemas/task.schema';
@@ -7,6 +7,8 @@ import { ICounter } from './schemas/counter.schema';
 import { ITimesheet } from './schemas/timesheet.schema';
 import { IActivity } from './schemas/activity.schema';
 import { ISprint } from './schemas/sprint.schema';
+import { ICustomField } from './schemas/custom-field.schema';
+import { IAutomationRule, AutomationEvent } from './schemas/automation-rule.schema';
 import { NotificationService, extractMentions } from './notification.service';
 import {
   CreateTaskDto, UpdateTaskDto, AddCommentDto,
@@ -16,6 +18,8 @@ import {
   CreateTimesheetDto, UpdateTimesheetDto,
   ReviewTimesheetDto, TimesheetQueryDto,
 } from './dto/timesheet.dto';
+import { CreateCustomFieldDto, UpdateCustomFieldDto } from './dto/custom-field.dto';
+import { CreateAutomationRuleDto, UpdateAutomationRuleDto } from './dto/automation-rule.dto';
 
 @Injectable()
 export class TaskService {
@@ -28,6 +32,8 @@ export class TaskService {
     @InjectModel('Timesheet') private timesheetModel: Model<ITimesheet>,
     @InjectModel('Activity') private activityModel: Model<IActivity>,
     @InjectModel('Sprint') private sprintModel: Model<ISprint>,
+    @InjectModel('CustomField') private customFieldModel: Model<ICustomField>,
+    @InjectModel('AutomationRule') private automationRuleModel: Model<IAutomationRule>,
     private notificationService: NotificationService,
   ) {}
 
@@ -79,6 +85,11 @@ export class TaskService {
         actor,
       }).catch((e) => this.logger.error(`Failed to create assignment notification: ${e.message}`));
     }
+
+    // Fire automation rules for task_created event
+    await this.executeAutomationRules('task_created', task, orgId, userId).catch(
+      (err) => this.logger.warn(`Automation rule failed: ${err.message}`),
+    );
 
     return task;
   }
@@ -143,6 +154,14 @@ export class TaskService {
 
     const updatePayload: any = { ...dto, updatedBy: userId };
 
+    // Merge customFields instead of overwriting so partial updates are additive
+    if (dto.customFields && typeof dto.customFields === 'object') {
+      updatePayload.customFields = {
+        ...(task.customFields || {}),
+        ...dto.customFields,
+      };
+    }
+
     // Sync columnId when status changes via general update
     if (dto.status && dto.status !== task.status && task.boardId && !dto.columnId) {
       const board = await this.boardModel.findById(task.boardId);
@@ -158,6 +177,7 @@ export class TaskService {
 
     const previousAssignee = task.assigneeId;
     const previousStatus = task.status;
+    const previousPriority = task.priority;
 
     const updated = await this.taskModel.findOneAndUpdate(
       filter,
@@ -230,6 +250,25 @@ export class TaskService {
       }
     } catch (e) {
       this.logger.error(`Failed to send update notifications: ${e.message}`);
+    }
+
+    // Fire automation rules for update + specific change events
+    try {
+      await this.executeAutomationRules('task_updated', updated, orgId, userId);
+      if (dto.status && dto.status !== previousStatus) {
+        await this.executeAutomationRules('status_changed', updated, orgId, userId);
+      }
+      if (dto.assigneeId !== undefined && dto.assigneeId !== previousAssignee) {
+        await this.executeAutomationRules('assignee_changed', updated, orgId, userId);
+      }
+      if (dto.priority && dto.priority !== previousPriority) {
+        await this.executeAutomationRules('priority_changed', updated, orgId, userId);
+      }
+      if (dto.customFields) {
+        await this.executeAutomationRules('field_changed', updated, orgId, userId);
+      }
+    } catch (err) {
+      this.logger.warn(`Automation rule failed: ${err.message}`);
     }
 
     return updated;
@@ -336,6 +375,11 @@ export class TaskService {
       entityTitle: task.title,
       details: { commentPreview: dto.content.substring(0, 100) },
     }).catch(() => {});
+
+    // Fire automation rules for comment_added event
+    await this.executeAutomationRules('comment_added', task, orgId, userId).catch(
+      (err) => this.logger.warn(`Automation rule failed: ${err.message}`),
+    );
 
     return task;
   }
@@ -786,6 +830,11 @@ export class TaskService {
         entityTitle: task.title,
         details: { from: existingTask.status, to: dto.status },
       }).catch(() => {});
+
+      // Fire automation rules for status_changed event
+      await this.executeAutomationRules('status_changed', task, orgId, userId).catch(
+        (err) => this.logger.warn(`Automation rule failed: ${err.message}`),
+      );
 
       return task;
     }
@@ -1449,5 +1498,482 @@ export class TaskService {
         topProject,
       },
     };
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // Custom Fields
+  // ──────────────────────────────────────────────────────────────
+
+  async createCustomField(dto: CreateCustomFieldDto, userId: string, orgId: string) {
+    if (!orgId) throw new BadRequestException('Organization context required');
+
+    // Validate options for dropdown/multi_select
+    if (['dropdown', 'multi_select'].includes(dto.type)) {
+      if (!dto.options || dto.options.length === 0) {
+        throw new BadRequestException(`${dto.type} field requires at least one option`);
+      }
+    }
+
+    // Check key uniqueness per org+project
+    const existing = await this.customFieldModel.findOne({
+      organizationId: orgId,
+      projectId: dto.projectId || null,
+      key: dto.key,
+      isDeleted: false,
+    });
+    if (existing) {
+      throw new ConflictException(`Custom field with key "${dto.key}" already exists`);
+    }
+
+    const field = new this.customFieldModel({
+      ...dto,
+      organizationId: orgId,
+      projectId: dto.projectId || null,
+      createdBy: userId,
+    });
+    await field.save();
+    this.logger.log(`Custom field created: ${field.key} (${field._id})`);
+    return field;
+  }
+
+  async listCustomFields(orgId: string, projectId?: string) {
+    if (!orgId) throw new BadRequestException('Organization context required');
+
+    const filter: any = {
+      organizationId: orgId,
+      isDeleted: false,
+    };
+
+    if (projectId) {
+      // Return both org-wide (projectId null) and project-specific
+      filter.$or = [{ projectId: null }, { projectId }];
+    } else {
+      filter.projectId = null;
+    }
+
+    return this.customFieldModel
+      .find(filter)
+      .sort({ displayOrder: 1, createdAt: 1 });
+  }
+
+  async getCustomField(id: string, orgId: string) {
+    if (!orgId) throw new BadRequestException('Organization context required');
+    const field = await this.customFieldModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!field) throw new NotFoundException('Custom field not found');
+    return field;
+  }
+
+  async updateCustomField(id: string, dto: UpdateCustomFieldDto, orgId: string) {
+    if (!orgId) throw new BadRequestException('Organization context required');
+    const field = await this.customFieldModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!field) throw new NotFoundException('Custom field not found');
+
+    // If options are being updated, validate for dropdown/multi_select
+    if (dto.options !== undefined) {
+      if (['dropdown', 'multi_select'].includes(field.type)) {
+        if (!dto.options || dto.options.length === 0) {
+          throw new BadRequestException(`${field.type} field requires at least one option`);
+        }
+      }
+    }
+
+    Object.assign(field, dto);
+    await field.save();
+    this.logger.log(`Custom field updated: ${field._id}`);
+    return field;
+  }
+
+  async deleteCustomField(id: string, orgId: string) {
+    if (!orgId) throw new BadRequestException('Organization context required');
+    const field = await this.customFieldModel.findOneAndUpdate(
+      { _id: id, organizationId: orgId, isDeleted: false },
+      { isDeleted: true },
+      { new: true },
+    );
+    if (!field) throw new NotFoundException('Custom field not found');
+    this.logger.log(`Custom field soft-deleted: ${field._id}`);
+    return { message: 'Custom field deleted successfully' };
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // Automation Rules
+  // ──────────────────────────────────────────────────────────────
+
+  async createAutomationRule(dto: CreateAutomationRuleDto, userId: string, orgId: string) {
+    if (!orgId) throw new BadRequestException('Organization context required');
+    if (!dto.actions || dto.actions.length === 0) {
+      throw new BadRequestException('Automation rule must have at least one action');
+    }
+    const rule = new this.automationRuleModel({
+      ...dto,
+      organizationId: orgId,
+      projectId: dto.projectId || null,
+      createdBy: userId,
+    });
+    await rule.save();
+    this.logger.log(`Automation rule created: ${rule.name} (${rule._id})`);
+    return rule;
+  }
+
+  async listAutomationRules(orgId: string, projectId?: string) {
+    if (!orgId) throw new BadRequestException('Organization context required');
+    const filter: any = { organizationId: orgId, isDeleted: false };
+    if (projectId) {
+      filter.$or = [{ projectId: null }, { projectId }];
+    }
+    return this.automationRuleModel.find(filter).sort({ createdAt: -1 });
+  }
+
+  async getAutomationRule(id: string, orgId: string) {
+    if (!orgId) throw new BadRequestException('Organization context required');
+    const rule = await this.automationRuleModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!rule) throw new NotFoundException('Automation rule not found');
+    return rule;
+  }
+
+  async updateAutomationRule(id: string, dto: UpdateAutomationRuleDto, orgId: string) {
+    if (!orgId) throw new BadRequestException('Organization context required');
+    const rule = await this.automationRuleModel.findOneAndUpdate(
+      { _id: id, organizationId: orgId, isDeleted: false },
+      { $set: dto as any },
+      { new: true },
+    );
+    if (!rule) throw new NotFoundException('Automation rule not found');
+    this.logger.log(`Automation rule updated: ${rule._id}`);
+    return rule;
+  }
+
+  async toggleAutomationRule(id: string, orgId: string) {
+    if (!orgId) throw new BadRequestException('Organization context required');
+    const rule = await this.automationRuleModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!rule) throw new NotFoundException('Automation rule not found');
+    rule.enabled = !rule.enabled;
+    await rule.save();
+    this.logger.log(`Automation rule ${rule._id} toggled: ${rule.enabled}`);
+    return rule;
+  }
+
+  async deleteAutomationRule(id: string, orgId: string) {
+    if (!orgId) throw new BadRequestException('Organization context required');
+    const rule = await this.automationRuleModel.findOneAndUpdate(
+      { _id: id, organizationId: orgId, isDeleted: false },
+      { isDeleted: true },
+      { new: true },
+    );
+    if (!rule) throw new NotFoundException('Automation rule not found');
+    this.logger.log(`Automation rule soft-deleted: ${rule._id}`);
+    return { message: 'Automation rule deleted successfully' };
+  }
+
+  async testRule(id: string, sampleTaskId: string, orgId: string) {
+    if (!orgId) throw new BadRequestException('Organization context required');
+    const rule = await this.getAutomationRule(id, orgId);
+    const task = await this.taskModel.findOne({
+      _id: sampleTaskId,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!task) throw new NotFoundException('Sample task not found');
+
+    const conditionsMatch = this.evaluateConditions(rule, task);
+    return {
+      ruleId: rule._id,
+      ruleName: rule.name,
+      sampleTaskId,
+      conditionsMatch,
+      wouldExecute: conditionsMatch && rule.enabled,
+      actions: conditionsMatch ? rule.actions : [],
+      dryRun: true,
+    };
+  }
+
+  /**
+   * Evaluate conditions for a rule against a task.
+   * All conditions must match (AND semantics).
+   */
+  private evaluateConditions(rule: IAutomationRule, task: any): boolean {
+    const conditions = rule.trigger?.conditions || [];
+    if (conditions.length === 0) return true;
+
+    for (const cond of conditions) {
+      const fieldValue = this.getFieldValue(task, cond.field);
+      if (!this.evaluateOperator(fieldValue, cond.operator, cond.value)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private getFieldValue(task: any, fieldPath: string): any {
+    if (!fieldPath) return undefined;
+    // Support dot-notation: "customFields.severity", "dueDate", etc.
+    const parts = fieldPath.split('.');
+    let value = task;
+    for (const part of parts) {
+      if (value == null) return undefined;
+      value = value[part];
+    }
+    return value;
+  }
+
+  private evaluateOperator(fieldValue: any, operator: string, compareValue: any): boolean {
+    switch (operator) {
+      case 'equals':
+        return fieldValue === compareValue;
+      case 'not_equals':
+        return fieldValue !== compareValue;
+      case 'contains':
+        if (Array.isArray(fieldValue)) return fieldValue.includes(compareValue);
+        if (typeof fieldValue === 'string') return fieldValue.includes(String(compareValue));
+        return false;
+      case 'greater_than':
+        return Number(fieldValue) > Number(compareValue);
+      case 'less_than':
+        return Number(fieldValue) < Number(compareValue);
+      case 'in':
+        return Array.isArray(compareValue) && compareValue.includes(fieldValue);
+      case 'is_empty':
+        return fieldValue == null || fieldValue === '' || (Array.isArray(fieldValue) && fieldValue.length === 0);
+      case 'is_not_empty':
+        return fieldValue != null && fieldValue !== '' && !(Array.isArray(fieldValue) && fieldValue.length === 0);
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Called whenever a task changes. Fetches enabled rules matching the event,
+   * evaluates conditions, and executes actions. One rule failure does not block others.
+   */
+  async executeAutomationRules(
+    event: AutomationEvent,
+    task: any,
+    orgId?: string,
+    actorUserId?: string,
+  ): Promise<void> {
+    if (!orgId || !task) return;
+
+    const filter: any = {
+      organizationId: orgId,
+      enabled: true,
+      isDeleted: false,
+      'trigger.event': event,
+      $or: [{ projectId: null }, { projectId: task.projectId }],
+    };
+
+    const rules = await this.automationRuleModel.find(filter);
+    if (rules.length === 0) return;
+
+    for (const rule of rules) {
+      try {
+        const conditionsMatch = this.evaluateConditions(rule, task);
+        if (!conditionsMatch) {
+          rule.runCount = (rule.runCount || 0) + 1;
+          rule.lastRunAt = new Date();
+          rule.lastRunStatus = 'skipped';
+          rule.lastRunError = null;
+          await rule.save();
+          continue;
+        }
+
+        for (const action of rule.actions || []) {
+          await this.executeAutomationAction(action, task, orgId, actorUserId, rule);
+        }
+
+        rule.runCount = (rule.runCount || 0) + 1;
+        rule.lastRunAt = new Date();
+        rule.lastRunStatus = 'success';
+        rule.lastRunError = null;
+        await rule.save();
+      } catch (err) {
+        this.logger.error(`Automation rule ${rule._id} failed: ${err.message}`);
+        try {
+          rule.runCount = (rule.runCount || 0) + 1;
+          rule.lastRunAt = new Date();
+          rule.lastRunStatus = 'failure';
+          rule.lastRunError = err.message;
+          await rule.save();
+        } catch {}
+        // Continue to next rule; a single failure must not block others.
+      }
+    }
+  }
+
+  private async executeAutomationAction(
+    action: any,
+    task: any,
+    orgId: string,
+    actorUserId: string | undefined,
+    rule: IAutomationRule,
+  ): Promise<void> {
+    const params = action?.params || {};
+    const taskId = task._id?.toString?.() || task.id || String(task._id);
+    const systemUser = actorUserId || 'automation-system';
+
+    switch (action.type) {
+      case 'change_status': {
+        if (!params.status) return;
+        await this.taskModel.updateOne(
+          { _id: taskId, organizationId: orgId },
+          {
+            $set: {
+              status: params.status,
+              updatedBy: systemUser,
+              ...(params.status === 'done' ? { completedAt: new Date() } : {}),
+            },
+            $push: { statusHistory: { status: params.status, changedAt: new Date(), changedBy: systemUser } },
+          },
+        );
+        return;
+      }
+      case 'assign_to': {
+        if (!params.assigneeId) return;
+        await this.taskModel.updateOne(
+          { _id: taskId, organizationId: orgId },
+          { $set: { assigneeId: params.assigneeId, updatedBy: systemUser } },
+        );
+        return;
+      }
+      case 'set_priority': {
+        if (!params.priority) return;
+        await this.taskModel.updateOne(
+          { _id: taskId, organizationId: orgId },
+          { $set: { priority: params.priority, updatedBy: systemUser } },
+        );
+        return;
+      }
+      case 'add_label': {
+        const labels: string[] = Array.isArray(params.labels)
+          ? params.labels
+          : params.label
+            ? [params.label]
+            : [];
+        if (labels.length === 0) return;
+        await this.taskModel.updateOne(
+          { _id: taskId, organizationId: orgId },
+          { $addToSet: { labels: { $each: labels } }, $set: { updatedBy: systemUser } },
+        );
+        return;
+      }
+      case 'remove_label': {
+        const labels: string[] = Array.isArray(params.labels)
+          ? params.labels
+          : params.label
+            ? [params.label]
+            : [];
+        if (labels.length === 0) return;
+        await this.taskModel.updateOne(
+          { _id: taskId, organizationId: orgId },
+          { $pull: { labels: { $in: labels } }, $set: { updatedBy: systemUser } },
+        );
+        return;
+      }
+      case 'add_comment': {
+        const content = params.content || params.text;
+        if (!content) return;
+        await this.taskModel.updateOne(
+          { _id: taskId, organizationId: orgId },
+          {
+            $push: {
+              comments: {
+                userId: systemUser,
+                content: `[Automation: ${rule.name}] ${content}`,
+                createdAt: new Date(),
+              },
+            },
+          },
+        );
+        return;
+      }
+      case 'send_notification': {
+        // Fire-and-forget notification via notification service
+        const recipients: string[] = Array.isArray(params.userIds)
+          ? params.userIds
+          : params.userId
+            ? [params.userId]
+            : task.assigneeId
+              ? [task.assigneeId]
+              : [];
+        if (recipients.length === 0) return;
+        const actor = { userId: systemUser, userName: 'Automation', userEmail: 'automation@nexora' };
+        for (const userId of recipients) {
+          await this.notificationService
+            .createNotification({
+              organizationId: orgId,
+              userId,
+              type: 'mention',
+              title: params.title || `Automation rule "${rule.name}" triggered`,
+              message: params.message || `Task ${task.taskKey || task.title} triggered automation`,
+              taskId,
+              projectId: task.projectId,
+              taskKey: task.taskKey,
+              actor,
+            })
+            .catch((e) => this.logger.warn(`Automation notification failed: ${e.message}`));
+        }
+        return;
+      }
+      case 'create_subtask': {
+        const title = params.title || `Subtask for ${task.taskKey || task.title}`;
+        const subtask = new this.taskModel({
+          title,
+          description: params.description || null,
+          projectId: task.projectId,
+          parentTaskId: taskId,
+          type: 'sub_task',
+          priority: params.priority || task.priority || 'medium',
+          status: params.status || 'backlog',
+          assigneeId: params.assigneeId || task.assigneeId || null,
+          reporterId: systemUser,
+          createdBy: systemUser,
+          organizationId: orgId,
+        });
+        await subtask.save();
+        return;
+      }
+      case 'set_due_date': {
+        let dueDate: Date | null = null;
+        if (params.date) {
+          dueDate = new Date(params.date);
+        } else if (typeof params.daysFromNow === 'number') {
+          dueDate = new Date(Date.now() + params.daysFromNow * 24 * 60 * 60 * 1000);
+        }
+        if (!dueDate) return;
+        await this.taskModel.updateOne(
+          { _id: taskId, organizationId: orgId },
+          { $set: { dueDate, updatedBy: systemUser } },
+        );
+        return;
+      }
+      case 'set_field': {
+        // Generic field setter; supports "customFields.<key>" via dot-notation.
+        if (!params.field) return;
+        const setOp: any = { updatedBy: systemUser };
+        setOp[params.field] = params.value;
+        await this.taskModel.updateOne(
+          { _id: taskId, organizationId: orgId },
+          { $set: setOp },
+        );
+        return;
+      }
+      default:
+        return;
+    }
   }
 }
