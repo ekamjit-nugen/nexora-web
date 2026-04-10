@@ -178,6 +178,15 @@ export const authApi = {
     request(`/auth/devices/${id}`, { method: "DELETE", body: JSON.stringify({ reason }) }),
   revokeAllDevices: () =>
     request("/auth/devices/revoke-all", { method: "POST" }),
+
+  // GDPR
+  exportMyData: () => request("/gdpr/export"),
+  downloadDataExport: () => request("/gdpr/export/download"),
+  requestAccountDeletion: (data: { reason?: string; confirmEmail: string }) =>
+    request("/gdpr/delete-request", { method: "POST", body: JSON.stringify(data) }),
+  getDeletionStatus: () => request("/gdpr/delete-request/status"),
+  cancelAccountDeletion: () =>
+    request("/gdpr/delete-request", { method: "DELETE" }),
 };
 
 // ── HR API ──
