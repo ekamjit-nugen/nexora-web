@@ -66,6 +66,10 @@ services:
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
       FRONTEND_URL: http://localhost:3003
+      OTP_MAX_ATTEMPTS: ${OTP_MAX_ATTEMPTS:-20}
+      OTP_LOCKOUT_MINUTES: ${OTP_LOCKOUT_MINUTES:-2}
+      OTP_RATE_LIMIT_PER_HOUR: ${OTP_RATE_LIMIT_PER_HOUR:-100}
+      OTP_RESEND_COOLDOWN_SECONDS: ${OTP_RESEND_COOLDOWN_SECONDS:-5}
     depends_on:
       mongodb:
         condition: service_healthy
@@ -432,6 +436,8 @@ services:
       PROJECT_SERVICE_URL: http://project-service:3020
       TASK_SERVICE_URL: http://task-service:3021
       CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100
+      AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-100}
+      AUTH_RATE_LIMIT_WINDOW_MS: ${AUTH_RATE_LIMIT_WINDOW_MS:-900000}
     depends_on:
       auth-service:
         condition: service_healthy
