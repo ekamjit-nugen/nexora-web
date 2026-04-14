@@ -24,8 +24,13 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 
   handleRequest(err, user, info) {
     if (err || !user) {
-      this.logger.warn(`JWT validation failed: ${info?.message || err?.message}`);
-      throw err || new UnauthorizedException('Invalid JWT token');
+      const reason = info?.message || err?.message || 'unknown';
+      this.logger.warn(`JWT validation failed: ${reason}`);
+      throw err || new UnauthorizedException(
+        reason === 'jwt expired' ? 'Session expired — please log in again' :
+        reason === 'invalid signature' ? 'Invalid session — please log in again' :
+        'Invalid JWT token — please log in again'
+      );
     }
     return user;
   }

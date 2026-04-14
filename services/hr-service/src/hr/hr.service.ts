@@ -60,8 +60,10 @@ export class HrService {
     }
     const employeeId = `NXR-${String(nextNum).padStart(4, '0')}`;
 
-    // Provision auth user account and add to organization via the invite endpoint.
-    // This creates a fully active user with org membership so they skip onboarding on first login.
+    // Provision auth user account and send invitation via the auth service.
+    // The auth service creates the user, org membership (as pending/invited), and returns an invite token.
+    let inviteToken: string | null = null;
+    let authUserId: string | null = null;
     try {
       const axios = require('axios');
       const authUrl = process.env.AUTH_SERVICE_URL || 'http://auth-service:3001';
@@ -69,36 +71,32 @@ export class HrService {
       if (authToken) headers['Authorization'] = authToken;
 
       if (orgId) {
-        // Use the org invite endpoint — it creates the user (active, with name),
-        // adds org membership, and sets defaultOrganizationId in one step.
-        await axios.post(
+        const inviteRes = await axios.post(
           `${authUrl}/api/v1/auth/organizations/${orgId}/invite`,
-          { email: dto.email, firstName: dto.firstName, lastName: dto.lastName, role: 'employee' },
+          { email: dto.email, firstName: dto.firstName, lastName: dto.lastName, role: (dto as any).role || 'employee' },
           { headers, timeout: 8000 },
         ).catch((inviteErr: any) => {
-          // 409 = already a member, which is fine
-          if (inviteErr?.response?.status !== 409) {
-            throw inviteErr;
-          }
+          if (inviteErr?.response?.status !== 409) throw inviteErr;
           this.logger.log(`User ${dto.email} already a member of org ${orgId}`);
+          return inviteErr?.response;
         });
-        this.logger.log(`Auth account provisioned & org membership created for ${dto.email}`);
-      } else {
-        // No org context — fall back to send-otp to at least create the auth account
-        await axios.post(`${authUrl}/api/v1/auth/send-otp`, { email: dto.email }, { headers, timeout: 5000 });
-        this.logger.log(`Auth account provisioned for ${dto.email} (OTP sent, no org context)`);
+        // Extract invite token and userId from auth response
+        const resData = inviteRes?.data?.data || inviteRes?.data || {};
+        inviteToken = resData.inviteToken || resData.token || null;
+        authUserId = resData.userId || null;
+        this.logger.log(`Auth invitation sent for ${dto.email} (token: ${inviteToken ? 'yes' : 'no'})`);
       }
     } catch (err) {
       this.logger.warn(`Failed to provision auth account for ${dto.email}: ${err.message || err}`);
-      // Continue creating employee even if auth provisioning fails
     }
 
-    // Auto-generate userId if not provided
+    // Use auth userId if available, otherwise auto-generate
     if (!dto.userId) {
-      dto.userId = `usr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+      dto.userId = authUserId || `usr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     }
 
-    const employee = new this.employeeModel({ ...dto, employeeId, createdBy, organizationId: orgId });
+    // New employees start as 'invited' — they become 'active' when they accept the invitation
+    const employee = new this.employeeModel({ ...dto, employeeId, createdBy, organizationId: orgId, status: dto.status || 'invited' });
     try {
       await employee.save();
     } catch (err: any) {
@@ -119,7 +117,10 @@ export class HrService {
         secure: false,
       });
 
-      const inviteUrl = `${process.env.FRONTEND_URL || 'http://localhost:3100'}/invite?email=${encodeURIComponent(dto.email)}&org=${encodeURIComponent(orgId || '')}`;
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3100';
+      const inviteUrl = inviteToken
+        ? `${frontendUrl}/auth/accept-invite?token=${inviteToken}`
+        : `${frontendUrl}/invite?email=${encodeURIComponent(dto.email)}&org=${encodeURIComponent(orgId || '')}`;
 
       await transporter.sendMail({
         from: '"Nexora" <no-reply@nexora.io>',
@@ -133,14 +134,18 @@ export class HrService {
             </div>
             <p style="color: #334155; font-size: 16px;">Hi ${dto.firstName},</p>
             <p style="color: #64748B; font-size: 14px; line-height: 1.6;">
-              You've been invited to join as a team member. Click the button below to set up your account and get started.
+              You've been invited to join as a team member. Click the button below to create your account and get started.
             </p>
             <div style="text-align: center; margin: 30px 0;">
               <a href="${inviteUrl}" style="background: #2E86C1; color: white; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
-                Accept Invitation
+                Accept & Join
               </a>
             </div>
-            <p style="color: #94A3B8; font-size: 12px; text-align: center;">
+            <p style="color: #64748B; font-size: 13px; text-align: center;">
+              Or copy this link: <br/>
+              <span style="color: #2E86C1; word-break: break-all;">${inviteUrl}</span>
+            </p>
+            <p style="color: #94A3B8; font-size: 12px; text-align: center; margin-top: 20px;">
               If you didn't expect this invitation, you can safely ignore this email.
             </p>
           </div>
@@ -1428,7 +1433,7 @@ export class HrService {
         if (!response.ok) {
           throw new NotFoundException(`Timesheet ${id} not found or inaccessible`);
         }
-        const body = await response.json();
+        const body: any = await response.json();
         timesheets.push(body.data || body);
       } catch (err) {
         if (err instanceof NotFoundException) throw err;

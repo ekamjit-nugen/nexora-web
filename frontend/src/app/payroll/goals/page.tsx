@@ -147,6 +147,8 @@ export default function GoalsPage() {
   const [newKeyResults, setNewKeyResults] = useState<KeyResult[]>([
     { title: "", metric: "", targetValue: 0, unit: "" },
   ]);
+  const [newParentGoalId, setNewParentGoalId] = useState<string>("");
+  const [allGoalsForParent, setAllGoalsForParent] = useState<Goal[]>([]);
 
   // Check-in modal
   const [checkInGoal, setCheckInGoal] = useState<Goal | null>(null);
@@ -187,6 +189,12 @@ export default function GoalsPage() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     await Promise.all([fetchMyGoals(), fetchTeamGoals()]);
+    // Fetch all goals for parent selector
+    try {
+      const allRes = await payrollApi.getAllGoals({ limit: "100" });
+      const allData = Array.isArray((allRes as any).data) ? (allRes as any).data : [];
+      setAllGoalsForParent(allData);
+    } catch { /* silent */ }
     setLoading(false);
   }, [fetchMyGoals, fetchTeamGoals]);
 
@@ -226,6 +234,7 @@ export default function GoalsPage() {
     setNewStartDate("");
     setNewTargetDate("");
     setNewKeyResults([{ title: "", metric: "", targetValue: 0, unit: "" }]);
+    setNewParentGoalId("");
   };
 
   const resetCheckInModal = () => {
@@ -290,6 +299,7 @@ export default function GoalsPage() {
         startDate: newStartDate || new Date().toISOString(),
         targetDate: new Date(newTargetDate).toISOString(),
         keyResults,
+        parentGoalId: newParentGoalId || undefined,
       });
       toast.success("Goal created successfully");
       resetNewGoalModal();
@@ -675,6 +685,20 @@ export default function GoalsPage() {
                       <option key={p} value={p} className="capitalize">{p}</option>
                     ))}
                   </select>
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-[12px] font-semibold text-[#334155] mb-1">Parent Goal (for alignment)</label>
+                  <select
+                    value={newParentGoalId}
+                    onChange={(e) => setNewParentGoalId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-[#E2E8F0] text-[13px] focus:outline-none focus:ring-2 focus:ring-[#2E86C1]/30"
+                  >
+                    <option value="">None (top-level goal)</option>
+                    {allGoalsForParent.filter(g => g.type === "company" || g.type === "team").map((g) => (
+                      <option key={g._id} value={g._id}>[{g.type?.toUpperCase()}] {g.title}</option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-[#94A3B8] mt-1">Link this goal to a company or team objective for OKR alignment</p>
                 </div>
                 <div>
                   <label className="block text-[12px] font-semibold text-[#334155] mb-1">Weightage (%)</label>

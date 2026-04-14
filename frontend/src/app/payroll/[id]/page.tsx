@@ -141,8 +141,8 @@ export default function PayrollRunDetailPage() {
         payrollApi.getRun(runId),
         payrollApi.getRunEntries(runId),
       ]);
-      setRun(runRes.data);
-      setEntries(Array.isArray(entriesRes.data) ? entriesRes.data : []);
+      setRun(runRes.data as any);
+      setEntries(Array.isArray(entriesRes.data) ? entriesRes.data as any[] : []);
     } catch (err: any) {
       toast.error(err.message || "Failed to load payroll run");
     } finally {

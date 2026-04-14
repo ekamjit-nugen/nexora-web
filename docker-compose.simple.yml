@@ -280,7 +280,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
       LLM_BASE_URL: http://host.docker.internal:7/v1/chat/completions
       LLM_MODEL: deepseek
-      CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100,http://192.168.29.218:3000,http://192.168.29.218:3003,http://192.168.29.218:3005,http://192.168.29.218:3100
       REDIS_URI: redis://redis:6379
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -395,7 +395,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
       STUN_SERVERS: stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
       LOG_LEVEL: ${LOG_LEVEL:-debug}
-      CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100,http://192.168.29.218:3000,http://192.168.29.218:3003,http://192.168.29.218:3005,http://192.168.29.218:3100
       REDIS_URI: redis://redis:6379
       CHAT_SERVICE_URL: http://chat-service:3002
     depends_on:
@@ -407,6 +407,86 @@ services:
       - nexora-network
     healthcheck:
       test: wget --quiet --tries=1 --spider http://localhost:3051/api/v1/calls || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Bench Management Service
+  bench-service:
+    build:
+      context: ./services/bench-service
+      dockerfile: Dockerfile
+    container_name: nexora-bench-service
+    ports:
+      - "3040:3030"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      BENCH_SERVICE_PORT: 3030
+      MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/nexora_bench?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
+      HR_SERVICE_URL: http://hr-service:3010
+      PROJECT_SERVICE_URL: http://project-service:3020
+      PAYROLL_SERVICE_URL: http://payroll-service:3014
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - nexora-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:3030/api/v1/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # IT Asset Management Service
+  asset-service:
+    build:
+      context: ./services/asset-service
+      dockerfile: Dockerfile
+    container_name: nexora-asset-service
+    ports:
+      - "3041:3031"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      ASSET_SERVICE_PORT: 3031
+      MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/nexora_asset?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
+      HR_SERVICE_URL: http://hr-service:3010
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - nexora-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:3031/api/v1/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Knowledge Base / Wiki Service
+  knowledge-service:
+    build:
+      context: ./services/knowledge-service
+      dockerfile: Dockerfile
+    container_name: nexora-knowledge-service
+    ports:
+      - "3032:3032"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      KNOWLEDGE_SERVICE_PORT: 3032
+      MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/nexora_knowledge?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
+      AI_SERVICE_URL: http://ai-service:3080
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - nexora-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:3032/api/v1/health || exit 1
       interval: 10s
       timeout: 5s
       retries: 5
@@ -436,12 +516,16 @@ services:
       PROJECT_SERVICE_URL: http://project-service:3020
       TASK_SERVICE_URL: http://task-service:3021
       PAYROLL_SERVICE_URL: http://payroll-service:3014
-      CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100
+      BENCH_SERVICE_URL: http://bench-service:3030
+      ASSET_SERVICE_URL: http://asset-service:3031
+      KNOWLEDGE_SERVICE_URL: http://knowledge-service:3032
+      HELPDESK_SERVICE_URL: http://helpdesk-service:3033
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100,http://192.168.29.218:3000,http://192.168.29.218:3003,http://192.168.29.218:3005,http://192.168.29.218:3100
       AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-100}
       AUTH_RATE_LIMIT_WINDOW_MS: ${AUTH_RATE_LIMIT_WINDOW_MS:-900000}
     depends_on:
       auth-service:
-        condition: service_healthy
+        condition: service_started
       hr-service:
         condition: service_healthy
       attendance-service:
@@ -451,7 +535,7 @@ services:
       policy-service:
         condition: service_healthy
       calling-service:
-        condition: service_healthy
+        condition: service_started
       project-service:
         condition: service_healthy
       task-service:
@@ -467,6 +551,49 @@ services:
 
   # Frontend runs locally via `cd frontend && npm run dev`
   # See frontend/.env.local for API URLs pointing to localhost
+
+  # Internal Helpdesk Service
+  helpdesk-service:
+    build:
+      context: ./services/helpdesk-service
+      dockerfile: Dockerfile
+    container_name: nexora-helpdesk-service
+    ports:
+      - "3043:3033"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      HELPDESK_SERVICE_PORT: 3033
+      MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/nexora_helpdesk?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - nexora-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:3033/api/v1/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://192.168.29.218:3005
+        NEXT_PUBLIC_CHAT_SOCKET_URL: http://192.168.29.218:3002
+        NEXT_PUBLIC_CALL_SOCKET_URL: http://192.168.29.218:3051
+    container_name: nexora-frontend
+    ports:
+      - "3100:3000"
+    environment:
+      NODE_ENV: production
+    networks:
+      - nexora-network
+    restart: unless-stopped
 
   # Development Tools
   mailhog:

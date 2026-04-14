@@ -25,7 +25,7 @@ import {
   VoiceHuddle, ForwardModal,
   ConversationSidebar, ChatHeader, MessageList, ChatInput, CallOverlay,
 } from "@/components/chat";
-import GuestAccessPanel from "@/components/chat/GuestAccessPanel";
+import { GuestAccessPanel } from "@/components/chat/GuestAccessPanel";
 import type { TabFilter } from "@/components/chat";
 import { toast } from "sonner";
 import { useOfflineCache } from "@/lib/hooks/useOfflineCache";
@@ -1354,7 +1354,7 @@ export default function MessagesPage() {
       {showAiSummary && activeId && <div className="fixed top-0 right-0 h-full z-40 shadow-2xl"><AiSummaryPanel conversationId={activeId} onClose={() => setShowAiSummary(false)} /></div>}
 
       {/* Guest Access panel */}
-      {showGuestPanel && activeId && activeConversation && <div className="fixed top-0 right-0 h-full z-40 shadow-2xl"><GuestAccessPanel conversation={activeConversation} onClose={() => setShowGuestPanel(false)} onConversationUpdate={(updated) => setConversations(prev => prev.map(c => c._id === updated._id ? updated : c))} /></div>}
+      {showGuestPanel && activeId && conversations.find(c => c._id === activeId) && <div className="fixed top-0 right-0 h-full z-40 shadow-2xl"><GuestAccessPanel conversation={conversations.find(c => c._id === activeId)!} employeeMap={employeeMap} currentUserId={(user as any)?._id || (user as any)?.userId || ""} onClose={() => setShowGuestPanel(false)} onConversationUpdate={(updated: any) => setConversations(prev => prev.map(c => c._id === updated._id ? updated : c))} /></div>}
 
       {/* Forward Message Modal */}
       {forwardMessageId && <ForwardModal messageId={forwardMessageId} onClose={() => setForwardMessageId(null)} employeeMap={employeeMap} />}

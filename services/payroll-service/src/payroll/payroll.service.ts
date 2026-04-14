@@ -5246,6 +5246,75 @@ export class PayrollService {
     return { deleted: true };
   }
 
+  // ── OKR Hierarchy / Alignment ──
+
+  async getGoalChildren(parentGoalId: string, orgId: string) {
+    return this.goalModel.find({
+      parentGoalId, organizationId: orgId, isDeleted: false,
+    }).sort({ createdAt: -1 }).lean();
+  }
+
+  async getGoalHierarchy(rootGoalId: string, orgId: string) {
+    const root = await this.goalModel.findOne({
+      _id: rootGoalId, organizationId: orgId, isDeleted: false,
+    }).lean();
+    if (!root) throw new NotFoundException('Goal not found');
+
+    // Get all descendants recursively (max 4 levels deep)
+    const buildTree = async (parentId: string, depth: number): Promise<any[]> => {
+      if (depth > 4) return [];
+      const children = await this.goalModel.find({
+        parentGoalId: parentId, organizationId: orgId, isDeleted: false,
+      }).lean();
+      const results = [];
+      for (const child of children) {
+        const grandchildren = await buildTree(child._id.toString(), depth + 1);
+        results.push({ ...child, children: grandchildren });
+      }
+      return results;
+    };
+
+    const children = await buildTree(rootGoalId, 1);
+    return { ...root, children };
+  }
+
+  async getOrgGoalTree(orgId: string) {
+    // Get all goals, build a full tree
+    const allGoals = await this.goalModel.find({
+      organizationId: orgId, isDeleted: false,
+    }).select('_id title description type category status priority progress parentGoalId employeeId keyResults weightage startDate targetDate').lean();
+
+    // Build tree: roots are goals without parentGoalId
+    const goalMap = new Map<string, any>();
+    const roots: any[] = [];
+
+    for (const g of allGoals) {
+      goalMap.set(g._id.toString(), { ...g, children: [] });
+    }
+
+    for (const g of allGoals) {
+      const node = goalMap.get(g._id.toString());
+      if (g.parentGoalId && goalMap.has(g.parentGoalId)) {
+        goalMap.get(g.parentGoalId).children.push(node);
+      } else {
+        roots.push(node);
+      }
+    }
+
+    // Calculate rolled-up progress for parents
+    const calcRollup = (node: any): number => {
+      if (!node.children || node.children.length === 0) return node.progress || 0;
+      const childProgresses = node.children.map((c: any) => calcRollup(c));
+      const avg = childProgresses.reduce((s: number, p: number) => s + p, 0) / childProgresses.length;
+      node.rolledUpProgress = Math.round(avg);
+      return node.rolledUpProgress;
+    };
+
+    for (const root of roots) calcRollup(root);
+
+    return roots;
+  }
+
   // ===========================================================================
   // Performance Management: Review Cycles
   // ===========================================================================

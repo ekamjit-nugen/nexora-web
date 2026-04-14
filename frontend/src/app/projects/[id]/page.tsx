@@ -4187,8 +4187,20 @@ export default function ProjectDetailPage() {
         boardApi.getByProject(projectId),
         hrApi.getEmployees().catch(() => ({ data: [] })),
       ]);
-      setEmployees(Array.isArray(empRes.data) ? empRes.data : []);
+      const empList = Array.isArray(empRes.data) ? empRes.data : (empRes.data as any)?.data || [];
+      setEmployees(empList);
       const proj = projRes.data || null;
+      // Enrich project team with employee names and avatars
+      if (proj?.team && empList.length > 0) {
+        const empMap = new Map(empList.map((e: any) => [e.userId || e._id, e]));
+        proj.team = proj.team.map((m: any) => {
+          const emp = empMap.get(m.userId);
+          if (emp) {
+            return { ...m, name: `${emp.firstName || ''} ${emp.lastName || ''}`.trim(), email: emp.email, avatar: emp.avatar || null };
+          }
+          return m;
+        });
+      }
       setProject(proj);
       setTasks(Array.isArray(tasksRes.data) ? tasksRes.data : []);
       const boards = Array.isArray(boardsRes.data) ? boardsRes.data : [];
@@ -4398,25 +4410,43 @@ export default function ProjectDetailPage() {
                 )}
               </div>
               {project.description && (
-                <p className="text-[13px] text-[#64748B] mt-0.5 max-w-xl truncate">{project.description}</p>
+                <p className="text-[13px] text-[#64748B] mt-0.5 max-w-xl truncate">{project.description.replace(/<[^>]*>/g, '')}</p>
               )}
             </div>
           </div>
           <div className="flex items-center gap-2">
             {project.team && project.team.length > 0 && (
-              <div className="flex -space-x-1.5 mr-2">
-                {project.team.slice(0, 4).map((m, i) => {
-                  const initial = (m.name || m.email || "").charAt(0).toUpperCase();
+              <div className="flex -space-x-2 mr-2">
+                {project.team.slice(0, 5).map((m, i) => {
+                  const name = m.name || m.email || "Team member";
+                  const initials = name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
+                  const colors = ["#2E86C1", "#8B5CF6", "#10B981", "#F59E0B", "#EF4444", "#EC4899", "#06B6D4"];
+                  const bg = colors[i % colors.length];
                   return (
-                    <div key={i} className="w-7 h-7 rounded-full bg-[#2E86C1] flex items-center justify-center text-white text-[10px] font-bold border-2 border-white" title={m.name || m.email || "Team member"}>
-                      {initial || (
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                    <div key={i} className="relative group">
+                      {m.avatar ? (
+                        <img src={m.avatar} alt={name} className="w-8 h-8 rounded-full border-2 border-white object-cover" />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold border-2 border-white" style={{ backgroundColor: bg }}>
+                          {initials || "?"}
+                        </div>
                       )}
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1.5 bg-[#0F172A] text-white text-[11px] font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-50">
+                        {name}
+                        {m.role && <span className="text-[#94A3B8] ml-1 capitalize">({m.role})</span>}
+                        <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-px border-4 border-transparent border-t-[#0F172A]" />
+                      </div>
                     </div>
                   );
                 })}
-                {project.team.length > 4 && (
-                  <div className="w-7 h-7 rounded-full bg-[#F1F5F9] flex items-center justify-center text-[10px] font-bold text-[#64748B] border-2 border-white">+{project.team.length - 4}</div>
+                {project.team.length > 5 && (
+                  <div className="relative group">
+                    <div className="w-8 h-8 rounded-full bg-[#F1F5F9] flex items-center justify-center text-[10px] font-bold text-[#64748B] border-2 border-white">+{project.team.length - 5}</div>
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1.5 bg-[#0F172A] text-white text-[11px] font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-50">
+                      {project.team.slice(5).map((m: any) => m.name || m.email).join(", ")}
+                      <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-px border-4 border-transparent border-t-[#0F172A]" />
+                    </div>
+                  </div>
                 )}
               </div>
             )}
@@ -4573,10 +4603,10 @@ export default function ProjectDetailPage() {
 
         {/* Toolbar */}
         <Card className="border-0 shadow-sm mb-4">
-          <CardContent className="p-3 flex items-center justify-between">
-            <div className="flex items-center gap-3">
+          <CardContent className="p-3 flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0 flex-1 overflow-x-auto scrollbar-hide pr-4 relative" style={{ maskImage: 'linear-gradient(to right, black 92%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to right, black 92%, transparent 100%)' }}>
               {/* View switcher */}
-              <div className="flex gap-0.5 bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] p-1">
+              <div className="flex gap-0.5 bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] p-1 shrink-0">
                 {([
                   { key: "summary", label: "Summary", icon: "M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7" },
                   { key: "timeline", label: "Timeline", icon: "M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" },
@@ -4642,16 +4672,17 @@ export default function ProjectDetailPage() {
                 <option value="spike">Spike</option>
               </select>
 
-              <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} className="h-9 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-2 text-xs text-[#475569]">
+              <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} className="h-9 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-2 text-xs text-[#475569] shrink-0">
                 <option value="all">All Priorities</option>
                 <option value="critical">Critical</option>
                 <option value="high">High</option>
                 <option value="medium">Medium</option>
                 <option value="low">Low</option>
               </select>
+              <div className="w-6 shrink-0" />
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               {/* Export dropdown */}
               <div className="relative">
                 <Button size="sm" variant="outline" onClick={() => setShowExportMenu(!showExportMenu)} className="gap-1.5 h-9 text-xs">

@@ -168,7 +168,7 @@ export const ProjectSchema = new Schema<IProject>(
         userId: { type: String, required: true },
         role: {
           type: String,
-          enum: ['admin', 'manager', 'member', 'viewer'],
+          enum: ['owner', 'lead', 'admin', 'manager', 'member', 'viewer'],
           default: 'member',
         },
         projectRole: { type: String },

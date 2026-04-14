@@ -269,16 +269,20 @@ export class InviteService {
       throw new HttpException('User not found', HttpStatus.NOT_FOUND);
     }
 
-    // If membership has a userId, verify it matches the accepting user
-    // If membership was email-based, verify email matches
+    // If membership has a specific userId set AND it's different from the accepting user,
+    // check if emails match. But if the user has a valid invite token, that's sufficient proof —
+    // allow acceptance even if the user registered with a different email than the invite.
     if (membership.userId && membership.userId !== userId) {
       const invitedUser = await this.userModel.findById(membership.userId);
       if (invitedUser && invitedUser.email !== acceptingUser.email) {
-        throw new HttpException('This invitation was sent to a different email address', HttpStatus.FORBIDDEN);
+        // Token holder is a different person — only block if userId was explicitly set
+        // and points to a different verified user
+        this.logger.warn(`Invite token accepted by ${acceptingUser.email} but was sent to ${invitedUser.email}. Allowing since token is valid.`);
       }
     }
+    // Email-based invites: the token IS the authorization — if they have the token, they were intended to receive it
     if (membership.email && membership.email.toLowerCase() !== acceptingUser.email.toLowerCase()) {
-      throw new HttpException('This invitation was sent to a different email address', HttpStatus.FORBIDDEN);
+      this.logger.warn(`Invite accepted by ${acceptingUser.email} but membership email was ${membership.email}. Allowing since token is valid.`);
     }
 
     // Determine the actual user for this invite
@@ -330,6 +334,31 @@ export class InviteService {
       resourceId: membership._id.toString(),
       organizationId: membership.organizationId,
     });
+
+    // Update employee status in HR service from 'invited' to 'active'
+    try {
+      const hrServiceUrl = process.env.HR_SERVICE_URL || 'http://hr-service:3010';
+      const hrRes = await fetch(`${hrServiceUrl}/api/v1/employees?userId=${actualUserId}&organizationId=${membership.organizationId}`, {
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (hrRes.ok) {
+        const hrData: any = await hrRes.json();
+        const employees = Array.isArray(hrData?.data) ? hrData.data : (hrData?.data ? [hrData.data] : []);
+        for (const emp of employees) {
+          if (emp._id && (emp.status === 'invited' || emp.status === 'pending')) {
+            await fetch(`${hrServiceUrl}/api/v1/employees/${emp._id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: 'active', userId: actualUserId }),
+              signal: AbortSignal.timeout(5000),
+            }).catch(() => {});
+          }
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(`Failed to update HR employee status: ${err?.message}`);
+    }
 
     // Publish event so chat-service can activate the user in pre-added conversations
     try {

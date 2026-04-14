@@ -292,7 +292,7 @@ export default function ManagerDashboardPage() {
                               <div className="flex items-start justify-between mb-3">
                                 <div className="flex items-center gap-2 min-w-0">
                                   <div className="w-7 h-7 rounded flex items-center justify-center bg-[#F1F5F9] text-[9px] font-bold text-[#64748B] shrink-0">
-                                    {project.key.slice(0, 2) || project.name.charAt(0)}
+                                    {(project.key || project.name || "?").slice(0, 2)}
                                   </div>
                                   <div className="min-w-0">
                                     <p className="text-[13px] font-semibold text-[#0F172A] truncate">{project.name}</p>

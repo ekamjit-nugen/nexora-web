@@ -231,7 +231,7 @@ export default function OffboardingPage() {
       if (selectedRecord) {
         try {
           const freshRes = await payrollApi.getOffboarding(selectedRecord.employeeId);
-          if (freshRes.data) setSelectedRecord(freshRes.data);
+          if (freshRes.data) setSelectedRecord(freshRes.data as any);
         } catch { /* ignore, list already refreshed */ }
       }
     } catch (err: any) {

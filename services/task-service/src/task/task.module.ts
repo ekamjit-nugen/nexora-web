@@ -11,6 +11,7 @@ import { SprintController } from './sprint.controller';
 import { TaskReportingController } from './reporting.controller';
 import { NotificationController } from './notification.controller';
 import { GitWebhookController, GitIntegrationController, TaskGitLinksController } from './git-integration.controller';
+import { StandupController } from './standup.controller';
 import { TaskService } from './task.service';
 import { RecurrenceService } from './recurrence.service';
 import { GitIntegrationService } from './git-integration.service';
@@ -19,6 +20,7 @@ import { SprintService } from './sprint.service';
 import { TaskReportingService } from './reporting.service';
 import { NotificationService } from './notification.service';
 import { TaskCronService } from './task-cron.service';
+import { StandupService } from './standup.service';
 import { TaskSchema } from './schemas/task.schema';
 import { CounterSchema } from './schemas/counter.schema';
 import { TimesheetSchema } from './schemas/timesheet.schema';
@@ -30,6 +32,7 @@ import { NotificationSchema } from './schemas/notification.schema';
 import { GitIntegrationConfigSchema } from './schemas/git-integration.schema';
 import { CustomFieldSchema } from './schemas/custom-field.schema';
 import { AutomationRuleSchema } from './schemas/automation-rule.schema';
+import { StandupSchema, StandupResponseSchema } from './schemas/standup.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 
@@ -48,6 +51,8 @@ import { RolesGuard } from './guards/roles.guard';
       { name: 'GitIntegrationConfig', schema: GitIntegrationConfigSchema },
       { name: 'CustomField', schema: CustomFieldSchema },
       { name: 'AutomationRule', schema: AutomationRuleSchema },
+      { name: 'Standup', schema: StandupSchema },
+      { name: 'StandupResponse', schema: StandupResponseSchema },
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -57,8 +62,8 @@ import { RolesGuard } from './guards/roles.guard';
       }),
     }),
   ],
-  controllers: [ImportExportController, TaskController, TimesheetController, BoardController, SprintController, TaskReportingController, NotificationController, GitWebhookController, GitIntegrationController, TaskGitLinksController],
-  providers: [TaskService, RecurrenceService, BoardService, SprintService, TaskReportingService, NotificationService, TaskCronService, GitIntegrationService, JwtAuthGuard, RolesGuard, Reflector],
-  exports: [TaskService, RecurrenceService, BoardService, SprintService, TaskReportingService, NotificationService, GitIntegrationService],
+  controllers: [ImportExportController, TaskController, TimesheetController, BoardController, SprintController, TaskReportingController, NotificationController, GitWebhookController, GitIntegrationController, TaskGitLinksController, StandupController],
+  providers: [TaskService, RecurrenceService, BoardService, SprintService, TaskReportingService, NotificationService, TaskCronService, GitIntegrationService, StandupService, JwtAuthGuard, RolesGuard, Reflector],
+  exports: [TaskService, RecurrenceService, BoardService, SprintService, TaskReportingService, NotificationService, GitIntegrationService, StandupService],
 })
 export class TaskModule {}

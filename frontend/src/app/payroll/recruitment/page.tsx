@@ -56,7 +56,7 @@ type TabKey = "jobs" | "candidates";
 // Component
 // ---------------------------------------------------------------------------
 export default function RecruitmentPage() {
-  const { user, loading: authLoading, hasOrgRole } = useAuth();
+  const { user, loading: authLoading, logout, hasOrgRole } = useAuth();
   const router = useRouter();
   const isManager = hasOrgRole("manager") || hasOrgRole("admin") || hasOrgRole("hr");
 
@@ -252,7 +252,7 @@ export default function RecruitmentPage() {
 
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
-      <Sidebar />
+      <Sidebar user={user!} onLogout={logout} />
       <main className="flex-1 ml-[260px] p-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">

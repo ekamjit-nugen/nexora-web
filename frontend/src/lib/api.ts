@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3005";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://192.168.29.218:3005";
 export const API_BASE_URL = API_BASE;
 
 interface ApiResponse<T = unknown> {
@@ -959,7 +959,7 @@ export const mediaApi = {
     formData.append("file", file);
     if (conversationId) formData.append("conversationId", conversationId);
 
-    const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3005";
+    const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://192.168.29.218:3005";
     const res = await fetch(`${API_BASE}/api/v1/media/upload`, {
       method: "POST",
       headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -1647,6 +1647,438 @@ export interface OverviewStats {
   statusBreakdown: Record<string, number>;
 }
 
+// ── Internal Helpdesk API ──
+
+export interface Ticket {
+  _id: string; ticketNumber: string; title: string; description: string;
+  category: string; priority: string; status: string;
+  requesterId: string; requesterName: string; requesterEmail: string;
+  assigneeId: string; assigneeName: string; teamId: string;
+  tags: string[]; slaResponseDue: string; slaResolutionDue: string;
+  firstRespondedAt: string; resolvedAt: string; closedAt: string;
+  slaResponseBreached: boolean; slaResolutionBreached: boolean;
+  rating: number; ratingComment: string;
+  createdAt: string; updatedAt: string;
+}
+
+export interface TicketComment {
+  _id: string; ticketId: string; authorId: string; authorName: string;
+  content: string; isInternal: boolean; createdAt: string;
+}
+
+export interface HelpdeskTeam {
+  _id: string; name: string; description: string; category: string;
+  members: Array<{ userId: string; name: string; role: string }>;
+  autoAssign: boolean; isActive: boolean;
+  slaPolicy: Record<string, { responseMinutes: number; resolutionMinutes: number }>;
+  createdAt: string;
+}
+
+export interface HelpdeskDashboard {
+  openTickets: number; assignedToMe: number; slaBreached: number;
+  avgResolutionHours: number;
+  byCategory: Array<{ category: string; count: number }>;
+  byPriority: Array<{ priority: string; count: number }>;
+  unassignedTickets: Ticket[];
+}
+
+export interface HelpdeskStats {
+  totalTickets: number; openTickets: number; resolvedTickets: number; closedTickets: number;
+  avgRating: number; ratedCount: number; slaCompliancePercent: number;
+}
+
+export const helpdeskApi = {
+  createTicket: (data: any) => request<Ticket>('/helpdesk/tickets', { method: 'POST', body: JSON.stringify(data) }),
+  getTickets: (params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return request<Ticket[]>(`/helpdesk/tickets${qs}`);
+  },
+  getTicket: (id: string) => request<Ticket>(`/helpdesk/tickets/${id}`),
+  updateTicket: (id: string, data: any) => request<Ticket>(`/helpdesk/tickets/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  assignTicket: (id: string, data: any) => request<Ticket>(`/helpdesk/tickets/${id}/assign`, { method: 'POST', body: JSON.stringify(data) }),
+  closeTicket: (id: string) => request<Ticket>(`/helpdesk/tickets/${id}/close`, { method: 'POST' }),
+  rateTicket: (id: string, data: any) => request<Ticket>(`/helpdesk/tickets/${id}/rate`, { method: 'POST', body: JSON.stringify(data) }),
+  addComment: (ticketId: string, data: any) => request<TicketComment>(`/helpdesk/tickets/${ticketId}/comments`, { method: 'POST', body: JSON.stringify(data) }),
+  getComments: (ticketId: string) => request<TicketComment[]>(`/helpdesk/tickets/${ticketId}/comments`),
+  createTeam: (data: any) => request<HelpdeskTeam>('/helpdesk/teams', { method: 'POST', body: JSON.stringify(data) }),
+  getTeams: () => request<HelpdeskTeam[]>('/helpdesk/teams'),
+  getTeam: (id: string) => request<HelpdeskTeam>(`/helpdesk/teams/${id}`),
+  updateTeam: (id: string, data: any) => request<HelpdeskTeam>(`/helpdesk/teams/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTeam: (id: string) => request<any>(`/helpdesk/teams/${id}`, { method: 'DELETE' }),
+  getDashboard: () => request<HelpdeskDashboard>('/helpdesk/dashboard'),
+  getStats: () => request<HelpdeskStats>('/helpdesk/stats'),
+};
+
+// ── Async Standups API ──
+
+export interface StandupConfig {
+  _id: string;
+  name: string;
+  projectId: string;
+  schedule: { frequency: string; time: string; timezone: string; daysOfWeek?: number[] };
+  questions: string[];
+  participants: string[];
+  isActive: boolean;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface StandupResponse {
+  _id: string;
+  standupId: string;
+  userId: string;
+  userName: string;
+  date: string;
+  answers: Array<{ question: string; answer: string }>;
+  submittedAt: string;
+  linkedTaskIds: string[];
+}
+
+export interface StandupSummary {
+  summary: string;
+  responseCount: number;
+  totalParticipants?: number;
+}
+
+export const standupApi = {
+  create: (data: any) => request<StandupConfig>('/standups', { method: 'POST', body: JSON.stringify(data) }),
+  getAll: () => request<StandupConfig[]>('/standups'),
+  get: (id: string) => request<StandupConfig>(`/standups/${id}`),
+  update: (id: string, data: any) => request<StandupConfig>(`/standups/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) => request<any>(`/standups/${id}`, { method: 'DELETE' }),
+  submitResponse: (id: string, data: any) => request<StandupResponse>(`/standups/${id}/responses`, { method: 'POST', body: JSON.stringify(data) }),
+  getResponses: (id: string, params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return request<StandupResponse[]>(`/standups/${id}/responses${qs}`);
+  },
+  getTodayResponses: (id: string) => request<StandupResponse[]>(`/standups/${id}/responses/today`),
+  getMyStatus: (id: string) => request<{ submitted: boolean; response: StandupResponse | null }>(`/standups/${id}/responses/my-status`),
+  getSummary: (id: string) => request<StandupSummary>(`/standups/${id}/summary`),
+};
+
+// ── Knowledge Base / Wiki API ──
+
+export interface WikiSpace {
+  _id: string;
+  name: string;
+  slug: string;
+  description: string;
+  icon: string;
+  color: string;
+  visibility: 'public' | 'restricted';
+  isArchived: boolean;
+  homepageId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WikiPage {
+  _id: string;
+  spaceId: string;
+  parentId: string;
+  title: string;
+  slug: string;
+  content: string;
+  contentPlainText: string;
+  excerpt: string;
+  coverImage: string;
+  icon: string;
+  status: 'draft' | 'published' | 'archived';
+  version: number;
+  isPinned: boolean;
+  order: number;
+  tags: string[];
+  linkedEntities: Array<{ entityType: string; entityId: string }>;
+  lastEditedBy: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WikiPageVersion {
+  _id: string;
+  pageId: string;
+  version: number;
+  title: string;
+  content: string;
+  editedBy: string;
+  changeSummary: string;
+  createdAt: string;
+}
+
+export interface WikiTreeNode {
+  _id: string;
+  title: string;
+  slug: string;
+  parentId: string;
+  icon: string;
+  status: string;
+  isPinned: boolean;
+  order: number;
+  version: number;
+  children: WikiTreeNode[];
+}
+
+export interface WikiTemplate {
+  _id: string;
+  name: string;
+  description: string;
+  category: string;
+  content: string;
+  icon: string;
+  isSystem: boolean;
+}
+
+export interface WikiBookmark {
+  _id: string;
+  pageId: string;
+  spaceId: string;
+  page: { _id: string; title: string; slug: string; spaceId: string; icon: string; excerpt: string } | null;
+  createdAt: string;
+}
+
+export const wikiSpaceApi = {
+  create: (data: any) => request<WikiSpace>('/knowledge/spaces', { method: 'POST', body: JSON.stringify(data) }),
+  getAll: () => request<WikiSpace[]>('/knowledge/spaces'),
+  get: (id: string) => request<WikiSpace>(`/knowledge/spaces/${id}`),
+  update: (id: string, data: any) => request<WikiSpace>(`/knowledge/spaces/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) => request<any>(`/knowledge/spaces/${id}`, { method: 'DELETE' }),
+  getTree: (id: string) => request<WikiTreeNode[]>(`/knowledge/spaces/${id}/tree`),
+};
+
+export const wikiPageApi = {
+  create: (data: any) => request<WikiPage>('/knowledge/pages', { method: 'POST', body: JSON.stringify(data) }),
+  get: (id: string) => request<WikiPage>(`/knowledge/pages/${id}`),
+  update: (id: string, data: any) => request<WikiPage>(`/knowledge/pages/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) => request<any>(`/knowledge/pages/${id}`, { method: 'DELETE' }),
+  move: (id: string, data: any) => request<WikiPage>(`/knowledge/pages/${id}/move`, { method: 'PUT', body: JSON.stringify(data) }),
+  reorder: (id: string, order: number) => request<WikiPage>(`/knowledge/pages/${id}/reorder`, { method: 'PUT', body: JSON.stringify({ order }) }),
+  togglePin: (id: string) => request<WikiPage>(`/knowledge/pages/${id}/pin`, { method: 'PUT' }),
+  getVersions: (id: string, page?: number) => request<WikiPageVersion[]>(`/knowledge/pages/${id}/versions${page ? `?page=${page}` : ''}`),
+  getVersion: (id: string, version: number) => request<WikiPageVersion>(`/knowledge/pages/${id}/versions/${version}`),
+  restoreVersion: (id: string, version: number) => request<WikiPage>(`/knowledge/pages/${id}/versions/${version}/restore`, { method: 'POST' }),
+  getByEntity: (entityType: string, entityId: string) => request<WikiPage[]>(`/knowledge/pages/by-entity/${entityType}/${entityId}`),
+};
+
+export const wikiSearchApi = {
+  search: (params: Record<string, string>) => {
+    const qs = '?' + new URLSearchParams(params).toString();
+    return request<WikiPage[]>(`/knowledge/search${qs}`);
+  },
+  semanticSearch: (query: string, spaceId?: string) =>
+    request<WikiPage[]>('/knowledge/search/semantic', { method: 'POST', body: JSON.stringify({ query, spaceId }) }),
+};
+
+export const wikiTemplateApi = {
+  create: (data: any) => request<WikiTemplate>('/knowledge/templates', { method: 'POST', body: JSON.stringify(data) }),
+  getAll: () => request<WikiTemplate[]>('/knowledge/templates'),
+  get: (id: string) => request<WikiTemplate>(`/knowledge/templates/${id}`),
+  update: (id: string, data: any) => request<WikiTemplate>(`/knowledge/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) => request<any>(`/knowledge/templates/${id}`, { method: 'DELETE' }),
+};
+
+export const wikiBookmarkApi = {
+  add: (pageId: string) => request<WikiBookmark>('/knowledge/bookmarks', { method: 'POST', body: JSON.stringify({ pageId }) }),
+  remove: (pageId: string) => request<any>(`/knowledge/bookmarks/${pageId}`, { method: 'DELETE' }),
+  getAll: () => request<WikiBookmark[]>('/knowledge/bookmarks'),
+};
+
+// ── IT Asset Management API ──
+
+export interface AssetCategory {
+  _id: string;
+  name: string;
+  slug: string;
+  description: string;
+  icon: string;
+  customFields: Array<{ fieldName: string; fieldType: string; required: boolean; options?: string[] }>;
+  depreciationMethod: string;
+  defaultUsefulLifeYears: number;
+  createdAt: string;
+}
+
+export interface Asset {
+  _id: string;
+  assetTag: string;
+  name: string;
+  categoryId: string;
+  serialNumber: string;
+  model: string;
+  manufacturer: string;
+  description: string;
+  status: 'available' | 'assigned' | 'maintenance' | 'retired' | 'lost' | 'disposed';
+  condition: 'new' | 'good' | 'fair' | 'poor' | 'damaged';
+  purchaseDate: string;
+  purchasePrice: number;
+  vendor: string;
+  warrantyStartDate: string;
+  warrantyEndDate: string;
+  warrantyProvider: string;
+  currentAssigneeId: string;
+  currentAssigneeType: string;
+  assignedAt: string;
+  location: string;
+  usefulLifeYears: number;
+  currentBookValue: number;
+  customFieldValues: Record<string, any>;
+  tags: string[];
+  notes: string;
+  createdAt: string;
+}
+
+export interface AssetAssignment {
+  _id: string;
+  assetId: string;
+  assetTag: string;
+  action: 'assigned' | 'unassigned' | 'transferred';
+  assigneeId: string;
+  assigneeType: string;
+  previousAssigneeId: string;
+  assignedBy: string;
+  assignedAt: string;
+  returnedAt: string;
+  notes: string;
+}
+
+export interface AssetStats {
+  totalAssets: number;
+  assigned: number;
+  available: number;
+  inMaintenance: number;
+  retired: number;
+  byCategory: Array<{ categoryId: string; categoryName: string; count: number }>;
+  warrantyExpiringIn30Days: number;
+  warrantyExpiringIn90Days: number;
+  totalAssetValue: number;
+  totalDepreciatedValue: number;
+  recentAssignments: AssetAssignment[];
+}
+
+export const assetApi = {
+  // Categories
+  createCategory: (data: any) => request<AssetCategory>('/assets/categories', { method: 'POST', body: JSON.stringify(data) }),
+  getCategories: () => request<AssetCategory[]>('/assets/categories'),
+  getCategory: (id: string) => request<AssetCategory>(`/assets/categories/${id}`),
+  updateCategory: (id: string, data: any) => request<AssetCategory>(`/assets/categories/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCategory: (id: string) => request<any>(`/assets/categories/${id}`, { method: 'DELETE' }),
+
+  // Assets
+  createAsset: (data: any) => request<Asset>('/assets', { method: 'POST', body: JSON.stringify(data) }),
+  getAssets: (params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return request<Asset[]>(`/assets${qs}`);
+  },
+  getAsset: (id: string) => request<Asset>(`/assets/${id}`),
+  updateAsset: (id: string, data: any) => request<Asset>(`/assets/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteAsset: (id: string) => request<any>(`/assets/${id}`, { method: 'DELETE' }),
+  getAssetHistory: (id: string) => request<AssetAssignment[]>(`/assets/${id}/history`),
+  getAssetMaintenance: (id: string) => request<any[]>(`/assets/${id}/maintenance`),
+
+  // Stats & Warranty
+  getStats: () => request<AssetStats>('/assets/stats'),
+  getWarrantyExpiring: (days?: number) => request<Asset[]>(`/assets/warranty-expiring${days ? `?days=${days}` : ''}`),
+
+  // Employee assets
+  getEmployeeAssets: (employeeId: string) => request<Asset[]>(`/assets/employee/${employeeId}`),
+  getUnreturnedAssets: (employeeId: string) => request<Asset[]>(`/assets/employee/${employeeId}/unreturned`),
+
+  // Assignment
+  assignAsset: (data: any) => request<Asset>('/assets/assign', { method: 'POST', body: JSON.stringify(data) }),
+  unassignAsset: (data: any) => request<Asset>('/assets/unassign', { method: 'POST', body: JSON.stringify(data) }),
+  transferAsset: (data: any) => request<Asset>('/assets/transfer', { method: 'POST', body: JSON.stringify(data) }),
+  bulkAssign: (data: any) => request<any>('/assets/bulk-assign', { method: 'POST', body: JSON.stringify(data) }),
+  bulkUnassign: (data: any) => request<any>('/assets/bulk-unassign', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Maintenance
+  createMaintenance: (data: any) => request<any>('/assets/maintenance', { method: 'POST', body: JSON.stringify(data) }),
+  updateMaintenance: (id: string, data: any) => request<any>(`/assets/maintenance/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+};
+
+// ── Bench Management API ──
+
+export interface BenchOverview {
+  totalEmployees: number;
+  benchCount: number;
+  allocatedCount: number;
+  partiallyAllocatedCount: number;
+  benchCostDaily: number;
+  benchCostMonthly: number;
+  benchPercentage: number;
+  departmentBreakdown: Array<{ departmentId: string; departmentName: string; benchCount: number; allocatedCount: number; benchCost: number }>;
+  skillBreakdown: Array<{ skill: string; benchCount: number; allocatedCount: number }>;
+  benchEmployees: BenchEmployee[];
+}
+
+export interface BenchEmployee {
+  userId: string;
+  employeeId: string;
+  name: string;
+  departmentId: string;
+  departmentName: string;
+  skills: string[];
+  benchSinceDays: number;
+  dailyCost: number;
+  allocationPercentage: number;
+}
+
+export interface ResourceRequest {
+  _id: string;
+  requestId: string;
+  projectId: string;
+  projectName: string;
+  title: string;
+  requiredSkills: string[];
+  preferredSkills: string[];
+  allocationPercentage: number;
+  startDate: string;
+  endDate: string;
+  priority: 'critical' | 'high' | 'medium' | 'low';
+  status: 'open' | 'matched' | 'partially_filled' | 'closed' | 'cancelled';
+  matchedEmployees: Array<{ userId: string; employeeId: string; name: string; matchScore: number; skills: string[]; status: string }>;
+  notes: string;
+  createdAt: string;
+}
+
+export interface BenchAnalytics {
+  current: { benchCount: number; allocatedCount: number; benchPercentage: number; benchCostDaily: number; benchCostMonthly: number };
+  averageBenchDays: number;
+  topBenchSkills: Array<{ skill: string; count: number }>;
+  departmentBenchPercentages: Array<{ departmentId: string; departmentName: string; benchCount: number; allocatedCount: number; benchPercentage: number }>;
+  trendDataPoints: number;
+}
+
+export const benchApi = {
+  getOverview: () => request<BenchOverview>('/bench/overview'),
+  getEmployees: (params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return request<BenchEmployee[]>(`/bench/employees${qs}`);
+  },
+  getEmployeeStatus: (userId: string) => request<any>(`/bench/employees/${userId}`),
+  getSkills: (skills?: string) => request<any>(`/bench/skills${skills ? '?skills=' + skills : ''}`),
+  getAnalytics: () => request<BenchAnalytics>('/bench/analytics'),
+  getTrends: (params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return request<any[]>(`/bench/trends${qs}`);
+  },
+  takeSnapshot: () => request<any>('/bench/snapshot', { method: 'POST' }),
+  getConfig: () => request<any>('/bench/config'),
+  updateConfig: (data: any) => request<any>('/bench/config', { method: 'PUT', body: JSON.stringify(data) }),
+  createResourceRequest: (data: any) => request<ResourceRequest>('/bench/resource-requests', { method: 'POST', body: JSON.stringify(data) }),
+  getResourceRequests: (params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return request<ResourceRequest[]>(`/bench/resource-requests${qs}`);
+  },
+  getResourceRequest: (id: string) => request<ResourceRequest>(`/bench/resource-requests/${id}`),
+  updateResourceRequest: (id: string, data: any) =>
+    request<ResourceRequest>(`/bench/resource-requests/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  rematchResourceRequest: (id: string) =>
+    request<ResourceRequest>(`/bench/resource-requests/${id}/match`, { method: 'POST' }),
+  updateMatch: (requestId: string, userId: string, data: any) =>
+    request<ResourceRequest>(`/bench/resource-requests/${requestId}/matches/${userId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteResourceRequest: (id: string) =>
+    request<any>(`/bench/resource-requests/${id}`, { method: 'DELETE' }),
+};
+
 export const reportingApi = {
   getVelocity: (projectId: string) =>
     request<{ sprints: VelocitySprint[] }>(`/tasks/reports/${projectId}/velocity`),
@@ -2300,7 +2732,7 @@ export const boardApi = {
   create: (data: Partial<Board>) =>
     request<Board>("/boards", { method: "POST", body: JSON.stringify(data) }),
   createFromTemplate: (data: { projectId: string; templateId: string }) =>
-    request<Board>("/boards/from-template", { method: "POST", body: JSON.stringify(data) }),
+    request<Board>("/boards/from-template", { method: "POST", body: JSON.stringify({ projectId: data.projectId, type: data.templateId }) }),
   update: (id: string, data: Partial<Board>) =>
     request<Board>(`/boards/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   delete: (id: string) =>
@@ -2949,6 +3381,9 @@ export const payrollApi = {
     request(`/goals/${id}/rate`, { method: "POST", body: JSON.stringify(data) }),
   deleteGoal: (id: string) =>
     request(`/goals/${id}`, { method: "DELETE" }),
+  getGoalChildren: (id: string) => request<any[]>(`/goals/${id}/children`),
+  getGoalHierarchy: (id: string) => request<any>(`/goals/${id}/hierarchy`),
+  getOrgGoalTree: () => request<any[]>('/goals-tree'),
 
   // Performance Management: Review Cycles
   createReviewCycle: (data: Record<string, unknown>) =>

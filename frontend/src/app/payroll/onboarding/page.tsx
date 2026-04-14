@@ -119,7 +119,7 @@ export default function OnboardingPage() {
     setLoading(true);
     try {
       const res = await payrollApi.getAllOnboardings();
-      const data = Array.isArray(res.data) ? res.data : res.data?.records ?? [];
+      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.records ?? [];
       setOnboardings(data);
     } catch (err: any) {
       toast.error(err.message || "Failed to load onboarding records");

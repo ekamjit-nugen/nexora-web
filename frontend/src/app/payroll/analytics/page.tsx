@@ -277,7 +277,7 @@ function ChartTooltip({
 // Main component
 // ---------------------------------------------------------------------------
 export default function HRAnalyticsPage() {
-  const { user, loading: authLoading, hasOrgRole } = useAuth();
+  const { user, loading: authLoading, logout, hasOrgRole } = useAuth();
   const router = useRouter();
 
   // Data state
@@ -346,7 +346,7 @@ export default function HRAnalyticsPage() {
       const hcRaw = (headcountRes.data as unknown) ?? [];
       setHeadcountTrends(
         Array.isArray(hcRaw)
-          ? hcRaw.map((p: Record<string, unknown>) => ({
+          ? hcRaw.map((p: any) => ({
               month: String(p.month ?? ""),
               year: Number(p.year ?? 0),
               label: buildLabel(p as HeadcountPoint),
@@ -361,7 +361,7 @@ export default function HRAnalyticsPage() {
       const atRaw = (attritionRes.data as unknown) ?? [];
       setAttritionTrends(
         Array.isArray(atRaw)
-          ? atRaw.map((p: Record<string, unknown>) => ({
+          ? atRaw.map((p: any) => ({
               month: String(p.month ?? ""),
               year: Number(p.year ?? 0),
               label: buildLabel(p as AttritionPoint),
@@ -374,7 +374,7 @@ export default function HRAnalyticsPage() {
       const costRaw = (costRes.data as unknown) ?? [];
       setCostData(
         Array.isArray(costRaw)
-          ? costRaw.map((p: Record<string, unknown>) => ({
+          ? costRaw.map((p: any) => ({
               month: String(p.month ?? ""),
               year: Number(p.year ?? 0),
               label: buildLabel(p as CostPoint),
@@ -387,7 +387,7 @@ export default function HRAnalyticsPage() {
       const attRaw = (attendanceRes.data as unknown) ?? [];
       setAttendanceData(
         Array.isArray(attRaw)
-          ? attRaw.map((p: Record<string, unknown>) => ({
+          ? attRaw.map((p: any) => ({
               month: String(p.month ?? ""),
               year: Number(p.year ?? 0),
               label: buildLabel(p as AttendancePoint),
@@ -406,7 +406,7 @@ export default function HRAnalyticsPage() {
           currentHeadcount: Number(fcRaw.currentHeadcount ?? 0),
           upcomingExits: Number(fcRaw.upcomingExits ?? 0),
           projections: Array.isArray(projRaw)
-            ? projRaw.map((p: Record<string, unknown>) => ({
+            ? projRaw.map((p: any) => ({
                 month: String(p.month ?? ""),
                 year: Number(p.year ?? 0),
                 label: buildLabel(p as ForecastMonth),
@@ -421,7 +421,7 @@ export default function HRAnalyticsPage() {
       const predRaw = (predictionsRes.data as unknown) ?? [];
       setPredictions(
         Array.isArray(predRaw)
-          ? predRaw.map((p: Record<string, unknown>) => ({
+          ? predRaw.map((p: any) => ({
               employeeId: String(p.employeeId ?? ""),
               employeeName: p.employeeName ? String(p.employeeName) : undefined,
               riskScore: Number(p.riskScore ?? 0),
@@ -500,7 +500,7 @@ export default function HRAnalyticsPage() {
   // ---------------------------------------------------------------------------
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
-      <Sidebar />
+      <Sidebar user={user!} onLogout={logout} />
       <main className="flex-1 ml-[260px] p-8">
         {/* ----------------------------------------------------------------- */}
         {/* Header                                                            */}
@@ -641,7 +641,7 @@ export default function HRAnalyticsPage() {
                 />
                 <Tooltip
                   content={({ active, payload, label }) => (
-                    <ChartTooltip active={active} payload={payload as never} label={label} />
+                    <ChartTooltip active={active} payload={payload as never} label={String(label ?? "")} />
                   )}
                 />
                 <Legend
@@ -706,7 +706,7 @@ export default function HRAnalyticsPage() {
                     <ChartTooltip
                       active={active}
                       payload={payload as never}
-                      label={label}
+                      label={String(label ?? "")}
                       formatter={(v: number) => formatPercent(v)}
                     />
                   )}
@@ -745,7 +745,7 @@ export default function HRAnalyticsPage() {
                     <ChartTooltip
                       active={active}
                       payload={payload as never}
-                      label={label}
+                      label={String(label ?? "")}
                       formatter={(v: number) => formatCurrency(v)}
                     />
                   )}
@@ -780,7 +780,7 @@ export default function HRAnalyticsPage() {
                     <ChartTooltip
                       active={active}
                       payload={payload as never}
-                      label={label}
+                      label={String(label ?? "")}
                       formatter={(v: number, name: string) =>
                         name.includes("Overtime") ? `${v.toFixed(1)}h` : formatPercent(v)
                       }

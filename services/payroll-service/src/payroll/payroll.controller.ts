@@ -1200,6 +1200,32 @@ export class PayrollController {
     return { success: true, message: 'Goal deleted successfully', data: result };
   }
 
+  // ── OKR Hierarchy / Alignment ──
+
+  @Get('goals/:id/children')
+  @UseGuards(JwtAuthGuard)
+  async getGoalChildren(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const data = await this.payrollService.getGoalChildren(id, orgId);
+    return { success: true, message: 'Child goals retrieved', data };
+  }
+
+  @Get('goals/:id/hierarchy')
+  @UseGuards(JwtAuthGuard)
+  async getGoalHierarchy(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const data = await this.payrollService.getGoalHierarchy(id, orgId);
+    return { success: true, message: 'Goal hierarchy retrieved', data };
+  }
+
+  @Get('goals-tree')
+  @UseGuards(JwtAuthGuard)
+  async getOrgGoalTree(@Req() req) {
+    const orgId = req.user?.organizationId;
+    const data = await this.payrollService.getOrgGoalTree(orgId);
+    return { success: true, message: 'Organization goal tree retrieved', data };
+  }
+
   // ========================================================================
   // Performance Management: Review Cycles
   // ========================================================================

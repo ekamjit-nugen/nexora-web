@@ -356,7 +356,7 @@ export default function ProjectsPage() {
                       </div>
                     </div>
 
-                    {project.description && <p className="text-xs text-[#64748B] line-clamp-2 mb-3">{project.description}</p>}
+                    {project.description && <p className="text-xs text-[#64748B] line-clamp-2 mb-3">{project.description.replace(/<[^>]*>/g, '')}</p>}
 
                     <div className="flex items-center gap-1.5 mb-3">
                       {methLabel && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-[#EBF5FB] text-[#2E86C1] border border-[#BFDBFE]">{methLabel}</span>}
