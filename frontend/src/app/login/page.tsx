@@ -166,8 +166,10 @@ export default function LoginPage() {
     setEmailLoading(true);
     try {
       await authApi.sendOtp(email);
+      // Single toast — the duplicate ("Check your email for the OTP") was
+      // redundant because the next screen already tells the user to enter
+      // the 6-digit code sent to <email>.
       toast.success("OTP sent to your email");
-      toast.info("Check your email for the OTP");
       setPhase("verify");
       setResendCooldown(60);
     } catch (err: unknown) {
@@ -265,7 +267,6 @@ export default function LoginPage() {
     try {
       await authApi.sendOtp(email);
       toast.success("OTP resent");
-      toast.info("Check your email for the OTP");
       setResendCooldown(60);
       setOtp("");
     } catch (err: unknown) {

@@ -4,7 +4,7 @@ import {
   HttpCode, HttpStatus, Logger,
 } from '@nestjs/common';
 import { PolicyService } from './policy.service';
-import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { JwtAuthGuard, Roles } from './guards/jwt-auth.guard';
 import {
   CreatePolicyDto, UpdatePolicyDto, PolicyQueryDto,
   CreateFromTemplateDto, AcknowledgePolicyDto,
@@ -18,8 +18,12 @@ export class PolicyController {
 
   // ── Policies ──
 
+  // SEC-3: policy writes were completely ungated — any developer could
+  // create/edit/delete org-wide policies. Restricted to admin / hr / owner
+  // (HR writes the policies, admin approves, owner overrides).
   @Post('policies')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'owner', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async createPolicy(@Body() dto: CreatePolicyDto, @Req() req) {
     const policy = await this.policyService.createPolicy(dto, req.user.userId, req.user?.organizationId);
@@ -42,6 +46,7 @@ export class PolicyController {
 
   @Post('policies/from-template/:id')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'owner', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async createFromTemplate(
     @Param('id') id: string,
@@ -101,6 +106,7 @@ export class PolicyController {
 
   @Put('policies/:id')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'owner', 'super_admin')
   async updatePolicy(@Param('id') id: string, @Body() dto: UpdatePolicyDto, @Req() req) {
     const policy = await this.policyService.updatePolicy(id, dto, req.user.userId, req.user?.organizationId);
     return { success: true, message: 'Policy updated successfully', data: policy };
@@ -108,6 +114,7 @@ export class PolicyController {
 
   @Delete('policies/:id')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'owner', 'super_admin')
   async deletePolicy(@Param('id') id: string, @Req() req) {
     const result = await this.policyService.deletePolicy(id, req.user?.organizationId);
     return { success: true, ...result };

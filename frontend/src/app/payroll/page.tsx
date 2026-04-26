@@ -28,12 +28,25 @@ type FilterTab = (typeof FILTER_TABS)[number];
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+// The payroll-service actually stores period + totals as nested objects:
+//   payPeriod: { month, year, startDate, endDate }
+//   summary:   { totalEmployees, totalGross, totalNet, totalDeductions, ... }
+// The old flat fields (month/year/totalGrossPay/totalNetPay) were never
+// populated, so the table rendered "Invalid Date" and "—" for everything.
+// Mirror both shapes here so legacy data and the real API shape both render.
 interface PayrollRun {
   _id: string;
   runNumber?: string;
-  month: number;
-  year: number;
+  month?: number;
+  year?: number;
+  payPeriod?: { month?: number; year?: number; startDate?: string; endDate?: string };
   status: string;
+  summary?: {
+    totalEmployees?: number;
+    totalGross?: number;
+    totalNet?: number;
+    totalDeductions?: number;
+  };
   employeeCount?: number;
   totalGrossPay?: number;
   totalNetPay?: number;
@@ -45,9 +58,10 @@ interface PayrollRun {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const formatCurrency = (paise: number) => {
-  if (typeof paise !== "number" || isNaN(paise)) return "₹0.00";
-  const rupees = paise / 100;
+// Backend stores totals as rupees (integers/decimals), NOT paise. Earlier
+// this divided by 100, turning ₹88,287 into ₹882.87 on screen.
+const formatCurrency = (rupees: number) => {
+  if (typeof rupees !== "number" || isNaN(rupees)) return "₹0.00";
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
@@ -56,7 +70,8 @@ const formatCurrency = (paise: number) => {
   }).format(rupees);
 };
 
-const getMonthLabel = (month: number, year: number) => {
+const getMonthLabel = (month: number | undefined, year: number | undefined) => {
+  if (!month || !year) return "—";
   return new Date(year, month - 1).toLocaleDateString("en-US", {
     month: "long",
     year: "numeric",
@@ -141,14 +156,21 @@ export default function PayrollPage() {
   // Handlers
   // ---------------------------------------------------------------------------
   const handleInitiateRun = async () => {
+    // Guard against double-fire from React strict-mode and rapid double-clicks
+    // before `setInitiating(true)` has flushed. The `initiating` state already
+    // disables the button, but the check below ensures the handler is a no-op
+    // even if a second invocation sneaks in before React re-renders.
+    if (initiating) return;
     setInitiating(true);
     try {
       await payrollApi.initiateRun(newRunMonth, newRunYear);
-      toast.success("Payroll run initiated successfully");
+      // Stable id so duplicate emits replace rather than stack (Sonner
+      // previously rendered this toast 4× under strict-mode in dev).
+      toast.success("Payroll run initiated successfully", { id: "payroll-run-initiated" });
       setShowNewRunModal(false);
       fetchRuns();
     } catch (err: any) {
-      toast.error(err.message || "Failed to initiate payroll run");
+      toast.error(err.message || "Failed to initiate payroll run", { id: "payroll-run-initiated" });
     } finally {
       setInitiating(false);
     }
@@ -210,31 +232,36 @@ export default function PayrollPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] flex flex-col min-h-screen">
+      {/* `min-w-0` is the fix for the classic flex-child "grows to content"
+          bug — without it, flex-1 children expand to whatever their content
+          wants (tables with min-width, long nowrap text, etc.) and push
+          the page sideways on narrow screens. */}
+      <main className="flex-1 min-w-0 md:ml-[260px] flex flex-col min-h-screen">
         {/* ----------------------------------------------------------------- */}
         {/* Header                                                            */}
         {/* ----------------------------------------------------------------- */}
-        <div className="bg-white border-b border-[#E2E8F0] px-8 py-5 flex items-center justify-between sticky top-0 z-20">
-          <div>
-            <h1 className="text-[20px] font-bold text-[#0F172A]">Payroll</h1>
-            <p className="text-[13px] text-[#64748B] mt-0.5">Manage monthly payroll runs</p>
+        <div className="bg-white border-b border-[#E2E8F0] px-4 sm:px-6 md:px-8 py-5 flex items-center justify-between gap-3 sticky top-0 z-20">
+          <div className="min-w-0">
+            <h1 className="text-[20px] font-bold text-[#0F172A] truncate">Payroll</h1>
+            <p className="text-[13px] text-[#64748B] mt-0.5 truncate">Manage monthly payroll runs</p>
           </div>
           <Button
             onClick={() => setShowNewRunModal(true)}
-            className="bg-[#2E86C1] hover:bg-[#2574A9] h-9 gap-2"
+            className="bg-[#2E86C1] hover:bg-[#2574A9] h-9 gap-2 shrink-0 px-3 sm:px-4"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
             </svg>
-            New Payroll Run
+            <span className="hidden sm:inline">New Payroll Run</span>
+            <span className="sm:hidden">New Run</span>
           </Button>
         </div>
 
-        <div className="flex-1 p-8 space-y-6">
+        <div className="flex-1 p-4 sm:p-6 md:p-8 space-y-6">
           {/* --------------------------------------------------------------- */}
-          {/* Stats Row                                                       */}
+          {/* Stats Row — 2 cols on mobile, 4 on md+ so they don't overflow   */}
           {/* --------------------------------------------------------------- */}
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
             {[
               { label: "Total Runs", value: statCounts.total, borderColor: "border-l-[#2E86C1]" },
               { label: "Draft", value: statCounts.draft, borderColor: "border-l-gray-400" },
@@ -309,30 +336,129 @@ export default function PayrollPage() {
               </Button>
             </div>
           ) : (
-            /* Payroll Runs Table */
-            <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm overflow-hidden">
+            /* Payroll Runs — responsive rendering.
+               On md+ screens: 7-column table (scannable, dense).
+               On narrow screens: stacked cards (no hidden horizontal scroll,
+               which users had no way to discover). Both render the exact
+               same data via the `paginatedRuns.map(...)` helper. */
+            <>
+            {/* Mobile / narrow: card layout */}
+            <div className="md:hidden space-y-3">
+              {paginatedRuns.map((run) => {
+                const cfg = statusConfig[run.status] || statusConfig.draft;
+                const isLoading = actionLoading === run._id;
+                const month = run.payPeriod?.month ?? run.month;
+                const year = run.payPeriod?.year ?? run.year;
+                const employees = run.summary?.totalEmployees ?? run.employeeCount;
+                const gross = run.summary?.totalGross ?? run.totalGrossPay ?? run.grossPay ?? 0;
+                const net = run.summary?.totalNet ?? run.totalNetPay ?? run.netPay ?? 0;
+
+                return (
+                  <div
+                    key={run._id}
+                    className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm p-4 space-y-3"
+                  >
+                    {/* Top row — run # + status pill */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[13px] font-semibold text-[#0F172A] truncate">
+                          {run.runNumber || (month && year ? `PR-${year}-${String(month).padStart(2, "0")}` : "—")}
+                        </p>
+                        <p className="text-[12px] text-[#64748B] mt-0.5">{getMonthLabel(month, year)}</p>
+                      </div>
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border shrink-0 ${cfg.color}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+                        {cfg.label}
+                      </span>
+                    </div>
+
+                    {/* Grid of summary stats */}
+                    <div className="grid grid-cols-3 gap-2 pt-1 border-t border-[#F1F5F9]">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-[#94A3B8]">Employees</p>
+                        <p className="text-[13px] font-medium text-[#0F172A] mt-0.5">
+                          {typeof employees === "number" ? employees : "—"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-[#94A3B8]">Gross</p>
+                        <p className="text-[13px] font-medium text-[#0F172A] mt-0.5 truncate">
+                          {gross ? formatCurrency(gross) : "—"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-[#94A3B8]">Net</p>
+                        <p className="text-[13px] font-medium text-[#0F172A] mt-0.5 truncate">
+                          {net ? formatCurrency(net) : "—"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Action buttons — full-width, wrap */}
+                    <div className="flex flex-wrap gap-2 pt-2 border-t border-[#F1F5F9]">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-[12px] flex-1 min-w-[80px]"
+                        onClick={() => router.push(`/payroll/${run._id}`)}
+                      >
+                        View
+                      </Button>
+                      {run.status === "draft" && (
+                        <Button size="sm" className="h-8 text-[12px] flex-1 min-w-[80px] bg-blue-600 hover:bg-blue-700" disabled={isLoading} onClick={() => handleProcess(run._id)}>
+                          {isLoading ? "Processing..." : "Process"}
+                        </Button>
+                      )}
+                      {run.status === "review" && (
+                        <Button size="sm" className="h-8 text-[12px] flex-1 min-w-[80px] bg-emerald-600 hover:bg-emerald-700" disabled={isLoading} onClick={() => handleStatusChange(run._id, "approved")}>
+                          {isLoading ? "Approving..." : "Approve"}
+                        </Button>
+                      )}
+                      {run.status === "approved" && (
+                        <Button size="sm" className="h-8 text-[12px] flex-1 min-w-[80px] bg-purple-600 hover:bg-purple-700" disabled={isLoading} onClick={() => handleStatusChange(run._id, "finalized")}>
+                          {isLoading ? "Finalizing..." : "Finalize"}
+                        </Button>
+                      )}
+                      {run.status === "finalized" && (
+                        <>
+                          <Button size="sm" className="h-8 text-[12px] flex-1 min-w-[80px] bg-green-600 hover:bg-green-700" disabled={isLoading} onClick={() => handleStatusChange(run._id, "paid")}>
+                            {isLoading ? "…" : "Mark Paid"}
+                          </Button>
+                          <Button variant="outline" size="sm" className="h-8 text-[12px] flex-1 min-w-[120px]" disabled={isLoading} onClick={() => handleGeneratePayslips(run._id)}>
+                            {isLoading ? "…" : "Generate Payslips"}
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* md+ : Table layout */}
+            <div className="hidden md:block bg-white rounded-xl border border-[#E2E8F0] shadow-sm overflow-hidden">
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
-                    <th className="text-left text-[12px] font-semibold text-[#64748B] uppercase tracking-wider px-5 py-3">
+                    <th className="text-left text-[12px] font-semibold text-[#64748B] uppercase tracking-wider px-4 sm:px-5 py-3 whitespace-nowrap">
                       Run #
                     </th>
-                    <th className="text-left text-[12px] font-semibold text-[#64748B] uppercase tracking-wider px-5 py-3">
+                    <th className="text-left text-[12px] font-semibold text-[#64748B] uppercase tracking-wider px-4 sm:px-5 py-3 whitespace-nowrap">
                       Period
                     </th>
-                    <th className="text-left text-[12px] font-semibold text-[#64748B] uppercase tracking-wider px-5 py-3">
+                    <th className="text-left text-[12px] font-semibold text-[#64748B] uppercase tracking-wider px-4 sm:px-5 py-3 whitespace-nowrap">
                       Status
                     </th>
-                    <th className="text-right text-[12px] font-semibold text-[#64748B] uppercase tracking-wider px-5 py-3">
+                    <th className="text-right text-[12px] font-semibold text-[#64748B] uppercase tracking-wider px-4 sm:px-5 py-3 whitespace-nowrap">
                       Employees
                     </th>
-                    <th className="text-right text-[12px] font-semibold text-[#64748B] uppercase tracking-wider px-5 py-3">
+                    <th className="text-right text-[12px] font-semibold text-[#64748B] uppercase tracking-wider px-4 sm:px-5 py-3 whitespace-nowrap">
                       Gross Pay
                     </th>
-                    <th className="text-right text-[12px] font-semibold text-[#64748B] uppercase tracking-wider px-5 py-3">
+                    <th className="text-right text-[12px] font-semibold text-[#64748B] uppercase tracking-wider px-4 sm:px-5 py-3 whitespace-nowrap">
                       Net Pay
                     </th>
-                    <th className="text-right text-[12px] font-semibold text-[#64748B] uppercase tracking-wider px-5 py-3">
+                    <th className="text-right text-[12px] font-semibold text-[#64748B] uppercase tracking-wider px-4 sm:px-5 py-3 whitespace-nowrap">
                       Actions
                     </th>
                   </tr>
@@ -341,8 +467,14 @@ export default function PayrollPage() {
                   {paginatedRuns.map((run) => {
                     const cfg = statusConfig[run.status] || statusConfig.draft;
                     const isLoading = actionLoading === run._id;
-                    const gross = run.totalGrossPay ?? run.grossPay ?? 0;
-                    const net = run.totalNetPay ?? run.netPay ?? 0;
+                    // Prefer the nested `payPeriod`/`summary` shape (real API);
+                    // fall back to legacy flat fields so any older records still
+                    // render.
+                    const month = run.payPeriod?.month ?? run.month;
+                    const year = run.payPeriod?.year ?? run.year;
+                    const employees = run.summary?.totalEmployees ?? run.employeeCount;
+                    const gross = run.summary?.totalGross ?? run.totalGrossPay ?? run.grossPay ?? 0;
+                    const net = run.summary?.totalNet ?? run.totalNetPay ?? run.netPay ?? 0;
 
                     return (
                       <tr
@@ -350,17 +482,17 @@ export default function PayrollPage() {
                         className="border-b border-[#E2E8F0] last:border-b-0 hover:bg-[#F8FAFC] transition-colors"
                       >
                         {/* Run # */}
-                        <td className="px-5 py-4 text-[13px] font-medium text-[#0F172A]">
-                          {run.runNumber || `PR-${run.year}-${String(run.month).padStart(2, "0")}`}
+                        <td className="px-4 sm:px-5 py-4 text-[13px] font-medium text-[#0F172A] whitespace-nowrap">
+                          {run.runNumber || (month && year ? `PR-${year}-${String(month).padStart(2, "0")}` : "—")}
                         </td>
 
                         {/* Period */}
-                        <td className="px-5 py-4 text-[13px] text-[#334155]">
-                          {getMonthLabel(run.month, run.year)}
+                        <td className="px-4 sm:px-5 py-4 text-[13px] text-[#334155] whitespace-nowrap">
+                          {getMonthLabel(month, year)}
                         </td>
 
                         {/* Status Badge */}
-                        <td className="px-5 py-4">
+                        <td className="px-4 sm:px-5 py-4 whitespace-nowrap">
                           <span
                             className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[12px] font-medium border ${cfg.color}`}
                           >
@@ -370,23 +502,23 @@ export default function PayrollPage() {
                         </td>
 
                         {/* Employees */}
-                        <td className="px-5 py-4 text-[13px] text-[#334155] text-right">
-                          {run.employeeCount ?? "—"}
+                        <td className="px-4 sm:px-5 py-4 text-[13px] text-[#334155] text-right whitespace-nowrap">
+                          {typeof employees === "number" ? employees : "—"}
                         </td>
 
                         {/* Gross Pay */}
-                        <td className="px-5 py-4 text-[13px] text-[#334155] text-right font-medium">
+                        <td className="px-4 sm:px-5 py-4 text-[13px] text-[#334155] text-right font-medium whitespace-nowrap">
                           {gross ? formatCurrency(gross) : "—"}
                         </td>
 
                         {/* Net Pay */}
-                        <td className="px-5 py-4 text-[13px] text-[#334155] text-right font-medium">
+                        <td className="px-4 sm:px-5 py-4 text-[13px] text-[#334155] text-right font-medium whitespace-nowrap">
                           {net ? formatCurrency(net) : "—"}
                         </td>
 
                         {/* Actions */}
-                        <td className="px-5 py-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
+                        <td className="px-4 sm:px-5 py-4 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1.5 sm:gap-2">
                             <Button
                               variant="outline"
                               size="sm"
@@ -481,6 +613,7 @@ export default function PayrollPage() {
                 </div>
               )}
             </div>
+            </>
           )}
         </div>
 

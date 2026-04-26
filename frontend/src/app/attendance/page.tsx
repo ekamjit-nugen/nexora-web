@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { attendanceApi, hrApi, policyApi, Attendance, Employee, Policy } from "@/lib/api";
+import { attendanceApi, hrApi, policyApi, Attendance, Employee, Policy, Holiday } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,7 +22,7 @@ interface TodayData {
 }
 
 export default function AttendancePage() {
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading, logout, orgRole } = useAuth();
   const router = useRouter();
 
   const [today, setToday] = useState<TodayData>({ checkedIn: false, checkedOut: false, record: null });
@@ -36,7 +36,7 @@ export default function AttendancePage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [elapsed, setElapsed] = useState("00:00:00");
   const [showManualEntry, setShowManualEntry] = useState(false);
-  const [activeTab, setActiveTab] = useState<"my" | "all" | "approvals">("my");
+  const [activeTab, setActiveTab] = useState<"my" | "all" | "approvals" | "holidays">("my");
   const [manualForm, setManualForm] = useState({
     date: new Date().toISOString().split("T")[0],
     checkInTime: "09:00",
@@ -46,9 +46,21 @@ export default function AttendancePage() {
   });
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const isAdmin = user?.roles?.some(r => ["admin", "super_admin"].includes(r));
-  const isHR = user?.roles?.some(r => ["hr"].includes(r));
+  // Top-level platform roles vs per-tenant orgRole. Admin/owner at the
+  // org level (or platform admin) drives "manage attendance, don't track
+  // it" — so they get the approvals UI but no Clock In/Out card. HR is
+  // a manager role too BUT we let HR clock in (they're individual
+  // contributors that also approve), matching the backend's
+  // EXCLUDED_ORG_ROLES which only lists admin + owner.
+  const isAdmin =
+    !!user?.roles?.some((r) => ["admin", "super_admin"].includes(r)) ||
+    orgRole === "admin" ||
+    orgRole === "owner";
+  const isHR = !!user?.roles?.some((r) => ["hr"].includes(r)) || orgRole === "hr";
   const canManage = isAdmin || isHR;
+  // Non-trackers manage attendance instead of clocking in. Used to hide
+  // the personal clock-in card and the manual-entry CTA.
+  const canClockIn = !isAdmin;
 
   useEffect(() => {
     if (!authLoading && !user) router.push("/login");
@@ -135,11 +147,45 @@ export default function AttendancePage() {
     }
   }, [canManage, isAdmin, loading]);
 
+  // Best-effort browser geolocation. Wraps navigator.geolocation in a
+  // promise with a hard 7-second cap — some browsers (especially
+  // Firefox on hardware without GPS) hang the prompt indefinitely
+  // while the permission dialog sits, so falling back to "no location"
+  // after 7s keeps the clock-in interaction snappy. Resolves null on
+  // any failure (permission denied, timeout, no support); the backend
+  // stores nulls cleanly.
+  const captureLocation = (): Promise<{ latitude: number; longitude: number; accuracy?: number } | null> => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(null), 7000);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          clearTimeout(timer);
+          resolve({
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+          });
+        },
+        () => {
+          clearTimeout(timer);
+          resolve(null);
+        },
+        { enableHighAccuracy: true, timeout: 6000, maximumAge: 60_000 },
+      );
+    });
+  };
+
   const handleCheckIn = async () => {
     try {
       setActionLoading(true);
-      await attendanceApi.checkIn();
-      toast.success("Clocked in successfully!");
+      const location = await captureLocation();
+      await attendanceApi.checkIn(location ? { location } : undefined);
+      if (location) {
+        toast.success(`Clocked in (location captured, ±${Math.round(location.accuracy || 0)}m)`);
+      } else {
+        toast.success("Clocked in (no location — permission denied or unavailable)");
+      }
       await fetchData();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Clock-in failed");
@@ -149,7 +195,8 @@ export default function AttendancePage() {
   const handleCheckOut = async () => {
     try {
       setActionLoading(true);
-      await attendanceApi.checkOut();
+      const location = await captureLocation();
+      await attendanceApi.checkOut(location ? { location } : undefined);
 
       // Check if total hours meet policy minimum
       const updatedToday = await attendanceApi.getToday().catch(() => ({ data: null }));
@@ -242,6 +289,9 @@ export default function AttendancePage() {
     ...(canManage ? [
       { key: "all" as const, label: "All Employees" },
       { key: "approvals" as const, label: `Pending Approvals${stats.pendingApprovals > 0 ? ` (${stats.pendingApprovals})` : ""}` },
+      // Holiday calendar is admin-write, open-read. Lives here as a tab
+      // so it's one click from the attendance flow that consumes it.
+      { key: "holidays" as const, label: "Holidays" },
     ] : []),
   ];
 
@@ -252,7 +302,7 @@ export default function AttendancePage() {
     <RouteGuard minOrgRole="member">
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] p-8">
+      <main className="flex-1 min-w-0 md:ml-[260px] p-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -448,7 +498,14 @@ export default function AttendancePage() {
               </div>
             )}
 
+            {/* Holiday calendar tab — conditionally rendered before the
+                records table to keep the table markup untouched. */}
+            {activeTab === "holidays" && (
+              <HolidayCalendarTab canWrite={!!canManage} />
+            )}
+
             {/* Records Table */}
+            {activeTab !== "holidays" && (
             <Card className="border-0 shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -460,6 +517,7 @@ export default function AttendancePage() {
                       <TH>Clock Out</TH>
                       <TH>Duration</TH>
                       <TH>Method</TH>
+                      <TH>Source</TH>
                       <TH>Type</TH>
                       {activeTab === "approvals" ? <TH>Actions</TH> : <TH>Approval</TH>}
                     </tr>
@@ -467,7 +525,7 @@ export default function AttendancePage() {
                   <tbody>
                     {currentRecords.length === 0 ? (
                       <tr>
-                        <td colSpan={showEmployeeCol ? 8 : 7} className="text-center py-12 text-[13px] text-[#94A3B8]">
+                        <td colSpan={showEmployeeCol ? 9 : 8} className="text-center py-12 text-[13px] text-[#94A3B8]">
                           {activeTab === "approvals" ? "No pending approvals" : "No attendance records"}
                         </td>
                       </tr>
@@ -483,8 +541,31 @@ export default function AttendancePage() {
                             {employeeMap[r.employeeId] || r.employeeId?.slice(-6) || "—"}
                           </td>
                         )}
-                        <td className="px-4 py-3 text-[13px] font-medium text-[#0F172A]">{formatDate(r.date)}</td>
-                        <td className="px-4 py-3 text-[13px] text-[#334155]">{formatTime(r.checkInTime)}</td>
+                        <td className="px-4 py-3 text-[13px] font-medium text-[#0F172A]">
+                          <div className="flex items-center gap-1.5">
+                            <span>{formatDate(r.date)}</span>
+                            {/* Night-shift chip — resolved at clock-in
+                                from the employee's applicable policy.
+                                Silent until #9; surface it so the row
+                                is visually distinct (matters for OT
+                                premium clarity). */}
+                            {r.isNightShift && (
+                              <span title="This record is on a night shift — OT hours get the night multiplier" className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                🌙 Night
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-[13px] text-[#334155]">
+                          <div className="flex items-center gap-1.5">
+                            <span>{formatTime(r.checkInTime)}</span>
+                            {r.isLateArrival && (r.lateByMinutes ?? 0) > 0 && (
+                              <span title={`Late by ${r.lateByMinutes} min vs shift start`} className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                                +{r.lateByMinutes}m late
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-4 py-3 text-[13px] text-[#334155]">
                           {isOpen ? (
                             <span className="text-xs text-emerald-600 font-medium flex items-center gap-1">
@@ -503,6 +584,36 @@ export default function AttendancePage() {
                         </td>
                         <td className="px-4 py-3">
                           <span className="text-xs text-[#64748B] capitalize">{r.checkInMethod || "web"}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          {/* Source = IP + geolocation captured at clock-in.
+                              IP comes from the gateway (always); location
+                              from navigator.geolocation (only when the user
+                              grants permission). The map pin links to a
+                              Google Maps lookup when present, otherwise
+                              we badge "no location" so admins can see who
+                              declined to share. */}
+                          <div className="flex flex-col gap-0.5">
+                            {r.checkInIP ? (
+                              <span title={`Check-in IP: ${r.checkInIP}`} className="text-[11px] font-mono text-[#64748B] truncate max-w-[120px]">{r.checkInIP}</span>
+                            ) : (
+                              <span className="text-[11px] text-[#CBD5E1]">—</span>
+                            )}
+                            {r.checkInLocation ? (
+                              <a
+                                href={`https://maps.google.com/?q=${r.checkInLocation.latitude},${r.checkInLocation.longitude}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={`${r.checkInLocation.latitude.toFixed(5)}, ${r.checkInLocation.longitude.toFixed(5)}${r.checkInLocation.accuracy ? ` (±${Math.round(r.checkInLocation.accuracy)}m)` : ""}`}
+                                className="text-[10px] text-[#2E86C1] hover:underline flex items-center gap-0.5"
+                              >
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                                {r.checkInLocation.latitude.toFixed(3)}, {r.checkInLocation.longitude.toFixed(3)}
+                              </a>
+                            ) : (
+                              <span title="Location not captured (permission denied or unavailable)" className="text-[10px] text-[#CBD5E1]">no location</span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           {r.entryType === "manual" ? (
@@ -543,6 +654,7 @@ export default function AttendancePage() {
                 </table>
               </div>
             </Card>
+            )}
           </>
         )}
       </main>
@@ -561,5 +673,214 @@ function Spinner() {
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
     </svg>
+  );
+}
+
+/**
+ * HolidayCalendarTab — admin declares holidays that drive LOP + OT
+ * classification downstream. Year picker filters; add-row inline;
+ * delete is inline. Deliberately no bulk-import yet — most orgs declare
+ * 8-12 holidays a year, so form friction isn't worth the complexity.
+ */
+function HolidayCalendarTab({ canWrite }: { canWrite: boolean }) {
+  const currentYear = new Date().getFullYear();
+  const [year, setYear] = useState<number>(currentYear);
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState<{ date: string; name: string; type: Holiday["type"]; description: string }>({
+    date: "",
+    name: "",
+    type: "national",
+    description: "",
+  });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await attendanceApi.listHolidays(year);
+      setHolidays((res?.data as Holiday[] | undefined) ?? []);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to load holidays";
+      toast.error(msg);
+    } finally {
+      setLoading(false);
+    }
+  }, [year]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const addHoliday = async () => {
+    if (!form.date) { toast.error("Date is required"); return; }
+    if (!form.name.trim()) { toast.error("Name is required"); return; }
+    setCreating(true);
+    try {
+      await attendanceApi.createHoliday({
+        date: form.date,
+        name: form.name.trim(),
+        type: form.type,
+        description: form.description.trim() || undefined,
+      });
+      toast.success("Holiday added");
+      setForm({ date: "", name: "", type: "national", description: "" });
+      await load();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to add holiday";
+      toast.error(msg);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const deleteHoliday = async (h: Holiday) => {
+    if (!window.confirm(`Delete holiday "${h.name}" on ${h.date.slice(0, 10)}?`)) return;
+    try {
+      await attendanceApi.deleteHoliday(h._id);
+      toast.success("Holiday deleted");
+      await load();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to delete holiday";
+      toast.error(msg);
+    }
+  };
+
+  // Year selector range: prior 2 → next 2 years. Covers planning + audit.
+  const years = [currentYear - 2, currentYear - 1, currentYear, currentYear + 1, currentYear + 2];
+
+  const typeColor: Record<Holiday["type"], string> = {
+    national: "bg-blue-50 text-blue-700 border-blue-200",
+    regional: "bg-violet-50 text-violet-700 border-violet-200",
+    optional: "bg-amber-50 text-amber-700 border-amber-200",
+    bank: "bg-slate-50 text-slate-700 border-slate-200",
+    other: "bg-gray-50 text-gray-600 border-gray-200",
+  };
+
+  return (
+    <Card className="border-0 shadow-sm overflow-hidden">
+      <div className="p-5 border-b border-[#F1F5F9] flex items-center justify-between">
+        <div>
+          <h3 className="text-[14px] font-semibold text-[#0F172A]">Holiday calendar</h3>
+          <p className="text-[12px] text-[#64748B] mt-0.5">
+            Declared holidays reclassify absent-on-holiday records as paid
+            (no LOP) and route OT hours to the holiday multiplier.
+          </p>
+        </div>
+        <select
+          value={year}
+          onChange={(e) => setYear(Number(e.target.value))}
+          className="h-8 rounded-lg border border-[#E2E8F0] bg-white px-2 text-[13px]"
+        >
+          {years.map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+
+      {canWrite && (
+        <div className="p-5 border-b border-[#F1F5F9] bg-[#FAFBFC]">
+          <div className="grid grid-cols-12 gap-2 items-end">
+            <div className="col-span-3">
+              <label className="block text-[11px] text-[#64748B] mb-1">Date</label>
+              <input
+                type="date"
+                value={form.date}
+                onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+                className="w-full h-9 rounded-md border border-[#E2E8F0] bg-white px-2 text-[13px]"
+              />
+            </div>
+            <div className="col-span-4">
+              <label className="block text-[11px] text-[#64748B] mb-1">Name</label>
+              <input
+                type="text"
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                placeholder="e.g. Republic Day"
+                className="w-full h-9 rounded-md border border-[#E2E8F0] bg-white px-2 text-[13px]"
+              />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-[11px] text-[#64748B] mb-1">Type</label>
+              <select
+                value={form.type}
+                onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as Holiday["type"] }))}
+                className="w-full h-9 rounded-md border border-[#E2E8F0] bg-white px-2 text-[13px]"
+              >
+                <option value="national">National</option>
+                <option value="regional">Regional</option>
+                <option value="optional">Optional</option>
+                <option value="bank">Bank</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-[11px] text-[#64748B] mb-1">Note (optional)</label>
+              <input
+                type="text"
+                value={form.description}
+                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                placeholder="Description"
+                className="w-full h-9 rounded-md border border-[#E2E8F0] bg-white px-2 text-[13px]"
+              />
+            </div>
+            <div className="col-span-1">
+              <Button onClick={addHoliday} disabled={creating} className="h-9 w-full text-[13px] bg-[#2E86C1] hover:bg-[#2471A3]">
+                {creating ? "Adding…" : "Add"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div>
+        {loading ? (
+          <div className="p-8 text-center text-[#94A3B8] text-[13px]">Loading…</div>
+        ) : holidays.length === 0 ? (
+          <div className="p-8 text-center text-[#94A3B8] text-[13px]">
+            No holidays declared for {year}.
+          </div>
+        ) : (
+          <table className="w-full text-[13px]">
+            <thead>
+              <tr className="border-b border-[#F1F5F9] bg-[#FAFBFC]">
+                <th className="px-5 py-2.5 text-left text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Date</th>
+                <th className="px-5 py-2.5 text-left text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Day</th>
+                <th className="px-5 py-2.5 text-left text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Name</th>
+                <th className="px-5 py-2.5 text-left text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Type</th>
+                <th className="px-5 py-2.5 text-left text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Note</th>
+                {canWrite && <th className="px-5 py-2.5 text-right text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Action</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {holidays.map((h) => {
+                const d = new Date(h.date);
+                const dayOfWeek = d.toLocaleDateString("en-IN", { weekday: "short", timeZone: "UTC" });
+                const dateStr = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+                return (
+                  <tr key={h._id} className="border-b border-[#F8FAFC] hover:bg-[#FAFBFC]">
+                    <td className="px-5 py-3 font-medium text-[#0F172A]">{dateStr}</td>
+                    <td className="px-5 py-3 text-[#64748B]">{dayOfWeek}</td>
+                    <td className="px-5 py-3 text-[#0F172A]">{h.name}</td>
+                    <td className="px-5 py-3">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium border ${typeColor[h.type]}`}>
+                        {h.type}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 text-[#64748B]">{h.description || "—"}</td>
+                    {canWrite && (
+                      <td className="px-5 py-3 text-right">
+                        <button
+                          onClick={() => deleteHoliday(h)}
+                          className="text-[12px] font-medium text-red-600 hover:text-red-700"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </Card>
   );
 }

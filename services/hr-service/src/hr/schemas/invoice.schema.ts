@@ -48,6 +48,25 @@ export interface IInvoice extends Document {
   isDeleted: boolean;
   createdBy?: string;
   updatedBy?: string;
+  // Lifecycle tracking — populated by InvoiceLifecycleService daily.
+  // Drives the colored badges on the invoice list, the dashboard stats
+  // cards, and the rules for when reminder notifications fire.
+  // Computed as a function of (dueDate, status, amountPaid):
+  //   • upcoming    : dueDate > today + 7 days, unpaid
+  //   • due_soon    : dueDate within 2..7 days, unpaid
+  //   • due_today   : dueDate is today or tomorrow, unpaid
+  //   • overdue     : dueDate < today, unpaid (also flips status → overdue)
+  //   • paid        : amountPaid >= total
+  // null when invoice is draft/cancelled (lifecycle doesn't apply).
+  lifecycleState?: 'upcoming' | 'due_soon' | 'due_today' | 'overdue' | 'paid' | null;
+  daysUntilDue?: number;        // negative ⇒ overdue
+  overdueDays?: number;         // 0 if not overdue
+  lastLifecycleScanAt?: Date;
+  // Reminder bookkeeping — incremented on every send (manual or automated).
+  // The cron uses lastReminderSentAt to throttle weekly nudges so a single
+  // overdue invoice doesn't spam the creator's inbox every day.
+  lastReminderSentAt?: Date | null;
+  reminderCount?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -116,6 +135,16 @@ export const InvoiceSchema = new Schema<IInvoice>(
     isDeleted: { type: Boolean, default: false },
     createdBy: { type: String, default: null },
     updatedBy: { type: String, default: null },
+    lifecycleState: {
+      type: String,
+      enum: ['upcoming', 'due_soon', 'due_today', 'overdue', 'paid', null],
+      default: null,
+    },
+    daysUntilDue: { type: Number, default: null },
+    overdueDays: { type: Number, default: 0 },
+    lastLifecycleScanAt: { type: Date, default: null },
+    lastReminderSentAt: { type: Date, default: null },
+    reminderCount: { type: Number, default: 0 },
   },
   { timestamps: true },
 );
@@ -125,3 +154,6 @@ InvoiceSchema.index({ isDeleted: 1, status: 1 });
 InvoiceSchema.index({ dueDate: 1, status: 1 });
 InvoiceSchema.index({ clientId: 1, isDeleted: 1 });
 InvoiceSchema.index({ invoiceNumber: 'text' });
+// Lifecycle dashboard query: "show me all overdue invoices for this org,
+// newest dueDate first" — heavily used by the Invoices page stats cards.
+InvoiceSchema.index({ organizationId: 1, lifecycleState: 1, dueDate: -1 });

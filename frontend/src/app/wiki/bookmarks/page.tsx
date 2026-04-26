@@ -42,7 +42,7 @@ export default function WikiBookmarksPage() {
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="ml-[260px] p-8">
+      <main className="md:ml-[260px] p-8">
         <h1 className="text-2xl font-bold text-[#0F172A] mb-2">Bookmarks</h1>
         <p className="text-sm text-[#64748B] mb-6">{bookmarks.length} saved page{bookmarks.length !== 1 ? "s" : ""}</p>
 

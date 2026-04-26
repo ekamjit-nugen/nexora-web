@@ -66,8 +66,11 @@ function InviteFlow() {
     const sendInitialOtp = async () => {
       try {
         await authApi.sendOtp(email);
+        // Single toast — drop the stale "DEV: OTP is 000000" hint. The OTP
+        // is real (random 6-digit) and lands in MailHog; the dev hint was
+        // misleading users into typing 000000 forever. Login page dropped
+        // this back when; keep register/invite in sync.
         toast.success("Verification code sent to your email");
-        toast.info("DEV: OTP is 000000");
         setPhase("otp");
         setResendCooldown(60);
       } catch (err: unknown) {
@@ -120,7 +123,6 @@ function InviteFlow() {
     try {
       await authApi.sendOtp(email);
       toast.success("OTP resent to your email");
-      toast.info("DEV: OTP is 000000");
       setResendCooldown(60);
       setOtp("");
     } catch (err: unknown) {

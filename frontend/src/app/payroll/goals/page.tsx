@@ -48,7 +48,11 @@ interface KeyResult {
   targetValue?: number;
   currentValue?: number;
   unit?: string;
+  // Legacy field — backend never populated it. Kept for back-compat
+  // with any older records; real status lives in `status`.
   achieved?: boolean;
+  // Backend enum: 'not_started' | 'in_progress' | 'achieved' | 'missed'
+  status?: string;
   progress?: number;
 }
 
@@ -59,12 +63,18 @@ interface CheckIn {
   updatedBy?: string;
 }
 
-interface Rating {
-  rating: number;
-  comments?: string;
-  ratedBy?: string;
-  ratedAt?: string;
-}
+// Backend stores these as scalar numbers (see goal.schema.ts).
+// Old frontend modelled them as `{rating, comments, ratedBy, ratedAt}`
+// objects — reading `.rating.rating` crashed the page. Kept the type
+// permissive so legacy server responses (if any wrap back up) still
+// render; helper below normalises to a number either way.
+type Rating = number | { rating?: number; comments?: string; ratedBy?: string; ratedAt?: string };
+
+const ratingValue = (r?: Rating): number | undefined => {
+  if (r === undefined || r === null) return undefined;
+  if (typeof r === "number") return r;
+  return typeof r.rating === "number" ? r.rating : undefined;
+};
 
 interface Goal {
   _id: string;
@@ -164,12 +174,24 @@ export default function GoalsPage() {
   // ---------------------------------------------------------------------------
   // Data fetching
   // ---------------------------------------------------------------------------
+  // Backend `getAllGoals` returns `{ records, total, page, limit, totalPages }`
+  // inside `data`. The `.goals` alias never existed — old fallbacks returned
+  // `[]` silently. `getMyGoals` returns a bare array. Unwrap both shapes
+  // defensively so either contract works.
+  const unwrapGoalsList = (res: any): Goal[] => {
+    const d = res?.data;
+    if (Array.isArray(d)) return d;
+    if (Array.isArray(d?.records)) return d.records;
+    if (Array.isArray(d?.items)) return d.items;
+    if (Array.isArray(d?.goals)) return d.goals; // legacy alias
+    return [];
+  };
+
   const fetchMyGoals = useCallback(async () => {
     if (!user) return;
     try {
       const res = await payrollApi.getMyGoals();
-      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.goals ?? [];
-      setMyGoals(data);
+      setMyGoals(unwrapGoalsList(res));
     } catch (err: any) {
       toast.error(err.message || "Failed to load your goals");
     }
@@ -179,8 +201,7 @@ export default function GoalsPage() {
     if (!user || !isManager) return;
     try {
       const res = await payrollApi.getAllGoals();
-      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.goals ?? [];
-      setTeamGoals(data);
+      setTeamGoals(unwrapGoalsList(res));
     } catch (err: any) {
       toast.error(err.message || "Failed to load team goals");
     }
@@ -192,8 +213,7 @@ export default function GoalsPage() {
     // Fetch all goals for parent selector
     try {
       const allRes = await payrollApi.getAllGoals({ limit: "100" });
-      const allData = Array.isArray((allRes as any).data) ? (allRes as any).data : [];
-      setAllGoalsForParent(allData);
+      setAllGoalsForParent(unwrapGoalsList(allRes));
     } catch { /* silent */ }
     setLoading(false);
   }, [fetchMyGoals, fetchTeamGoals]);
@@ -364,7 +384,7 @@ export default function GoalsPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] flex flex-col min-h-screen">
+      <main className="flex-1 min-w-0 md:ml-[260px] flex flex-col min-h-screen">
         {/* Header */}
         <div className="bg-white border-b border-[#E2E8F0] px-8 py-5 flex items-center justify-between sticky top-0 z-20">
           <div>
@@ -449,7 +469,12 @@ export default function GoalsPage() {
               {activeGoals.map((goal) => {
                 const progress = goal.progress || 0;
                 const keyResultCount = goal.keyResults?.length || 0;
-                const achievedKeyResults = goal.keyResults?.filter((kr) => kr.achieved).length || 0;
+                // Backend stores KeyResult status as an enum
+                // ('not_started'|'in_progress'|'achieved'|'missed'); the old
+                // frontend read a non-existent `kr.achieved` boolean so
+                // "N of M achieved" always rendered 0.
+                const achievedKeyResults =
+                  goal.keyResults?.filter((kr: any) => kr.achieved === true || kr.status === "achieved").length || 0;
                 const expanded = expandedGoalId === goal._id;
 
                 return (
@@ -538,7 +563,7 @@ export default function GoalsPage() {
                                 <div key={idx} className="bg-white border border-[#E2E8F0] rounded-lg p-3">
                                   <div className="flex items-start justify-between gap-2 mb-1">
                                     <p className="text-[13px] font-medium text-[#0F172A]">{kr.title}</p>
-                                    {kr.achieved && (
+                                    {((kr as any).achieved === true || kr.status === "achieved") && (
                                       <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
                                         Achieved
                                       </span>
@@ -578,28 +603,40 @@ export default function GoalsPage() {
                           </div>
                         )}
 
-                        {(goal.selfRating || goal.managerRating) && (
-                          <div className="grid grid-cols-2 gap-3">
-                            {goal.selfRating && (
-                              <div className="bg-white border border-[#E2E8F0] rounded-lg p-3">
-                                <h4 className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider mb-1">Self Rating</h4>
-                                <p className="text-[18px] font-bold text-[#0F172A]">{goal.selfRating.rating} / 5</p>
-                                {goal.selfRating.comments && (
-                                  <p className="text-[12px] text-[#64748B] mt-1">{goal.selfRating.comments}</p>
-                                )}
-                              </div>
-                            )}
-                            {goal.managerRating && (
-                              <div className="bg-white border border-[#E2E8F0] rounded-lg p-3">
-                                <h4 className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider mb-1">Manager Rating</h4>
-                                <p className="text-[18px] font-bold text-[#0F172A]">{goal.managerRating.rating} / 5</p>
-                                {goal.managerRating.comments && (
-                                  <p className="text-[12px] text-[#64748B] mt-1">{goal.managerRating.comments}</p>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
+                        {(() => {
+                          // Backend stores selfRating/managerRating as scalar numbers;
+                          // older responses wrapped them in objects. `ratingValue` handles
+                          // both shapes so the page doesn't crash on either.
+                          const selfN = ratingValue(goal.selfRating);
+                          const mgrN = ratingValue(goal.managerRating);
+                          const selfComments =
+                            typeof goal.selfRating === "object" ? goal.selfRating?.comments : undefined;
+                          const mgrComments =
+                            typeof goal.managerRating === "object" ? goal.managerRating?.comments : undefined;
+                          if (selfN === undefined && mgrN === undefined) return null;
+                          return (
+                            <div className="grid grid-cols-2 gap-3">
+                              {selfN !== undefined && (
+                                <div className="bg-white border border-[#E2E8F0] rounded-lg p-3">
+                                  <h4 className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider mb-1">Self Rating</h4>
+                                  <p className="text-[18px] font-bold text-[#0F172A]">{selfN} / 5</p>
+                                  {selfComments && (
+                                    <p className="text-[12px] text-[#64748B] mt-1">{selfComments}</p>
+                                  )}
+                                </div>
+                              )}
+                              {mgrN !== undefined && (
+                                <div className="bg-white border border-[#E2E8F0] rounded-lg p-3">
+                                  <h4 className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider mb-1">Manager Rating</h4>
+                                  <p className="text-[18px] font-bold text-[#0F172A]">{mgrN} / 5</p>
+                                  {mgrComments && (
+                                    <p className="text-[12px] text-[#64748B] mt-1">{mgrComments}</p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                   </div>

@@ -109,10 +109,14 @@ export const ExpenseClaimSchema = new Schema<IExpenseClaim>(
     ],
     submittedAt: { type: Date, default: null },
     paidAt: { type: Date, default: null },
+    // QA finding Payroll-6: Mongoose rejected new expense claims because
+    // `default: null` isn't a member of the enum, so create-claim always
+    // 500'd. Make the field optional (no default at all) — it gets set
+    // later when the claim is actually paid.
     paidVia: {
       type: String,
       enum: ['payroll', 'separate_transfer'],
-      default: null,
+      required: false,
     },
     payrollRunId: { type: String, default: null },
     rejectionReason: { type: String, default: null },

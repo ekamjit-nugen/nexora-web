@@ -125,7 +125,7 @@ export default function SetupProfilePage() {
             ))}
           </div>
         </div>
-        <div className="ml-[260px] p-8 blur-[3px]">
+        <div className="md:ml-[260px] p-8 blur-[3px]">
           <div className="h-7 w-48 bg-[#E2E8F0] rounded-lg mb-8" />
           <div className="grid grid-cols-4 gap-6 mb-8">
             {[1,2,3,4].map(i => <div key={i} className="bg-white rounded-xl border border-[#E2E8F0] p-6 h-28"><div className="h-4 w-20 bg-[#F1F5F9] rounded mb-3" /><div className="h-8 w-16 bg-[#E2E8F0] rounded" /></div>)}
@@ -139,7 +139,19 @@ export default function SetupProfilePage() {
         <div className="w-full max-w-[560px] my-auto">
           {/* Stepper */}
           <div className="mb-8">
-            <div className="flex items-center justify-center gap-0">
+            {/* Mobile (<640px): current-step label + progress bar */}
+            <div className="sm:hidden mb-3">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-white/80 uppercase tracking-wider">
+                  Step {currentStep + 1} of {STEPS.length}
+                </p>
+                <p className="text-xs font-semibold text-white">
+                  {STEPS[currentStep].label}
+                </p>
+              </div>
+            </div>
+            {/* Desktop (≥640px): full 3-circle stepper with labels */}
+            <div className="hidden sm:flex items-center justify-center gap-0">
               {STEPS.map((step, i) => {
                 const isActive = i === currentStep;
                 const isDone = i < currentStep;
@@ -159,20 +171,23 @@ export default function SetupProfilePage() {
                           </svg>
                         ) : step.num}
                       </div>
-                      <div className="hidden sm:block">
+                      <div>
                         <p className={`text-sm font-semibold ${isActive || isDone ? "text-white" : "text-white/50"}`}>{step.label}</p>
                         <p className={`text-xs ${isActive || isDone ? "text-white/70" : "text-white/30"}`}>{step.desc}</p>
                       </div>
                     </div>
                     {i < STEPS.length - 1 && (
-                      <div className={`w-12 sm:w-20 h-[2px] mx-3 rounded-full ${isDone ? "bg-emerald-500" : "bg-[#E2E8F0]"}`} />
+                      <div className={`w-20 h-[2px] mx-3 rounded-full ${isDone ? "bg-emerald-500" : "bg-[#E2E8F0]"}`} />
                     )}
                   </div>
                 );
               })}
             </div>
             <div className="mt-5 h-1 bg-[#E2E8F0] rounded-full overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-[#2E86C1] to-[#5DADE2] rounded-full transition-all duration-500" style={{ width: "50%" }} />
+              <div
+                className="h-full bg-gradient-to-r from-[#2E86C1] to-[#5DADE2] rounded-full transition-all duration-500"
+                style={{ width: `${((currentStep + 1) / STEPS.length) * 100}%` }}
+              />
             </div>
           </div>
 

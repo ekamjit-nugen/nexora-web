@@ -295,7 +295,7 @@ export default function CoursePlayerPage() {
     return (
       <div className="min-h-screen flex bg-[#F8FAFC]">
         <Sidebar user={user} onLogout={logout} />
-        <main className="flex-1 ml-[260px] p-6">
+        <main className="flex-1 min-w-0 md:ml-[260px] p-6">
           <div className="text-sm text-gray-500">Loading course...</div>
         </main>
       </div>
@@ -306,7 +306,7 @@ export default function CoursePlayerPage() {
     return (
       <div className="min-h-screen flex bg-[#F8FAFC]">
         <Sidebar user={user} onLogout={logout} />
-        <main className="flex-1 ml-[260px] p-6">
+        <main className="flex-1 min-w-0 md:ml-[260px] p-6">
           <div className="bg-white border border-gray-200 rounded-xl p-8 text-center">
             <p className="text-sm text-gray-600 mb-4">Course not found.</p>
             <Button onClick={() => router.push("/payroll/learning")}>
@@ -330,7 +330,7 @@ export default function CoursePlayerPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] flex">
+      <main className="flex-1 min-w-0 md:ml-[260px] flex">
         {/* Lesson sidebar */}
         <aside className="w-[320px] bg-white border-r border-gray-200 flex flex-col sticky top-0 h-screen">
           <div className="p-5 border-b border-gray-200">

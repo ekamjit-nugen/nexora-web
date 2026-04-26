@@ -36,6 +36,10 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { ExternalServicesService } from './external-services.service';
 import { BankPayoutService } from './bank-payout.service';
 import { AttritionPredictorService } from './attrition-predictor.service';
+import { PayslipPdfService } from './payslip-pdf.service';
+import { Form16PdfService } from './form16-pdf.service';
+import { OffboardingLetterPdfService } from './offboarding-letter-pdf.service';
+import { StatutoryExportService } from './statutory-export.service';
 
 @Module({
   imports: [
@@ -80,7 +84,7 @@ import { AttritionPredictorService } from './attrition-predictor.service';
     }),
   ],
   controllers: [PayrollController],
-  providers: [PayrollService, PayrollCalculationService, ExternalServicesService, BankPayoutService, AttritionPredictorService, JwtAuthGuard, Reflector],
-  exports: [PayrollService, ExternalServicesService, BankPayoutService, AttritionPredictorService],
+  providers: [PayrollService, PayrollCalculationService, ExternalServicesService, BankPayoutService, AttritionPredictorService, PayslipPdfService, Form16PdfService, OffboardingLetterPdfService, StatutoryExportService, JwtAuthGuard, Reflector],
+  exports: [PayrollService, ExternalServicesService, BankPayoutService, AttritionPredictorService, PayslipPdfService, Form16PdfService, OffboardingLetterPdfService, StatutoryExportService],
 })
 export class PayrollModule {}

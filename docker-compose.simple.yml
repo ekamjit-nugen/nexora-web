@@ -278,9 +278,16 @@ services:
       CHAT_SERVICE_PORT: 3002
       MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/nexora_chat?authSource=admin
       JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
-      LLM_BASE_URL: http://host.docker.internal:7/v1/chat/completions
-      LLM_MODEL: deepseek
-      CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100,http://192.168.29.218:3000,http://192.168.29.218:3003,http://192.168.29.218:3005,http://192.168.29.218:3100
+      # Ollama exposes an OpenAI-compat endpoint at /v1/chat/completions
+      # alongside the native /api/chat. ai-service uses the OpenAI shape,
+      # so point it at /v1/... — the old default (`:7/...`) was a typo
+      # that silently 503'd every AI request. Override via env to point
+      # at a local Ollama (host.docker.internal:11434) or anywhere else.
+      # Current deployment: Qwen2.5-Coder-7B (an Instruct variant would
+      # be a better fit for HR-tone tasks — tracked as a follow-up).
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://216.48.177.40:11434/v1/chat/completions}
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5-coder:7b}
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://localhost:3500,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100,http://192.168.29.218:3000,http://192.168.29.218:3003,http://192.168.29.218:3005,http://192.168.29.218:3100
       REDIS_URI: redis://redis:6379
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -309,8 +316,15 @@ services:
       NODE_ENV: ${NODE_ENV:-development}
       AI_SERVICE_PORT: 3080
       JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
-      LLM_BASE_URL: http://host.docker.internal:7/v1/chat/completions
-      LLM_MODEL: deepseek
+      # Ollama exposes an OpenAI-compat endpoint at /v1/chat/completions
+      # alongside the native /api/chat. ai-service uses the OpenAI shape,
+      # so point it at /v1/... — the old default (`:7/...`) was a typo
+      # that silently 503'd every AI request. Override via env to point
+      # at a local Ollama (host.docker.internal:11434) or anywhere else.
+      # Current deployment: Qwen2.5-Coder-7B (an Instruct variant would
+      # be a better fit for HR-tone tasks — tracked as a follow-up).
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://216.48.177.40:11434/v1/chat/completions}
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5-coder:7b}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -395,7 +409,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
       STUN_SERVERS: stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
       LOG_LEVEL: ${LOG_LEVEL:-debug}
-      CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100,http://192.168.29.218:3000,http://192.168.29.218:3003,http://192.168.29.218:3005,http://192.168.29.218:3100
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://localhost:3500,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100,http://192.168.29.218:3000,http://192.168.29.218:3003,http://192.168.29.218:3005,http://192.168.29.218:3100
       REDIS_URI: redis://redis:6379
       CHAT_SERVICE_URL: http://chat-service:3002
     depends_on:
@@ -520,7 +534,7 @@ services:
       ASSET_SERVICE_URL: http://asset-service:3031
       KNOWLEDGE_SERVICE_URL: http://knowledge-service:3032
       HELPDESK_SERVICE_URL: http://helpdesk-service:3033
-      CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100,http://192.168.29.218:3000,http://192.168.29.218:3003,http://192.168.29.218:3005,http://192.168.29.218:3100
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3100,http://localhost:3500,http://192.168.1.21:3000,http://192.168.1.21:3003,http://192.168.1.21:3005,http://192.168.1.21:3100,http://192.168.29.218:3000,http://192.168.29.218:3003,http://192.168.29.218:3005,http://192.168.29.218:3100
       AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-100}
       AUTH_RATE_LIMIT_WINDOW_MS: ${AUTH_RATE_LIMIT_WINDOW_MS:-900000}
     depends_on:

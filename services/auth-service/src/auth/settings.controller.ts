@@ -369,4 +369,12 @@ export class SettingsController {
     const result = await this.organizationService.calculateSetupCompleteness(orgId);
     return { success: true, data: result };
   }
+
+  @Get('profile-completeness')
+  async getProfileCompleteness(@Req() req: any) {
+    const userId = req.user.userId;
+    if (!userId) throw new HttpException('Auth required', HttpStatus.UNAUTHORIZED);
+    const result = await this.organizationService.calculateProfileCompleteness(userId);
+    return { success: true, data: result };
+  }
 }

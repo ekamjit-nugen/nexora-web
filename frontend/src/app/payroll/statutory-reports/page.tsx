@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { payrollApi, hrApi } from "@/lib/api";
+import { payrollApi, hrApi, API_BASE_URL } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -17,7 +17,10 @@ type ReportTab = "form_16" | "pf_ecr" | "esi_return" | "tds_quarterly";
 interface StatutoryReport {
   _id: string;
   reportType: string;
-  period?: string;
+  // Backend shape: `period` is an object {month, year, quarter?} — NOT a
+  // string. Earlier code typed it as `string` and rendered it directly,
+  // causing "Objects are not valid as a React child" crashes on the page.
+  period?: { month?: number | null; year?: number | null; quarter?: number | null };
   financialYear?: string;
   month?: number;
   year?: number;
@@ -26,7 +29,9 @@ interface StatutoryReport {
   generatedAt?: string;
   createdAt?: string;
   totalEmployees?: number;
-  fileUrl?: string;
+  totals?: { employeeCount?: number; totalGross?: number; totalDeductions?: number; totalTax?: number };
+  fileUrl?: string | null;
+  downloadUrl?: string | null;
   metadata?: Record<string, unknown>;
 }
 
@@ -131,11 +136,15 @@ const formatDateTime = (dateStr?: string) => {
 };
 
 const buildPeriodLabel = (r: StatutoryReport): string => {
-  if (r.period) return r.period;
+  // Prefer the nested `period` object shape the API sends; fall back to
+  // the legacy flat month/year/quarter fields.
+  const month = r.period?.month ?? r.month;
+  const year = r.period?.year ?? r.year;
+  const quarter = r.period?.quarter ?? r.quarter;
   if (r.financialYear) return `FY ${r.financialYear}`;
-  if (r.quarter && r.year) return `Q${r.quarter} ${r.year}`;
-  if (r.month && r.year) return `${MONTHS[r.month - 1] || "?"} ${r.year}`;
-  if (r.year) return `${r.year}`;
+  if (quarter && year) return `Q${quarter} ${year}`;
+  if (month && year) return `${MONTHS[month - 1] || "?"} ${year}`;
+  if (year) return `${year}`;
   return "\u2014";
 };
 
@@ -225,12 +234,19 @@ export default function StatutoryReportsPage() {
     if (!user) return;
     setLoading(true);
     try {
-      const res = await payrollApi.listStatutoryReports({
+      const res: any = await payrollApi.listStatutoryReports({
         reportType: tabConfig[activeTab].reportType,
       });
-      const data = Array.isArray(res.data)
-        ? res.data
-        : (res.data as any)?.reports ?? [];
+      // `/statutory-reports` returns `{success, data: {data: [...], pagination}}`.
+      // Accept an array, a nested `data.data[]`, or the legacy `reports` key.
+      const raw = res?.data;
+      const data: StatutoryReport[] = Array.isArray(raw)
+        ? raw
+        : Array.isArray(raw?.data)
+          ? raw.data
+          : Array.isArray(raw?.reports)
+            ? raw.reports
+            : [];
       setReports(data);
     } catch (err: any) {
       toast.error(err.message || "Failed to load reports");
@@ -330,12 +346,58 @@ export default function StatutoryReportsPage() {
     }
   };
 
-  const handleDownloadReport = (report: StatutoryReport) => {
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  // Stream the PDF from `GET /statutory-reports/:id/download`. Same pattern
+  // as `/payslips/:id/download` — direct fetch with auth header + blob so
+  // we can trigger a native browser save dialog. For Form 16 the service
+  // enforces ownership; other report types are admin-only at the controller.
+  const handleDownloadReport = async (report: StatutoryReport) => {
+    if (downloadingId) return;
+    // Keep the pre-existing `fileUrl` branch in case a customer uploads
+    // their own TRACES PDF later — fall through to our renderer otherwise.
     if (report.fileUrl) {
       window.open(report.fileUrl, "_blank", "noopener,noreferrer");
       return;
     }
-    toast.info("Report download not yet available");
+    setDownloadingId(report._id);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+      const res = await fetch(`${API_BASE_URL}/api/v1/statutory-reports/${report._id}/download`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        let msg = `Download failed (${res.status})`;
+        try { const body = await res.json(); msg = body?.message || msg; } catch { /* non-JSON */ }
+        toast.error(msg);
+        return;
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename="?([^"]+)"?/i);
+      // Fallback extension by report type — PF ECR is a .txt, 24Q/ESI
+      // are CSVs, Form 16 is PDF. Hardcoded `.pdf` would force HR to
+      // rename every download before uploading to the gov portal.
+      const extByType: Record<string, string> = {
+        form_16: "pdf",
+        pf_ecr: "txt",
+        esi_return: "csv",
+        tds_quarterly: "csv",
+      };
+      const ext = extByType[report.reportType] || "pdf";
+      const fallback = `${(report.reportType || "report").replace(/_/g, "-")}-${report._id.slice(-6)}.${ext}`;
+      const filename = match?.[1] || fallback;
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Downloaded");
+    } catch (err: any) {
+      toast.error(err?.message || "Download failed");
+    } finally {
+      setDownloadingId(null);
+    }
   };
 
   const handleViewReport = (report: StatutoryReport) => {
@@ -360,7 +422,7 @@ export default function StatutoryReportsPage() {
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
-      <main className="flex-1 ml-[260px] flex flex-col min-h-screen">
+      <main className="flex-1 min-w-0 md:ml-[260px] flex flex-col min-h-screen">
         {/* Header */}
         <div className="bg-white border-b border-[#E2E8F0] px-8 py-5 flex items-center justify-between sticky top-0 z-20">
           <div>
@@ -496,7 +558,7 @@ export default function StatutoryReportsPage() {
                           {formatDateTime(report.generatedAt || report.createdAt)}
                         </td>
                         <td className="px-5 py-3.5 text-[13px] text-[#475569]">
-                          {report.totalEmployees ?? "\u2014"}
+                          {report.totals?.employeeCount ?? report.totalEmployees ?? "\u2014"}
                         </td>
                         <td className="px-5 py-3.5">
                           <div className="flex items-center gap-2">

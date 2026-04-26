@@ -149,12 +149,36 @@ export const orgApi = {
     }),
 };
 
-export const attendanceApi = {
-  checkIn: () =>
-    request<any>("/attendance/check-in", { method: "POST" }),
+// Location captured from the device GPS at clock-in/out. Optional —
+// if the user denies the permission, mobile passes nothing and the
+// backend stores `checkInLocation: null`. Backend rejects malformed
+// coords (validators on `lat -90..90` / `lng -180..180`), so we don't
+// need to re-validate on the client.
+export interface AttendanceLocation {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+  address?: string;
+}
 
-  checkOut: () =>
-    request<any>("/attendance/check-out", { method: "POST" }),
+export const attendanceApi = {
+  checkIn: (data?: { method?: string; location?: AttendanceLocation | null }) =>
+    request<any>("/attendance/check-in", {
+      method: "POST",
+      body: JSON.stringify({
+        method: data?.method ?? "mobile",
+        ...(data?.location ? { location: data.location } : {}),
+      }),
+    }),
+
+  checkOut: (data?: { method?: string; location?: AttendanceLocation | null }) =>
+    request<any>("/attendance/check-out", {
+      method: "POST",
+      body: JSON.stringify({
+        method: data?.method ?? "mobile",
+        ...(data?.location ? { location: data.location } : {}),
+      }),
+    }),
 
   getToday: () => request<any>("/attendance/today"),
 

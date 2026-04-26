@@ -221,7 +221,7 @@ export default function ReportsPage() {
     <div className="min-h-screen bg-[#F8FAFC] flex">
       <Sidebar user={user} onLogout={logout} />
 
-      <main className="ml-[260px] flex-1 p-8">
+      <main className="md:ml-[260px] flex-1 p-8">
         {/* Header */}
         <div className="flex items-start justify-between mb-8">
           <div>

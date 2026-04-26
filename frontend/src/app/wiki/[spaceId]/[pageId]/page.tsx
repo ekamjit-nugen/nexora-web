@@ -146,7 +146,7 @@ export default function WikiPageEditorPage() {
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="ml-[260px] flex">
+      <main className="md:ml-[260px] flex">
         {/* Wiki Tree Sidebar */}
         <div className="w-[260px] border-r border-[#E2E8F0] bg-white min-h-screen p-3 overflow-y-auto">
           <button onClick={() => router.push("/wiki")} className="text-[10px] text-[#94A3B8] hover:text-[#2E86C1] mb-2 flex items-center gap-1">

@@ -381,7 +381,7 @@ export default function CallsPage() {
     <div className="min-h-screen bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
-      <main className="ml-[260px] p-6">
+      <main className="md:ml-[260px] p-6">
         {/* Header */}
         <div className="flex items-center justify-between mb-5">
           <div>

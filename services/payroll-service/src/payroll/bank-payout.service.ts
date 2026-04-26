@@ -619,8 +619,19 @@ export class BankPayoutService {
       return s;
     };
 
+    // Validate every entry first, then write a CSV containing ONLY the
+    // valid ones. Invalid rows are excluded (their inclusion would make
+    // the bank reject the entire batch) but logged so callers can still
+    // see what was skipped via the validation endpoint. The summary
+    // line at the top of the CSV gives finance staff a quick "how
+    // many people got paid" check without reading the whole file.
+    const validation = this.runBankFileValidation(entries);
+
     const header = 'Sr No,Employee ID,Beneficiary Name,Account Number,IFSC,Amount,Transaction Type,Remarks';
-    const rows = entries.map((e, idx) => {
+    const validEntries = entries.filter((e) =>
+      validation.valid.some((v) => String(v.employeeId) === String(e.employeeId)),
+    );
+    const rows = validEntries.map((e, idx) => {
       const details = (e as any).paymentDetails || {};
       const account = unmasked ? (details.accountNumber || '') : maskAccount(details.accountNumber || '');
       return [
@@ -634,6 +645,131 @@ export class BankPayoutService {
         csvEscape(`Salary-${payrollRunId}`),
       ].join(',');
     });
-    return [header, ...rows].join('\n');
+
+    // Bank-friendly summary banner. Some banks reject files that begin
+    // with a `#` comment line, so we emit it only when there's at least
+    // one row excluded — the most common case (clean file) keeps the
+    // legacy header-first layout that existing pipelines have ingested.
+    const lines: string[] = [];
+    if (validation.summary.invalid > 0) {
+      lines.push(
+        `# Generated ${new Date().toISOString()} for run=${payrollRunId} | included=${validation.summary.valid} skipped=${validation.summary.invalid} | total=${(validation.summary.validAmount / 100).toFixed(2)} INR`,
+      );
+      this.logger.warn(
+        `Bank file for run ${payrollRunId}: ${validation.summary.invalid} employees skipped due to validation errors. Hit /bank-file/validate before downloading to inspect.`,
+      );
+    }
+    lines.push(header);
+    lines.push(...rows);
+    return lines.join('\n');
+  }
+
+  /**
+   * Pre-flight bank file validation. Walks every payroll entry for the
+   * run and classifies each as valid (will appear in the CSV) or
+   * invalid (silently skipped today). Returns a structured report so
+   * the UI can display "5 of 50 employees missing bank details" before
+   * the admin downloads, instead of finance discovering it after the
+   * fact via reconciliation.
+   *
+   * Validation rules — kept conservative on purpose. We'd rather
+   * exclude an employee than risk the bank rejecting the whole batch:
+   *   • netPayable > 0
+   *   • accountNumber is 9–18 numeric digits (most Indian banks fall
+   *     in this range — SBI is 11, HDFC 14, ICICI 12, etc.)
+   *   • IFSC matches `[A-Z]{4}0[A-Z0-9]{6}` (RBI standard)
+   *   • accountHolder is non-empty after trim
+   */
+  async validateBankFile(
+    payrollRunId: string,
+    orgId: string,
+  ): Promise<{
+    summary: { total: number; valid: number; invalid: number; totalAmount: number; validAmount: number; invalidAmount: number };
+    valid: Array<{ employeeId: string; accountHolder: string; accountMasked: string; ifsc: string; amount: number }>;
+    invalid: Array<{ employeeId: string; accountHolder: string; amount: number; reasons: string[] }>;
+  }> {
+    const entries = await this.payrollEntryModel.find({
+      payrollRunId,
+      organizationId: orgId,
+      isDeleted: false,
+    }).lean();
+
+    return this.runBankFileValidation(entries);
+  }
+
+  /**
+   * Pure helper — same logic used by both the validator endpoint AND
+   * the file generator, so the two can never disagree about what
+   * counts as "valid". Side-effect free; safe to call multiple times.
+   */
+  private runBankFileValidation(entries: any[]): {
+    summary: { total: number; valid: number; invalid: number; totalAmount: number; validAmount: number; invalidAmount: number };
+    valid: Array<{ employeeId: string; accountHolder: string; accountMasked: string; ifsc: string; amount: number }>;
+    invalid: Array<{ employeeId: string; accountHolder: string; amount: number; reasons: string[] }>;
+  } {
+    const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+    const ACCOUNT_RE = /^\d{9,18}$/;
+
+    const valid: Array<{ employeeId: string; accountHolder: string; accountMasked: string; ifsc: string; amount: number }> = [];
+    const invalid: Array<{ employeeId: string; accountHolder: string; amount: number; reasons: string[] }> = [];
+    let totalAmount = 0;
+    let validAmount = 0;
+    let invalidAmount = 0;
+
+    const maskAccount = (account: string): string => {
+      if (!account) return '';
+      const s = String(account);
+      if (s.length <= 4) return '*'.repeat(s.length);
+      return '*'.repeat(s.length - 4) + s.slice(-4);
+    };
+
+    for (const e of entries) {
+      const details = (e as any).paymentDetails || {};
+      const amount = e.totals?.netPayable || 0;
+      const accountHolder = String(details.accountHolder || '').trim();
+      const accountNumber = String(details.accountNumber || '').trim();
+      const ifsc = String(details.ifsc || '').trim().toUpperCase();
+      totalAmount += amount;
+
+      const reasons: string[] = [];
+      if (amount <= 0) reasons.push('Net payable is zero or negative — nothing to disburse.');
+      if (!accountNumber) reasons.push('Account number missing.');
+      else if (!ACCOUNT_RE.test(accountNumber)) reasons.push(`Account number "${maskAccount(accountNumber)}" is not 9–18 digits.`);
+      if (!ifsc) reasons.push('IFSC missing.');
+      else if (!IFSC_RE.test(ifsc)) reasons.push(`IFSC "${ifsc}" doesn't match the standard format (e.g. HDFC0001234).`);
+      if (!accountHolder) reasons.push('Account holder name missing.');
+
+      if (reasons.length > 0) {
+        invalid.push({
+          employeeId: String(e.employeeId),
+          accountHolder,
+          amount,
+          reasons,
+        });
+        invalidAmount += amount;
+      } else {
+        valid.push({
+          employeeId: String(e.employeeId),
+          accountHolder,
+          accountMasked: maskAccount(accountNumber),
+          ifsc,
+          amount,
+        });
+        validAmount += amount;
+      }
+    }
+
+    return {
+      summary: {
+        total: entries.length,
+        valid: valid.length,
+        invalid: invalid.length,
+        totalAmount,
+        validAmount,
+        invalidAmount,
+      },
+      valid,
+      invalid,
+    };
   }
 }

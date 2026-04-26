@@ -1,7 +1,9 @@
-import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus } from '@nestjs/common';
+import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus, Logger } from '@nestjs/common';
 
 @Catch()
 export class HttpExceptionFilterImpl implements ExceptionFilter {
+  private readonly logger = new Logger(HttpExceptionFilterImpl.name);
+
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse();
@@ -30,6 +32,18 @@ export class HttpExceptionFilterImpl implements ExceptionFilter {
         message = 'Validation failed';
         fields = this.formatValidationErrors(exceptionResponse.message);
       }
+    } else {
+      // Non-HttpException → 500. Without logging the actual error, every
+      // unexpected failure surfaces as a generic "An unexpected error
+      // occurred" with no way to trace it. Log the stack here so ops
+      // can diagnose. Only fires for unhandled exceptions; HttpException
+      // (which carries its own message) still goes through the path
+      // above.
+      const err = exception as Error;
+      this.logger.error(
+        `Unhandled exception on ${request.method} ${request.url}: ${err?.message || exception}`,
+        err?.stack,
+      );
     }
 
     const errorResponse = {

@@ -1,3 +1,17 @@
+/**
+ * @deprecated since #10 (policy consolidation). policy-service is now
+ * the source of truth for shift / working-hours / leave / wfh rules.
+ * `attendance.service.ts::resolveShiftPolicy` reads from policy-service
+ * first and falls back to this collection only when:
+ *   (a) policy-service is unreachable, or
+ *   (b) the tenant hasn't migrated their shift config yet.
+ *
+ * The `checkPolicyCompliance` alert generator still reads from here —
+ * consolidating that is a follow-up. Keep this schema + collection
+ * around for backward compatibility; do NOT delete before a migration
+ * plan is in place. New working-hours policies should be created in
+ * policy-service with category `working_hours` or `attendance`.
+ */
 import { Schema, Document } from 'mongoose';
 
 export interface IPolicyCondition {
@@ -42,6 +56,17 @@ export interface IPolicy extends Document {
     graceMinutes: number;
     minWorkingHours: number;
     breakMinutes: number;
+    // Shift-aware status thresholds. Populated by admin via the
+    // attendance-policy editor; consumed on clock-in/out to resolve
+    // `late` / `half_day` / `present`. Null falls back to sensible
+    // defaults (30 min late → half-day, 4 h worked → half-day).
+    lateToHalfDayMinutes?: number;
+    minHoursForPresent?: number;
+    // Night-shift flag. When true, `startTime` > `endTime` means the
+    // window straddles midnight (e.g. 22:00 → 06:00). Payroll-service
+    // reads this from the attendance record to apply the night OT
+    // multiplier for hours worked on the shift.
+    isNightShift?: boolean;
   };
   wfhPolicy: {
     maxDaysPerMonth: number;
@@ -116,6 +141,9 @@ export const PolicySchema = new Schema<IPolicy>(
       graceMinutes: { type: Number, default: 15 },
       minWorkingHours: { type: Number, default: 8 },
       breakMinutes: { type: Number, default: 60 },
+      lateToHalfDayMinutes: { type: Number, default: null },
+      minHoursForPresent: { type: Number, default: null },
+      isNightShift: { type: Boolean, default: false },
     },
     wfhPolicy: {
       maxDaysPerMonth: { type: Number, default: 0 },

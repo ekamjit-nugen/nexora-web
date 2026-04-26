@@ -324,7 +324,7 @@ export default function ProjectGanttPage() {
     return (
       <div className="min-h-screen flex bg-[#F8FAFC]">
         <Sidebar user={user} onLogout={logout} />
-        <main className="flex-1 ml-[260px] flex items-center justify-center">
+        <main className="flex-1 min-w-0 md:ml-[260px] flex items-center justify-center">
           <div className="text-[#64748B] text-sm">Loading Gantt chart…</div>
         </main>
       </div>
@@ -335,7 +335,7 @@ export default function ProjectGanttPage() {
     return (
       <div className="min-h-screen flex bg-[#F8FAFC]">
         <Sidebar user={user} onLogout={logout} />
-        <main className="flex-1 ml-[260px] flex items-center justify-center">
+        <main className="flex-1 min-w-0 md:ml-[260px] flex items-center justify-center">
           <div className="text-[#64748B] text-sm">Project not found</div>
         </main>
       </div>
@@ -351,7 +351,7 @@ export default function ProjectGanttPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] flex flex-col min-h-screen">
+      <main className="flex-1 min-w-0 md:ml-[260px] flex flex-col min-h-screen">
         {/* Header */}
         <div className="bg-white border-b border-[#E2E8F0] px-6 py-4 flex items-center justify-between sticky top-0 z-30">
           <div className="flex items-center gap-4">

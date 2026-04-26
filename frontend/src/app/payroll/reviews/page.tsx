@@ -129,6 +129,12 @@ export default function ReviewsPage() {
   const [formDevelopmentPlan, setFormDevelopmentPlan] = useState("");
   const [formPromotion, setFormPromotion] = useState(false);
   const [formSalaryRec, setFormSalaryRec] = useState("no_change");
+  // Peer review requires `relationship` (DTO enum). Old form omitted it
+  // entirely → every peer review 400'd. Default to 'peer', admin can
+  // pick from the dropdown.
+  const [formRelationship, setFormRelationship] = useState<
+    "peer" | "cross_functional" | "skip_level" | "subordinate"
+  >("peer");
 
   // Redirect unauthenticated users
   useEffect(() => {
@@ -255,31 +261,39 @@ export default function ReviewsPage() {
 
     setSaving(true);
     try {
+      // Payload field names must match the backend DTOs (validated
+      // server-side with a strict whitelist). The earlier version sent
+      // `rating`/`competencies`/`anonymous`/`salaryRecommendation`, all
+      // of which were silently dropped or 400'd — the DTOs use
+      // `overallRating`/`competencyRatings`/`isAnonymous`/`salaryIncreaseRecommendation`.
       if (reviewMode === "self") {
         await payrollApi.submitSelfReview(activeReview._id, {
-          rating: formRating,
+          overallRating: formRating,
           strengths: formStrengths.trim(),
           improvements: formImprovements.trim() || undefined,
           achievements: formAchievements.trim() || undefined,
           challenges: formChallenges.trim() || undefined,
-          competencies: formCompetencies,
+          competencyRatings: formCompetencies,
         });
       } else if (reviewMode === "peer") {
         await payrollApi.submitPeerReview(activeReview._id, {
-          rating: formRating,
+          overallRating: formRating,
           strengths: formStrengths.trim(),
           improvements: formImprovements.trim() || undefined,
-          anonymous: formAnonymous,
+          isAnonymous: formAnonymous,
+          relationship: formRelationship,
         });
       } else if (reviewMode === "manager") {
         await payrollApi.submitManagerReview(activeReview._id, {
-          rating: formRating,
+          overallRating: formRating,
           strengths: formStrengths.trim(),
           improvements: formImprovements.trim() || undefined,
           goalAchievement: formGoalAchievement.trim() || undefined,
           developmentPlan: formDevelopmentPlan.trim() || undefined,
-          promotionRecommendation: formPromotion,
-          salaryRecommendation: formSalaryRec,
+          // Backend enum: 'yes' | 'no' | 'consider_next_cycle'. Old
+          // checkbox sent boolean which failed validation.
+          promotionRecommendation: formPromotion ? "yes" : "no",
+          salaryIncreaseRecommendation: formSalaryRec,
         });
       }
       toast.success("Review submitted successfully");
@@ -328,7 +342,7 @@ export default function ReviewsPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] flex flex-col min-h-screen">
+      <main className="flex-1 min-w-0 md:ml-[260px] flex flex-col min-h-screen">
         {/* Header */}
         <div className="bg-white border-b border-[#E2E8F0] px-8 py-5 sticky top-0 z-20">
           <h1 className="text-[20px] font-bold text-[#0F172A]">Performance Reviews</h1>
@@ -620,6 +634,26 @@ export default function ReviewsPage() {
 
               {/* Peer review specific */}
               {reviewMode === "peer" && (
+                <>
+                  {/* Relationship — required by backend DTO. Old form
+                      omitted this and every peer-review submission 400'd. */}
+                  <div className="bg-white border border-[#E2E8F0] rounded-lg p-3">
+                    <label className="block text-[12px] font-medium text-[#334155] mb-1">
+                      Your relationship to the reviewee
+                    </label>
+                    <select
+                      value={formRelationship}
+                      onChange={(e) =>
+                        setFormRelationship(e.target.value as typeof formRelationship)
+                      }
+                      className="w-full border border-[#E2E8F0] rounded-lg px-3 py-2 text-[13px] bg-white"
+                    >
+                      <option value="peer">Peer (same team/level)</option>
+                      <option value="cross_functional">Cross-functional collaborator</option>
+                      <option value="skip_level">Skip-level (manager-of-manager)</option>
+                      <option value="subordinate">Direct report (upward feedback)</option>
+                    </select>
+                  </div>
                 <div className="flex items-center gap-2 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-3">
                   <input
                     type="checkbox"
@@ -632,6 +666,7 @@ export default function ReviewsPage() {
                     Submit anonymously
                   </label>
                 </div>
+                </>
               )}
 
               {/* Manager review specific */}

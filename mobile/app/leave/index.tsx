@@ -136,13 +136,21 @@ function getLeaveTypeLabel(type: string) {
 export default function LeaveIndexScreen() {
   const queryClient = useQueryClient();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, orgRole } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>("my_leaves");
   const [refreshing, setRefreshing] = useState(false);
 
   const isManager = user?.roles?.some((r: string) =>
     ["admin", "manager", "hr", "hr_manager", "team_lead"].includes(r.toLowerCase())
   );
+  // Admins/owners can review approvals on this screen but can't apply
+  // for leave themselves — backend rejects with 403, so we hide the
+  // FAB to avoid confusing error toasts. Mirrors the web rule.
+  const isAdminOrOwner =
+    !!user?.roles?.some((r: string) => ["admin", "super_admin"].includes(r.toLowerCase())) ||
+    orgRole === "owner" ||
+    orgRole === "admin";
+  const canApplyLeave = !isAdminOrOwner;
 
   // Queries
   const {
@@ -481,19 +489,23 @@ export default function LeaveIndexScreen() {
         {activeTab === "my_leaves" ? renderMyLeaves() : renderPendingApproval()}
       </ScrollView>
 
-      {/* Apply Leave FAB */}
-      <TouchableOpacity
-        style={styles.fab}
-        activeOpacity={0.85}
-        onPress={() => router.push("/leave/apply")}
-      >
-        <LinearGradient
-          colors={[COLORS.primary, COLORS.primaryDark]}
-          style={styles.fabGradient}
+      {/* Apply Leave FAB — hidden for admins/owners. They use this
+          screen to review approvals; the apply path is rejected
+          server-side with a 403. */}
+      {canApplyLeave && (
+        <TouchableOpacity
+          style={styles.fab}
+          activeOpacity={0.85}
+          onPress={() => router.push("/leave/apply")}
         >
-          <MaterialCommunityIcons name="plus" size={26} color="#FFFFFF" />
-        </LinearGradient>
-      </TouchableOpacity>
+          <LinearGradient
+            colors={[COLORS.primary, COLORS.primaryDark]}
+            style={styles.fabGradient}
+          >
+            <MaterialCommunityIcons name="plus" size={26} color="#FFFFFF" />
+          </LinearGradient>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }

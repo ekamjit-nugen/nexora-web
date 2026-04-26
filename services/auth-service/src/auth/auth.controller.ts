@@ -19,7 +19,7 @@ import { AuthService, AuthTokens } from './auth.service';
 import { OrganizationService } from './organization.service';
 import { AuditService, AuditAction } from './audit.service';
 import { DeviceFingerprintService } from './device-fingerprint.service';
-import { LoginDto, RegisterDto, RefreshTokenDto, MFASetupDto, MFAVerifyDto, UpdateProfileDto, ChangePasswordDto } from './dto/index';
+import { LoginDto, RegisterDto, RefreshTokenDto, MFASetupDto, MFAVerifyDto, UpdateProfileDto, ChangePasswordDto, SendOtpDto, VerifyOtpDto } from './dto/index';
 import { CreateRoleDto, UpdateRoleDto, AssignRolesDto } from './dto/role.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { ForbiddenException } from '@nestjs/common';
@@ -372,7 +372,7 @@ export class AuthController {
 
   @Post('send-otp')
   @HttpCode(HttpStatus.OK)
-  async sendOtp(@Body() body: { email: string }, @Req() req: any) {
+  async sendOtp(@Body() body: SendOtpDto, @Req() req: any) {
     const ipAddress = req.ip || req.connection?.remoteAddress;
     await this.authService.sendOtp(body.email, ipAddress);
     // Always return success to prevent user enumeration
@@ -381,7 +381,7 @@ export class AuthController {
 
   @Post('verify-otp')
   @HttpCode(HttpStatus.OK)
-  async verifyOtp(@Body() body: { email: string; otp: string }, @Req() req: any, @Res({ passthrough: true }) response: any) {
+  async verifyOtp(@Body() body: VerifyOtpDto, @Req() req: any, @Res({ passthrough: true }) response: any) {
     const ipAddress = req.ip || req.connection?.remoteAddress;
     const result = await this.authService.verifyOtp(body.email, body.otp, ipAddress);
 
@@ -426,6 +426,10 @@ export class AuthController {
         route: result.route.route,
         routeReason: result.route.reason,
         organizationId: result.route.organizationId,
+        // Per TC-8.1: when route is `/auth/select-organization`, the client
+        // needs the list of orgs to render the picker. The route resolver
+        // computes this in the multi_org case — surface it directly.
+        organizations: (result.route as any).organizations || undefined,
         isNewUser: result.isNewUser,
         isNewDevice,
       },

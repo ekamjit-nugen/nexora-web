@@ -1,5 +1,36 @@
-import { IsString, IsOptional, IsEmail, IsEnum, IsDateString, IsArray, IsNumber, Min, Max, IsBoolean, ValidateNested } from 'class-validator';
+import { IsString, IsOptional, IsEmail, IsEnum, IsDateString, IsArray, IsNumber, Min, Max, IsBoolean, ValidateNested, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
+
+// Bank details (payroll routing). Optional on update — HR often doesn't
+// have this during invite and collects it at onboarding.
+export class BankDetailsDto {
+  @IsOptional() @IsString() bankName?: string;
+  @IsOptional() @IsString() accountNumber?: string;
+  // IFSC: 4 letters + 0 + 6 alphanumerics. e.g. HDFC0001234. Validating
+  // here stops typos with a server-side error rather than silently
+  // breaking future payout files.
+  @IsOptional() @Matches(/^[A-Z]{4}0[A-Z0-9]{6}$/, { message: 'IFSC must match format like HDFC0001234' })
+  ifsc?: string;
+  @IsOptional() @IsString() accountHolder?: string;
+}
+
+// Shared sub-doc DTOs — must be declared BEFORE any DTO that references
+// them via @Type(() => …) decorators, otherwise TypeScript emits them
+// as TDZ-unsafe references ("Cannot access 'AddressDto' before
+// initialization") when the surrounding class body executes at load.
+export class AddressDto {
+  @IsOptional() @IsString() street?: string;
+  @IsOptional() @IsString() city?: string;
+  @IsOptional() @IsString() state?: string;
+  @IsOptional() @IsString() country?: string;
+  @IsOptional() @IsString() zip?: string;
+}
+
+export class EmergencyContactDto {
+  @IsOptional() @IsString() name?: string;
+  @IsOptional() @IsString() relation?: string;
+  @IsOptional() @IsString() phone?: string;
+}
 
 // ── Employee DTOs ──
 
@@ -46,7 +77,7 @@ export class CreateEmployeeDto {
   skills?: string[];
 
   @IsOptional()
-  @IsEnum(['active', 'invited', 'pending', 'on_notice', 'exited', 'on_leave', 'probation'])
+  @IsEnum(['active', 'invited', 'pending', 'declined', 'on_notice', 'exited', 'on_leave', 'probation'])
   status?: string;
 }
 
@@ -90,8 +121,104 @@ export class UpdateEmployeeDto {
   @IsOptional() @IsArray() @IsString({ each: true })
   skills?: string[];
 
-  @IsOptional() @IsEnum(['active', 'invited', 'pending', 'on_notice', 'exited', 'on_leave', 'probation'])
+  @IsOptional() @IsEnum(['active', 'invited', 'pending', 'declined', 'on_notice', 'exited', 'on_leave', 'probation'])
   status?: string;
+
+  // ---- Statutory & banking identifiers (all optional) ----
+  // PAN: exactly 5 letters + 4 digits + 1 letter (e.g. ABCDE1234F).
+  // Keep the validator permissive (uppercase-only normalised by schema)
+  // so the admin can paste the common "abcde1234f" and still pass.
+  @IsOptional() @Matches(/^[A-Za-z]{5}[0-9]{4}[A-Za-z]$/, { message: 'PAN must match format ABCDE1234F' })
+  pan?: string;
+
+  // UAN: exactly 12 numeric digits issued by EPFO. Zero-padded.
+  @IsOptional() @Matches(/^\d{12}$/, { message: 'UAN must be a 12-digit number' })
+  uan?: string;
+
+  // Legacy PF account (pre-UAN): regional code + establishment + member id.
+  // Formats vary wildly by state office — validate as non-empty string.
+  @IsOptional() @IsString()
+  pfAccountNumber?: string;
+
+  // ESIC Insurance Number: 10 digits (new format) or longer legacy formats.
+  // Accept either — legacy records still exist.
+  @IsOptional() @Matches(/^\d{10,17}$/, { message: 'ESI number must be 10–17 digits' })
+  esiNumber?: string;
+
+  @IsOptional() @ValidateNested() @Type(() => BankDetailsDto)
+  bankDetails?: BankDetailsDto;
+
+  // Personal fields (also accepted on admin PUT so HR can correct bad
+  // onboarding data — most orgs capture these at onboarding and never
+  // touch them again).
+  @IsOptional() @IsEmail()
+  personalEmail?: string;
+
+  @IsOptional() @IsEnum(['single', 'married', 'divorced', 'widowed'])
+  maritalStatus?: string;
+
+  @IsOptional() @IsEnum(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'])
+  bloodGroup?: string;
+
+  @IsOptional() @ValidateNested() @Type(() => AddressDto)
+  address?: AddressDto;
+
+  @IsOptional() @ValidateNested() @Type(() => AddressDto)
+  permanentAddress?: AddressDto;
+
+  @IsOptional() @ValidateNested() @Type(() => EmergencyContactDto)
+  emergencyContact?: EmergencyContactDto;
+}
+
+// ── Self-service DTOs ──
+// These are the ONLY fields an employee can change on their own record
+// via /api/v1/employees/me. Everything else (department, designation,
+// reporting line, employment type, statutory identifiers, bank details,
+// employment status) routes through admin-only paths. Keeping this DTO
+// narrow is the security boundary — even if the role guard is misconfigured,
+// class-validator strips unknown fields with `whitelist: true` (set in
+// the global ValidationPipe in main.ts).
+
+export class UpdateSelfProfileDto {
+  @IsOptional() @IsString()
+  phone?: string;
+
+  @IsOptional() @IsEmail()
+  personalEmail?: string;
+
+  @IsOptional() @IsEnum(['single', 'married', 'divorced', 'widowed'])
+  maritalStatus?: string;
+
+  @IsOptional() @IsEnum(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'])
+  bloodGroup?: string;
+
+  @IsOptional() @ValidateNested() @Type(() => AddressDto)
+  address?: AddressDto;
+
+  @IsOptional() @ValidateNested() @Type(() => AddressDto)
+  permanentAddress?: AddressDto;
+
+  @IsOptional() @ValidateNested() @Type(() => EmergencyContactDto)
+  emergencyContact?: EmergencyContactDto;
+
+  @IsOptional() @IsArray() @IsString({ each: true })
+  skills?: string[];
+}
+
+// Bank change submission (self-service). Reason optional — some orgs
+// will want to enforce it via policy later, but the audit trail already
+// captures who submitted what.
+export class SubmitBankChangeDto {
+  @ValidateNested() @Type(() => BankDetailsDto)
+  bankDetails: BankDetailsDto;
+
+  @IsOptional() @IsString()
+  reason?: string;
+}
+
+export class RejectBankChangeDto {
+  @IsString()
+  reason: string;
 }
 
 export class EmployeeQueryDto {
@@ -107,11 +234,19 @@ export class EmployeeQueryDto {
   @IsOptional() @IsEnum(['full_time', 'part_time', 'contract', 'intern'])
   employmentType?: string;
 
-  @IsOptional() @IsEnum(['active', 'invited', 'pending', 'on_notice', 'exited', 'on_leave', 'probation'])
+  @IsOptional() @IsEnum(['active', 'invited', 'pending', 'declined', 'on_notice', 'exited', 'on_leave', 'probation'])
   status?: string;
 
   @IsOptional() @IsString()
   location?: string;
+
+  @IsOptional() @IsString()
+  managerId?: string;
+
+  // Filter by auth user id. Enables services to resolve "the HR employee
+  // for this caller" via a single query (e.g. payroll `/salary-structures/me`).
+  @IsOptional() @IsString()
+  userId?: string;
 
   @IsOptional() @IsNumber() @Min(1)
   page?: number;

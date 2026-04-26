@@ -9,10 +9,23 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 
-interface DeclarationSection {
-  section: string;
+// Backend shape: section = { section: "80C", items: [{description, declaredAmount, ...}] }.
+// The page historically had a flat `{section, description, declaredAmount}`
+// model which silently failed validation on submit. Track both so old
+// reads don't crash, but always READ the nested shape first.
+interface DeclarationItem {
   description: string;
   declaredAmount: number;
+  verifiedAmount?: number;
+  proofUrl?: string;
+}
+
+interface DeclarationSection {
+  section: string;
+  items?: DeclarationItem[];
+  // legacy flat fields (pre-fix) — unused by new reads but kept for safety
+  description?: string;
+  declaredAmount?: number;
   verifiedAmount?: number;
 }
 
@@ -28,6 +41,20 @@ interface Declaration {
   createdAt?: string;
 }
 
+// Sum a section's declared amount across all its items (supports both
+// new nested shape and the legacy flat shape).
+function sectionDeclaredTotal(sec: DeclarationSection): number {
+  if (Array.isArray(sec.items) && sec.items.length > 0) {
+    return sec.items.reduce((s, it) => s + (Number(it.declaredAmount) || 0), 0);
+  }
+  return Number(sec.declaredAmount) || 0;
+}
+
+function sectionDescription(sec: DeclarationSection): string {
+  if (Array.isArray(sec.items) && sec.items[0]?.description) return sec.items[0].description;
+  return sec.description || "";
+}
+
 const statusConfig: Record<string, { label: string; color: string; dot: string }> = {
   draft: { label: "Draft", color: "bg-gray-100 text-gray-600 border-gray-200", dot: "bg-gray-400" },
   submitted: { label: "Submitted", color: "bg-blue-50 text-blue-700 border-blue-200", dot: "bg-blue-500" },
@@ -40,9 +67,12 @@ const regimeConfig: Record<string, { label: string; color: string }> = {
   new: { label: "New Regime", color: "bg-indigo-50 text-indigo-700 border-indigo-200" },
 };
 
-function formatCurrency(paise: number): string {
-  const rupees = paise / 100;
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 2 }).format(rupees);
+// Declarations are stored in rupees on the backend (matching the rest of
+// the payroll schemas). Earlier code divided by 100, turning a
+// ₹1,50,000 PPF declaration into ₹1,500 on screen.
+function formatCurrency(rupees: number | undefined): string {
+  const v = typeof rupees === "number" && !isNaN(rupees) ? rupees : 0;
+  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 2 }).format(v);
 }
 
 function getCurrentFinancialYear(): string {
@@ -82,8 +112,16 @@ export default function InvestmentDeclarationsPage() {
     if (!user) return;
     setLoading(true);
     try {
-      const res = await payrollApi.getMyDeclarations();
-      setDeclarations(Array.isArray(res.data) ? res.data : []);
+      const res: any = await payrollApi.getMyDeclarations();
+      // `/investment-declarations/my` can return an array directly or a
+      // paginated `{data: [...], pagination}` — unwrap either.
+      const raw = res?.data;
+      const list: Declaration[] = Array.isArray(raw)
+        ? raw
+        : Array.isArray(raw?.data)
+          ? raw.data
+          : [];
+      setDeclarations(list);
     } catch (err: any) {
       toast.error(err.message || "Failed to load declarations");
       setDeclarations([]);
@@ -121,30 +159,38 @@ export default function InvestmentDeclarationsPage() {
   };
 
   const handleSubmit = useCallback(async () => {
-    const sections: Array<{ section: string; description: string; declaredAmount: number }> = [];
+    // Backend expects `sections: [{section, items: [{description, declaredAmount}]}]`
+    // with amounts in rupees. We used to send a flat shape with paise,
+    // which failed DTO validation on every submit.
+    const sections: Array<{ section: string; items: Array<{ description: string; declaredAmount: number }> }> = [];
 
-    if (form80C.amount) {
-      const amt = parseFloat(form80C.amount);
-      if (amt > 0) sections.push({ section: "80C", description: form80C.description || "Section 80C investments", declaredAmount: Math.round(amt * 100) });
-    }
-    if (form80D.amount) {
-      const amt = parseFloat(form80D.amount);
-      if (amt > 0) sections.push({ section: "80D", description: form80D.description || "Medical insurance premium", declaredAmount: Math.round(amt * 100) });
-    }
-    if (formHRA.amount) {
-      const amt = parseFloat(formHRA.amount);
-      if (amt > 0) sections.push({ section: "HRA", description: formHRA.description || "House Rent Allowance", declaredAmount: Math.round(amt * 100) });
-    }
+    const pushSection = (code: string, defaultDesc: string, form: { description: string; amount: string }) => {
+      if (!form.amount) return;
+      const amt = parseFloat(form.amount);
+      if (!(amt > 0)) return;
+      sections.push({
+        section: code,
+        items: [
+          {
+            description: form.description || defaultDesc,
+            declaredAmount: Math.round(amt),
+          },
+        ],
+      });
+    };
+    pushSection("80C", "Section 80C investments", form80C);
+    pushSection("80D", "Medical insurance premium", form80D);
+    pushSection("HRA", "House Rent Allowance", formHRA);
 
     if (sections.length === 0) {
       toast.error("Add at least one declaration section with a valid amount");
       return;
     }
 
-    // Validate statutory limits
+    // Validate statutory limits (amounts now in rupees already).
     for (const section of sections) {
       const limit = SECTION_LIMITS[section.section];
-      const declaredRupees = section.declaredAmount / 100;
+      const declaredRupees = section.items.reduce((s, i) => s + (i.declaredAmount || 0), 0);
       if (limit && declaredRupees > limit) {
         toast.error(`Section ${section.section} limit is \u20B9${limit.toLocaleString("en-IN")}`);
         return;
@@ -194,22 +240,44 @@ export default function InvestmentDeclarationsPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] flex flex-col min-h-screen">
+      <main className="flex-1 min-w-0 md:ml-[260px] flex flex-col min-h-screen">
         {/* Header */}
         <div className="bg-white border-b border-[#E2E8F0] px-8 py-5 flex items-center justify-between sticky top-0 z-20">
           <div>
             <h1 className="text-[20px] font-bold text-[#0F172A]">Investment Declarations</h1>
             <p className="text-[13px] text-[#64748B] mt-0.5">Submit your tax-saving declarations</p>
           </div>
-          <Button
-            onClick={() => { setEditingDecl(null); resetForm(); setShowModal(true); }}
-            className="bg-[#2E86C1] hover:bg-[#2471A3] h-9 text-[13px] gap-2"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-            </svg>
-            New Declaration
-          </Button>
+          <div className="flex items-center gap-2">
+            {(() => {
+              // HR/admin also have a review queue (#15). Surface it
+              // here so the same Declarations section in the nav
+              // routes both actors to the right view.
+              const roles: string[] = (user as any)?.roles ?? [];
+              const canReview =
+                roles.includes("admin") ||
+                roles.includes("hr") ||
+                roles.includes("super_admin") ||
+                roles.includes("owner");
+              return canReview ? (
+                <Button
+                  variant="outline"
+                  onClick={() => router.push("/payroll/declarations/admin")}
+                  className="h-9 text-[13px]"
+                >
+                  Review Queue
+                </Button>
+              ) : null;
+            })()}
+            <Button
+              onClick={() => { setEditingDecl(null); resetForm(); setShowModal(true); }}
+              className="bg-[#2E86C1] hover:bg-[#2471A3] h-9 text-[13px] gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              New Declaration
+            </Button>
+          </div>
         </div>
 
         {/* Content */}
@@ -258,12 +326,15 @@ export default function InvestmentDeclarationsPage() {
                     </div>
                   </div>
 
-                  {/* Sections summary */}
+                  {/* Sections summary — read the nested items shape,
+                      fall through to the legacy flat fields */}
                   <div className="space-y-2 mb-3">
                     {(decl.sections || []).map((sec, idx) => (
-                      <div key={idx} className="flex items-center justify-between py-1">
-                        <span className="text-[13px] text-[#64748B]">{sec.section}: {sec.description}</span>
-                        <span className="text-[13px] font-medium text-[#0F172A]">{formatCurrency(sec.declaredAmount)}</span>
+                      <div key={idx} className="flex items-center justify-between py-1 gap-2">
+                        <span className="text-[13px] text-[#64748B] truncate">
+                          {sec.section}{sectionDescription(sec) ? `: ${sectionDescription(sec)}` : ""}
+                        </span>
+                        <span className="text-[13px] font-medium text-[#0F172A] shrink-0">{formatCurrency(sectionDeclaredTotal(sec))}</span>
                       </div>
                     ))}
                   </div>
@@ -291,12 +362,16 @@ export default function InvestmentDeclarationsPage() {
                           setEditingDecl(decl);
                           setFormFY(decl.financialYear);
                           setFormRegime(decl.regime);
+                          // Edit prefill reads the nested items[] shape and
+                          // uses rupees directly (no /100 — amounts stopped
+                          // being stored as paise with the same fix).
                           const sec80C = decl.sections.find((s) => s.section === "80C");
                           const sec80D = decl.sections.find((s) => s.section === "80D");
                           const secHRA = decl.sections.find((s) => s.section === "HRA");
-                          setForm80C({ description: sec80C?.description || "", amount: sec80C ? String(sec80C.declaredAmount / 100) : "" });
-                          setForm80D({ description: sec80D?.description || "", amount: sec80D ? String(sec80D.declaredAmount / 100) : "" });
-                          setFormHRA({ description: secHRA?.description || "", amount: secHRA ? String(secHRA.declaredAmount / 100) : "" });
+                          const total = (sec?: DeclarationSection) => sec ? String(sectionDeclaredTotal(sec)) : "";
+                          setForm80C({ description: sectionDescription(sec80C as any), amount: total(sec80C) });
+                          setForm80D({ description: sectionDescription(sec80D as any), amount: total(sec80D) });
+                          setFormHRA({ description: sectionDescription(secHRA as any), amount: total(secHRA) });
                           setShowModal(true);
                         }}
                         className="h-8 px-3 flex items-center gap-1.5 rounded-lg border border-[#E2E8F0] bg-white text-[12px] font-medium text-[#0F172A] hover:bg-[#F8FAFC] transition-colors"

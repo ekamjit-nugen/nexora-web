@@ -21,8 +21,66 @@ interface PlatformOrganization {
   isActive: boolean;
   industry?: string;
   size?: string;
+  // Org logo URL — uploaded via Settings → Branding. Shown in the
+  // list as a 32px avatar with initials fallback for orgs that
+  // haven't set one yet (most fresh tenants).
+  logo?: string | null;
+  // Active seats (for billing) — matches the legacy single-number value.
   memberCount?: number;
+  // Detailed breakdown (added April 2026): active/inactive/total. The
+  // list table renders "active / total" so platform admins can spot
+  // tenants with abnormal exited-employee ratios at a glance.
+  members?: { active: number; inactive: number; total: number };
   createdAt: string;
+}
+
+// Deterministic color picker for the initials fallback. Hashing the
+// org name produces a stable color so refreshing the page doesn't
+// reshuffle the palette and disorient the platform admin's pattern-
+// recognition.
+const ORG_AVATAR_TONES = [
+  { bg: 'bg-blue-100', text: 'text-blue-700' },
+  { bg: 'bg-violet-100', text: 'text-violet-700' },
+  { bg: 'bg-emerald-100', text: 'text-emerald-700' },
+  { bg: 'bg-amber-100', text: 'text-amber-700' },
+  { bg: 'bg-rose-100', text: 'text-rose-700' },
+  { bg: 'bg-cyan-100', text: 'text-cyan-700' },
+  { bg: 'bg-indigo-100', text: 'text-indigo-700' },
+  { bg: 'bg-teal-100', text: 'text-teal-700' },
+];
+function avatarToneFor(seed: string) {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  return ORG_AVATAR_TONES[Math.abs(h) % ORG_AVATAR_TONES.length];
+}
+
+function OrgAvatar({ org, size = 36 }: { org: { logo?: string | null; name: string }; size?: number }) {
+  const initials = org.name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((s) => s[0]?.toUpperCase() || '')
+    .join('') || '?';
+  const tone = avatarToneFor(org.name);
+  const px = `${size}px`;
+  if (org.logo) {
+    return (
+      <img
+        src={org.logo}
+        alt={org.name}
+        className="rounded-lg object-cover border border-[#E2E8F0] shrink-0"
+        style={{ width: px, height: px }}
+      />
+    );
+  }
+  return (
+    <div
+      className={`${tone.bg} ${tone.text} rounded-lg flex items-center justify-center font-bold shrink-0`}
+      style={{ width: px, height: px, fontSize: size * 0.36 }}
+    >
+      {initials}
+    </div>
+  );
 }
 
 export default function PlatformOrganizationsPage() {
@@ -128,7 +186,7 @@ export default function PlatformOrganizationsPage() {
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
-      <main className="flex-1 ml-[260px] p-8">
+      <main className="flex-1 min-w-0 md:ml-[260px] p-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -194,7 +252,7 @@ export default function PlatformOrganizationsPage() {
                       <th className="text-left text-[11px] font-semibold text-[#64748B] uppercase tracking-wider px-5 py-3">Name</th>
                       <th className="text-left text-[11px] font-semibold text-[#64748B] uppercase tracking-wider px-5 py-3">Plan</th>
                       <th className="text-left text-[11px] font-semibold text-[#64748B] uppercase tracking-wider px-5 py-3">Status</th>
-                      <th className="text-left text-[11px] font-semibold text-[#64748B] uppercase tracking-wider px-5 py-3">Members</th>
+                      <th className="text-left text-[11px] font-semibold text-[#64748B] uppercase tracking-wider px-5 py-3" title="Active seats / total members (active+exited)">Seats</th>
                       <th className="text-left text-[11px] font-semibold text-[#64748B] uppercase tracking-wider px-5 py-3">Created</th>
                       <th className="text-right text-[11px] font-semibold text-[#64748B] uppercase tracking-wider px-5 py-3">Actions</th>
                     </tr>
@@ -207,12 +265,44 @@ export default function PlatformOrganizationsPage() {
                         onClick={() => router.push(`/platform/organizations/${org._id}`)}
                       >
                         <td className="px-5 py-3.5">
-                          <p className="text-[13px] font-semibold text-[#0F172A]">{org.name}</p>
-                          {org.industry && <p className="text-xs text-[#94A3B8] mt-0.5 capitalize">{org.industry}</p>}
+                          {/* Avatar + identity column. The logo (or
+                              initials fallback) anchors the row
+                              visually so platform admins scanning a
+                              long list can pattern-match tenants
+                              without reading every name. */}
+                          <div className="flex items-center gap-3 min-w-0">
+                            <OrgAvatar org={org} size={36} />
+                            <div className="min-w-0">
+                              <p className="text-[13px] font-semibold text-[#0F172A] truncate">{org.name}</p>
+                              {org.industry && <p className="text-xs text-[#94A3B8] mt-0.5 capitalize truncate">{org.industry}</p>}
+                            </div>
+                          </div>
                         </td>
                         <td className="px-5 py-3.5">{planBadge(org.plan)}</td>
                         <td className="px-5 py-3.5">{statusBadge(org)}</td>
-                        <td className="px-5 py-3.5 text-[13px] text-[#334155]">{org.memberCount ?? "--"}</td>
+                        <td className="px-5 py-3.5">
+                          {/* Vertical stack avoids wrapping in narrow
+                              columns. Active count is the headline,
+                              total + inactive sit in a smaller second
+                              line. Tooltip carries the full breakdown
+                              for screen readers and hover. */}
+                          {org.members ? (
+                            <div
+                              className="leading-tight whitespace-nowrap"
+                              title={`${org.members.active} active · ${org.members.inactive} inactive · ${org.members.total} total`}
+                            >
+                              <div className="text-[15px] font-semibold text-[#0F172A]">{org.members.active}</div>
+                              <div className="text-[10px] text-[#94A3B8] mt-0.5">
+                                of {org.members.total}
+                                {org.members.inactive > 0 && (
+                                  <span className="ml-1">· {org.members.inactive} inactive</span>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-[13px] text-[#334155]">{org.memberCount ?? "--"}</span>
+                          )}
+                        </td>
                         <td className="px-5 py-3.5 text-[13px] text-[#64748B]">
                           {new Date(org.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                         </td>

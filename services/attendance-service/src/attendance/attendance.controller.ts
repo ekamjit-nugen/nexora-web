@@ -4,7 +4,7 @@ import {
   HttpCode, HttpStatus, Logger,
 } from '@nestjs/common';
 import { AttendanceService } from './attendance.service';
-import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { JwtAuthGuard, Roles } from './guards/jwt-auth.guard';
 import {
   CheckInDto, CheckOutDto, ManualEntryDto, AttendanceQueryDto,
   CreateShiftDto, UpdateShiftDto,
@@ -26,6 +26,8 @@ export class AttendanceController {
     const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
     const attendance = await this.attendanceService.checkIn(
       req.user.userId, req.user.roles || [], ip, dto.method || 'web', req.user?.organizationId,
+      dto.location || null,
+      req.user?.orgRole,
     );
     return { success: true, message: 'Check-in recorded successfully', data: attendance };
   }
@@ -37,6 +39,8 @@ export class AttendanceController {
     const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
     const attendance = await this.attendanceService.checkOut(
       req.user.userId, req.user.roles || [], ip, dto.method || 'web', req.user?.organizationId,
+      dto.location || null,
+      req.user?.orgRole,
     );
     return { success: true, message: 'Check-out recorded successfully', data: attendance };
   }
@@ -94,8 +98,12 @@ export class AttendanceController {
     return { success: true, message: 'Pending approvals retrieved', data: result.data, pagination: result.pagination };
   }
 
+  // SEC-2: approve was ungated — any authenticated developer could approve
+  // a fabricated attendance entry. Restrict to manager / hr / admin / owner
+  // and let the service also block self-approval (same pattern as leave).
   @Put('attendance/:id/approve')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'owner', 'super_admin', 'manager')
   @HttpCode(HttpStatus.OK)
   async approveManualEntry(
     @Param('id') id: string,
@@ -103,7 +111,12 @@ export class AttendanceController {
     @Req() req,
   ) {
     const attendance = await this.attendanceService.approveManualEntry(
-      id, body.approved, req.user.userId, body.rejectionReason, req.user?.organizationId,
+      id,
+      body.approved,
+      req.user.userId,
+      body.rejectionReason,
+      req.user?.organizationId,
+      { orgRole: req.user?.orgRole, roles: req.user?.roles },
     );
     return {
       success: true,
@@ -116,6 +129,7 @@ export class AttendanceController {
 
   @Post('shifts')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'owner', 'super_admin', 'manager')
   @HttpCode(HttpStatus.CREATED)
   async createShift(@Body() dto: CreateShiftDto, @Req() req) {
     const shift = await this.attendanceService.createShift(dto, req.user.userId, req.user?.organizationId);
@@ -138,6 +152,7 @@ export class AttendanceController {
 
   @Put('shifts/:id')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'owner', 'super_admin', 'manager')
   async updateShift(@Param('id') id: string, @Body() dto: UpdateShiftDto, @Req() req) {
     const shift = await this.attendanceService.updateShift(id, dto, req.user?.organizationId);
     return { success: true, message: 'Shift updated successfully', data: shift };
@@ -145,6 +160,7 @@ export class AttendanceController {
 
   @Delete('shifts/:id')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'owner', 'super_admin')
   async deleteShift(@Param('id') id: string, @Req() req) {
     const result = await this.attendanceService.deleteShift(id, req.user?.organizationId);
     return { success: true, ...result };
@@ -154,6 +170,7 @@ export class AttendanceController {
 
   @Post('policies')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'owner', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async createPolicy(@Body() dto: CreatePolicyDto, @Req() req) {
     const policy = await this.attendanceService.createPolicy(dto, req.user.userId, req.user?.organizationId);
@@ -169,6 +186,7 @@ export class AttendanceController {
 
   @Post('policies/from-template/:id')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'owner', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async createFromTemplate(
     @Param('id') id: string,
@@ -195,6 +213,7 @@ export class AttendanceController {
 
   @Put('policies/:id')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'owner', 'super_admin')
   async updatePolicy(@Param('id') id: string, @Body() dto: UpdatePolicyDto, @Req() req) {
     const policy = await this.attendanceService.updatePolicy(id, dto, req.user?.organizationId);
     return { success: true, message: 'Policy updated successfully', data: policy };
@@ -202,6 +221,7 @@ export class AttendanceController {
 
   @Delete('policies/:id')
   @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'owner', 'super_admin')
   async deletePolicy(@Param('id') id: string, @Req() req) {
     const result = await this.attendanceService.deletePolicy(id, req.user?.organizationId);
     return { success: true, ...result };
@@ -242,5 +262,48 @@ export class AttendanceController {
   async acknowledgeAlert(@Param('id') id: string, @Req() req) {
     const alert = await this.attendanceService.acknowledgeAlert(id, req.user.userId, req.user?.organizationId);
     return { success: true, message: 'Alert acknowledged', data: alert };
+  }
+
+  // ── Holiday calendar ──
+  //
+  // Read: any authenticated user (employees need to see the calendar).
+  // Write: admin/hr/owner only — declaring a public holiday is an
+  // HR-level admin action and affects everyone's LOP math.
+
+  @Get('holidays')
+  @UseGuards(JwtAuthGuard)
+  async listHolidays(@Query('year') year: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const y = year ? Number(year) : undefined;
+    const holidays = await this.attendanceService.listHolidays(orgId, y);
+    return { success: true, message: 'Holidays retrieved', data: holidays };
+  }
+
+  @Post('holidays')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'owner', 'super_admin')
+  @HttpCode(HttpStatus.CREATED)
+  async createHoliday(
+    @Body() body: { date: string; name: string; type?: string; description?: string },
+    @Req() req,
+  ) {
+    const holiday = await this.attendanceService.createHoliday(
+      body,
+      req.user.userId,
+      req.user?.organizationId,
+    );
+    return { success: true, message: 'Holiday created', data: holiday };
+  }
+
+  @Delete('holidays/:id')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'owner', 'super_admin')
+  async deleteHoliday(@Param('id') id: string, @Req() req) {
+    const result = await this.attendanceService.deleteHoliday(
+      id,
+      req.user.userId,
+      req.user?.organizationId,
+    );
+    return { success: true, message: 'Holiday deleted', data: result };
   }
 }

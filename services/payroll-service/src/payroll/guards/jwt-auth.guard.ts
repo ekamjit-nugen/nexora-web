@@ -37,6 +37,11 @@ export class JwtAuthGuard implements CanActivate {
         firstName: payload.firstName,
         lastName: payload.lastName,
         roles: payload.roles || [],
+        // orgRole + isPlatformAdmin are needed server-side for rules like
+        // owner-bypass on maker-checker (P-8). Previously these weren't
+        // plumbed through, so single-admin orgs deadlocked on self-approval.
+        orgRole: payload.orgRole || null,
+        isPlatformAdmin: payload.isPlatformAdmin || false,
         organizationId: payload.organizationId,
       };
 

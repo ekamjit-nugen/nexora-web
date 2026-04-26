@@ -302,7 +302,7 @@ export default function ChatPage() {
     <div className="min-h-screen bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={handleLogout} />
 
-      <main className="ml-[260px] h-screen flex">
+      <main className="md:ml-[260px] h-screen flex">
         {/* ── Left Panel: Conversation List ── */}
         <div className="w-[300px] border-r border-[#E2E8F0] bg-white flex flex-col h-full">
           {/* Header */}

@@ -1,8 +1,9 @@
 import {
   Controller, Get, Post, Put, Patch, Delete,
-  Body, Param, Query, UseGuards, Req,
-  HttpCode, HttpStatus, Logger,
+  Body, Param, Query, UseGuards, Req, Res,
+  HttpCode, HttpStatus, Logger, BadRequestException,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { PayrollService } from './payroll.service';
 import { BankPayoutService } from './bank-payout.service';
 import { JwtAuthGuard, Roles } from './guards/jwt-auth.guard';
@@ -60,13 +61,57 @@ export class PayrollController {
     return { success: true, message: 'Salary structure created successfully', data: result };
   }
 
+  // Admin-level list: returns all structures in the caller's org. Must be
+  // declared BEFORE `:employeeId` so Nest doesn't route `salary-structures`
+  // (without a path param) into the parametric handler.
+  @Get('salary-structures')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async listSalaryStructures(@Query() query: any, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const result = await this.payrollService.listSalaryStructures(query, orgId);
+    return {
+      success: true,
+      message: 'Salary structures retrieved',
+      data: result?.data ?? result ?? [],
+      pagination: result?.pagination,
+    };
+  }
+
+  // Employee self-service: returns the caller's own active salary structure.
+  // Declared BEFORE `:employeeId` so Nest matches `me` literally. No @Roles
+  // guard — any authenticated user can read their own row. The service
+  // resolves HR employee from the auth userId (via HR service).
+  @Get('salary-structures/me')
+  @UseGuards(JwtAuthGuard)
+  async getMySalaryStructure(@Query('status') status: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const email = req.user.email;
+    const token = (req.headers?.authorization || '').replace(/^Bearer\s+/i, '') || undefined;
+    const requested = (status as any) || 'active';
+    const allowed = ['active', 'pending_approval', 'draft'];
+    const statusParam = allowed.includes(requested) ? requested : 'active';
+    const result = await this.payrollService.getMySalaryStructure(userId, orgId, token, statusParam, email);
+    return { success: true, message: 'Salary structure retrieved', data: result };
+  }
+
   @Get('salary-structures/:employeeId')
   @UseGuards(JwtAuthGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getSalaryStructure(@Param('employeeId') employeeId: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
-    const result = await this.payrollService.getSalaryStructure(employeeId, userId, orgId);
+    // P2.3 — pass role + email + token for HRBP scoping. Controller-
+    // level @Roles lets managers through broadly; the service then
+    // narrows their view to their own report chain (or self).
+    const authCtx = {
+      roles: Array.isArray(req.user?.roles) ? req.user.roles : [],
+      orgRole: req.user?.orgRole || null,
+      email: req.user?.email,
+      token: (req.headers?.authorization || '').replace(/^Bearer\s+/i, '') || undefined,
+    };
+    const result = await this.payrollService.getSalaryStructure(employeeId, userId, orgId, authCtx);
     return { success: true, message: 'Salary structure retrieved', data: result };
   }
 
@@ -76,7 +121,13 @@ export class PayrollController {
   async getSalaryHistory(@Param('employeeId') employeeId: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
-    const result = await this.payrollService.getSalaryHistory(employeeId, userId, orgId);
+    const authCtx = {
+      roles: Array.isArray(req.user?.roles) ? req.user.roles : [],
+      orgRole: req.user?.orgRole || null,
+      email: req.user?.email,
+      token: (req.headers?.authorization || '').replace(/^Bearer\s+/i, '') || undefined,
+    };
+    const result = await this.payrollService.getSalaryHistory(employeeId, userId, orgId, authCtx);
     return { success: true, message: 'Salary history retrieved', data: result };
   }
 
@@ -102,11 +153,12 @@ export class PayrollController {
 
   @Post('salary-structures/:id/approve')
   @UseGuards(JwtAuthGuard)
-  @Roles('admin', 'super_admin')
+  @Roles('admin', 'super_admin', 'owner')
   async approveSalaryStructure(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
-    const result = await this.payrollService.approveSalaryStructure(id, userId, orgId);
+    const orgRole = req.user?.orgRole;
+    const result = await this.payrollService.approveSalaryStructure(id, userId, orgId, orgRole);
     return { success: true, message: 'Salary structure approved successfully', data: result };
   }
 
@@ -120,9 +172,13 @@ export class PayrollController {
     return { success: true, message: 'Salary structure rejected', data: result };
   }
 
+  // Simulate is a deterministic pure calculator — given a CTC it shows the
+  // split into earnings/deductions/net. It doesn't read any tenant data or
+  // leak salary information about other employees. QA finding Payroll-1:
+  // the admin-only gate blocked the employee self-view's "Simulate CTC"
+  // button. Relax to any authenticated user in an org.
   @Post('salary-structures/simulate')
   @UseGuards(JwtAuthGuard)
-  @Roles('admin', 'hr', 'super_admin', 'manager')
   async simulateCTC(@Body() dto: SimulateCTCDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -150,7 +206,16 @@ export class PayrollController {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
     const result = await this.payrollService.getPayrollRuns(query, userId, orgId);
-    return { success: true, message: 'Payroll runs retrieved', data: result };
+    // Flatten: service returns { data: [...rows], pagination: {...} }; don't
+    // nest it under an outer `data` key again — the frontend was reading
+    // `response.data` as the row array and always getting an object instead,
+    // which rendered as "No payroll runs yet" even when runs existed.
+    return {
+      success: true,
+      message: 'Payroll runs retrieved',
+      data: result?.data ?? result ?? [],
+      pagination: result?.pagination,
+    };
   }
 
   @Get('payroll-runs/:id')
@@ -179,8 +244,29 @@ export class PayrollController {
   async updatePayrollRunStatus(@Param('id') id: string, @Body() dto: UpdatePayrollStatusDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
-    const result = await this.payrollService.updatePayrollRunStatus(id, dto, userId, orgId);
+    const orgRole = req.user?.orgRole;
+    const result = await this.payrollService.updatePayrollRunStatus(id, dto, userId, orgId, orgRole);
     return { success: true, message: `Payroll run status updated to ${dto.status}`, data: result };
+  }
+
+  // P1.5 — reopen a finalized run back to `review` for correction before
+  // disbursement. `paid` runs are rejected with a message pointing to
+  // the supplementary-run path. Maker-checker: reopener ≠ finalizer
+  // (owner can bypass).
+  @Post('payroll-runs/:id/reopen')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'super_admin')
+  @HttpCode(HttpStatus.OK)
+  async reopenPayrollRun(
+    @Param('id') id: string,
+    @Body() dto: { reason: string },
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const orgRole = req.user?.orgRole;
+    const result = await this.payrollService.reopenPayrollRun(id, dto, userId, orgId, orgRole);
+    return { success: true, message: 'Payroll run reopened to review', data: result };
   }
 
   @Get('payroll-runs/:id/entries')
@@ -193,13 +279,26 @@ export class PayrollController {
     return { success: true, message: 'Payroll entries retrieved', data: result };
   }
 
+  // QA finding Payroll-4: employees were blocked by this guard from viewing
+  // their OWN payroll entry. The read is still service-level authorized:
+  // `getPayrollEntry` resolves the caller's HR row and refuses if
+  // `:employeeId` isn't theirs (unless caller has an admin/hr role).
   @Get('payroll-runs/:id/entries/:employeeId')
   @UseGuards(JwtAuthGuard)
-  @Roles('admin', 'hr', 'super_admin', 'manager')
   async getPayrollEntry(@Param('id') id: string, @Param('employeeId') employeeId: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
-    const result = await this.payrollService.getPayrollEntry(id, employeeId, userId, orgId);
+    const email = req.user.email;
+    const orgRole = req.user.orgRole;
+    const userRoles: string[] = Array.isArray(req.user.roles) ? req.user.roles : [];
+    const isPrivileged = ['owner', 'admin', 'hr', 'super_admin', 'manager'].includes(orgRole)
+      || userRoles.some(r => ['admin', 'hr', 'super_admin'].includes(r));
+    const token = (req.headers?.authorization || '').replace(/^Bearer\s+/i, '') || undefined;
+    const result = await this.payrollService.getPayrollEntry(id, employeeId, userId, orgId, {
+      callerEmail: email,
+      callerToken: token,
+      isPrivileged,
+    });
     return { success: true, message: 'Payroll entry retrieved', data: result };
   }
 
@@ -291,6 +390,25 @@ export class PayrollController {
     };
   }
 
+  // Pre-flight validation — admin opens the bank file UI, hits this
+  // first to see how many employees would actually appear in the CSV
+  // and which ones have missing/malformed bank details. The download
+  // endpoint silently skips invalid rows; this gives admins a chance
+  // to fix the bank details (or ack the skips) before pulling the
+  // file. Same RBAC as the download itself — bank details are PII.
+  @Get('payroll-runs/:id/bank-file/validate')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'super_admin')
+  async validateBankFile(@Param('id') id: string, @Req() req) {
+    const orgId = req.user?.organizationId;
+    const report = await this.bankPayoutService.validateBankFile(id, orgId);
+    return {
+      success: true,
+      message: 'Bank file validation complete',
+      data: report,
+    };
+  }
+
   @Post('bank-transactions/:id/retry')
   @UseGuards(JwtAuthGuard)
   @Roles('admin', 'super_admin')
@@ -317,7 +435,9 @@ export class PayrollController {
   async getMyPayslips(@Query() query: PayslipQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
-    const result = await this.payrollService.getMyPayslips(query, userId, orgId);
+    const email = req.user.email;
+    const token = (req.headers?.authorization || '').replace(/^Bearer\s+/i, '') || undefined;
+    const result = await this.payrollService.getMyPayslips(query, userId, orgId, token, email);
     return { success: true, message: 'Payslips retrieved', data: result };
   }
 
@@ -328,6 +448,41 @@ export class PayrollController {
     const userId = req.user.userId;
     const result = await this.payrollService.getPayslip(id, userId, orgId);
     return { success: true, message: 'Payslip retrieved', data: result };
+  }
+
+  // GET /payslips/:id/download — streams a PDF rendered from the stored
+  // Payslip document. Non-privileged users can only download their OWN
+  // payslip; admin/hr/owner can download any in their org. Generation is
+  // on-demand (no file storage) because payroll is immutable after finalize
+  // — regenerating from the Payslip doc always produces the same output.
+  @Get('payslips/:id/download')
+  @UseGuards(JwtAuthGuard)
+  async downloadPayslipPdf(
+    @Param('id') id: string,
+    @Req() req,
+    @Res() res: Response,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const email = req.user.email;
+    const orgRole = req.user.orgRole;
+    const userRoles: string[] = Array.isArray(req.user.roles) ? req.user.roles : [];
+    const isPrivileged = ['owner', 'admin', 'hr', 'super_admin'].includes(orgRole)
+      || userRoles.some((r) => ['admin', 'hr', 'super_admin'].includes(r));
+    const token = (req.headers?.authorization || '').replace(/^Bearer\s+/i, '') || undefined;
+
+    const { buffer, filename } = await this.payrollService.generatePayslipPdf(
+      id, userId, orgId, { email, token, isPrivileged },
+    );
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', String(buffer.length));
+    // Payroll is immutable once finalized; let the browser cache for a
+    // short window to avoid a re-render on refresh. Private because the
+    // URL is per-user authorised.
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    res.send(buffer);
   }
 
   // ── Investment Declarations ──
@@ -348,6 +503,25 @@ export class PayrollController {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
     const result = await this.payrollService.getMyDeclarations(userId, orgId);
+    return { success: true, message: 'Investment declarations retrieved', data: result };
+  }
+
+  // Admin-only list view for the verify UI (#15). HR/admin filter by
+  // status (`submitted`/`verified`/`rejected`) and financial year to
+  // work the queue.
+  @Get('investment-declarations')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'hr', 'super_admin')
+  async getAllDeclarations(
+    @Query('status') status: string,
+    @Query('financialYear') financialYear: string,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const result = await this.payrollService.getAllDeclarations(orgId, {
+      status,
+      financialYear,
+    });
     return { success: true, message: 'Investment declarations retrieved', data: result };
   }
 
@@ -669,6 +843,42 @@ export class PayrollController {
     const userId = req.user.userId;
     const result = await this.payrollService.generateLetters(employeeId, userId, orgId);
     return { success: true, message: 'Letters generated successfully', data: result };
+  }
+
+  // GET /offboarding/:employeeId/letters/:kind — streams either the
+  // experience letter or the relieving letter. No @Roles decorator:
+  // an ex-employee can download their OWN letter (service enforces
+  // ownership via HR row resolution); admin/HR bypass the ownership gate.
+  @Get('offboarding/:employeeId/letters/:kind')
+  @UseGuards(JwtAuthGuard)
+  async downloadOffboardingLetter(
+    @Param('employeeId') employeeId: string,
+    @Param('kind') kind: string,
+    @Req() req,
+    @Res() res: Response,
+  ) {
+    if (kind !== 'experience' && kind !== 'relieving') {
+      throw new BadRequestException(`Unknown letter kind '${kind}'. Valid: experience | relieving`);
+    }
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const email = req.user.email;
+    const orgRole = req.user.orgRole;
+    const userRoles: string[] = Array.isArray(req.user.roles) ? req.user.roles : [];
+    const isPrivileged = ['owner', 'admin', 'hr', 'super_admin'].includes(orgRole)
+      || userRoles.some((r) => ['admin', 'hr', 'super_admin'].includes(r));
+    const token = (req.headers?.authorization || '').replace(/^Bearer\s+/i, '') || undefined;
+
+    const { buffer, filename } = await this.payrollService.generateOffboardingLetterPdf(
+      employeeId, kind, userId, orgId, { email, token, isPrivileged },
+    );
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', String(buffer.length));
+    // Same rationale as other PDF endpoints — short private cache.
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    res.send(buffer);
   }
 
   @Put('offboarding/:employeeId/status')
@@ -1120,6 +1330,43 @@ export class PayrollController {
     const userId = req.user.userId;
     const result = await this.payrollService.getStatutoryReport(id, userId, orgId);
     return { success: true, message: 'Statutory report retrieved', data: result };
+  }
+
+  // GET /statutory-reports/:id/download — streams a PDF for the report.
+  // No @Roles decorator at the controller level so an employee can
+  // download their OWN Form 16; the service method enforces ownership +
+  // rejects non-privileged callers for org-wide report types (PF ECR etc).
+  @Get('statutory-reports/:id/download')
+  @UseGuards(JwtAuthGuard)
+  async downloadStatutoryReportPdf(
+    @Param('id') id: string,
+    @Req() req,
+    @Res() res: Response,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const email = req.user.email;
+    const orgRole = req.user.orgRole;
+    const userRoles: string[] = Array.isArray(req.user.roles) ? req.user.roles : [];
+    const isPrivileged = ['owner', 'admin', 'hr', 'super_admin'].includes(orgRole)
+      || userRoles.some((r) => ['admin', 'hr', 'super_admin'].includes(r));
+    const token = (req.headers?.authorization || '').replace(/^Bearer\s+/i, '') || undefined;
+
+    const { buffer, filename, contentType } = await this.payrollService.generateStatutoryReportPdf(
+      id, userId, orgId, { email, token, isPrivileged },
+    );
+
+    // Content-Type varies per report — Form 16 is PDF, 24Q/PF ECR/ESI
+    // are text uploads for gov portals. Old code hardcoded `application/pdf`
+    // so browsers saved `.csv`/`.txt` files with a `.pdf` suffix and
+    // admins had to rename before uploading to NSDL/EPFO/ESIC.
+    res.setHeader('Content-Type', contentType || 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', String(buffer.length));
+    // Statutory reports are immutable once generated; short browser cache
+    // avoids re-rendering on refresh. Private because URL is per-user gated.
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    res.send(buffer);
   }
 
   // ========================================================================

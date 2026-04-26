@@ -3,10 +3,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { payrollApi } from "@/lib/api";
+import { payrollApi, hrApi, Employee, API_BASE_URL } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmployeePicker } from "@/components/EmployeePicker";
 import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------
@@ -55,11 +56,54 @@ interface ExitInterview {
   conductedAt?: string;
 }
 
+/**
+ * F&F detail blocks — computed + persisted by payroll-service so HR can
+ * explain the gratuity + encashment math to a departing employee. The
+ * totals above surface on the summary card; these surface in expandable
+ * "Why this number?" sections so an auditor doesn't need the raw doc.
+ */
+interface GratuityDetail {
+  eligible: boolean;
+  eligibleReason?: string | null;
+  ineligibleReason?: string | null;
+  yearsOfService: number;
+  rawMonthsOfService: number;
+  monthlyWage: number;       // basic + DA
+  computed: number;          // before cap
+  amount: number;             // final (capped at ₹20L if applicable)
+  capped: boolean;
+  cap: number;                // typically 2,000,000
+}
+
+interface LeaveEncashmentBucket {
+  leaveType: string;
+  availableDays: number;
+  encashable: boolean;
+  includedDays: number;
+  amount: number;
+}
+
+interface LeaveEncashmentDetail {
+  source: "leave_service" | "fallback";
+  perDayRate: number;
+  monthlyWage: number;
+  totalEncashableDays: number;
+  totalAmount: number;
+  buckets: LeaveEncashmentBucket[];
+  note?: string | null;
+}
+
 interface FnFBreakdown {
   basicDue: number;
   leaveEncashment: number;
-  bonus: number;
+  leaveEncashmentDetail?: LeaveEncashmentDetail;
+  // Backend schema field is `bonusDue` (matches the `basicDue` /
+  // `bonusDue` naming pattern); old UI read `bonus` and always
+  // rendered ₹0. Keep the legacy alias for safety.
+  bonusDue?: number;
+  bonus?: number;
   gratuity: number;
+  gratuityDetail?: GratuityDetail;
   pendingReimbursements: number;
   noticeRecovery: number;
   otherDeductions: number;
@@ -67,31 +111,41 @@ interface FnFBreakdown {
   status: string;
 }
 
+// Backend schema uses `type` and `lastWorkingDate`; the frontend form
+// historically used `exitType` and `lastWorkingDay`. Accept both so list
+// reads don't drop fields, and helpers below always resolve the right one.
 interface OffboardingRecord {
   _id: string;
   employeeId: string;
   employeeName?: string;
-  exitType: string;
+  type?: string;
+  exitType?: string;
   status: string;
   resignationDate: string;
-  lastWorkingDay: string;
+  lastWorkingDate?: string;
+  lastWorkingDay?: string;
   noticePeriodDays: number;
   noticePeriodWaived?: boolean;
   clearance: ClearanceItem[];
   exitInterview?: ExitInterview;
-  fnfBreakdown?: FnFBreakdown;
+  fnfSettlement?: FnFBreakdown;
   lettersGenerated?: boolean;
   experienceLetterUrl?: string;
   relievingLetterUrl?: string;
   createdAt?: string;
 }
 
+const getExitType = (r: OffboardingRecord): string => r.type || r.exitType || "resignation";
+const getLastWorkingDay = (r: OffboardingRecord): string => r.lastWorkingDate || r.lastWorkingDay || "";
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const formatCurrency = (paise: number) => {
-  if (typeof paise !== "number" || isNaN(paise)) return "₹0.00";
-  const rupees = paise / 100;
+// F&F amounts are stored in rupees on the backend (same convention as
+// payroll entries and claims). Dividing by 100 showed a ₹1L payout as
+// ₹1,000. Match the other payroll pages.
+const formatCurrency = (rupees: number) => {
+  if (typeof rupees !== "number" || isNaN(rupees)) return "₹0.00";
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
@@ -161,8 +215,20 @@ export default function OffboardingPage() {
     if (!user) return;
     setLoading(true);
     try {
-      const res = await payrollApi.getAllOffboardings();
-      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.offboardings ?? [];
+      const res: any = await payrollApi.getAllOffboardings();
+      // `GET /offboarding` returns `{success, data: {records: [...], total, page, ...}}`.
+      // Earlier code read the wrong key (`offboardings`) and the list
+      // always rendered empty even when records existed.
+      const raw = res?.data;
+      const data: OffboardingRecord[] = Array.isArray(raw)
+        ? raw
+        : Array.isArray(raw?.records)
+          ? raw.records
+          : Array.isArray(raw?.offboardings)
+            ? raw.offboardings
+            : Array.isArray(raw?.data)
+              ? raw.data
+              : [];
       setRecords(data);
     } catch (err: any) {
       toast.error(err.message || "Failed to load offboarding records");
@@ -202,7 +268,17 @@ export default function OffboardingPage() {
   const handleInitiate = async () => {
     setInitiating(true);
     try {
-      await payrollApi.initiateOffboarding(initiateForm);
+      // Backend DTO uses `type` (not `exitType`) and `lastWorkingDate`
+      // (not `lastWorkingDay`). Earlier code shipped the frontend field
+      // names, which the server rejected with a 400 validation error.
+      // Remap at submit time so the rest of the component can keep its
+      // `exitType`/`lastWorkingDay` naming.
+      const { exitType, lastWorkingDay, ...rest } = initiateForm;
+      await payrollApi.initiateOffboarding({
+        ...rest,
+        type: exitType,
+        lastWorkingDate: lastWorkingDay,
+      });
       toast.success("Offboarding initiated successfully");
       setShowInitiateModal(false);
       setInitiateForm({
@@ -294,6 +370,41 @@ export default function OffboardingPage() {
     }
   };
 
+  // Download a letter PDF via the authorised endpoint. Plain <a href>
+  // won't work because the endpoint needs the Authorization header
+  // (the service enforces self-or-privileged access), so we go via
+  // fetch + blob + programmatic anchor click — same pattern as payslips.
+  const handleDownloadLetter = async (empId: string, kind: "experience" | "relieving") => {
+    const key = `letter-${empId}-${kind}`;
+    setActionLoading(key);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+      const res = await fetch(`${API_BASE_URL}/api/v1/offboarding/${encodeURIComponent(empId)}/letters/${kind}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        let msg = `Download failed (${res.status})`;
+        try { const body = await res.json(); msg = body?.message || msg; } catch { /* non-JSON */ }
+        toast.error(msg);
+        return;
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") || "";
+      const m = disposition.match(/filename="?([^"]+)"?/i);
+      const filename = m?.[1] || `${kind === "experience" ? "Experience" : "Relieving"}_Letter_${empId}.pdf`;
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success(`${kind === "experience" ? "Experience" : "Relieving"} letter downloaded`);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to download letter");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   // ---------------------------------------------------------------------------
   // Loading / Auth gate
   // ---------------------------------------------------------------------------
@@ -311,7 +422,7 @@ export default function OffboardingPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] flex flex-col min-h-screen">
+      <main className="flex-1 min-w-0 md:ml-[260px] flex flex-col min-h-screen">
         {/* ----------------------------------------------------------------- */}
         {/* Header                                                            */}
         {/* ----------------------------------------------------------------- */}
@@ -386,7 +497,7 @@ export default function OffboardingPage() {
             <div className="space-y-3">
               {paginatedRecords.map((record) => {
                 const sCfg = statusConfig[record.status] || statusConfig.initiated;
-                const eCfg = exitTypeConfig[record.exitType] || exitTypeConfig.resignation;
+                const eCfg = exitTypeConfig[getExitType(record)] || exitTypeConfig.resignation;
                 const clearedCount = record.clearance?.filter((c) => c.status === "cleared").length ?? 0;
                 const totalDepts = record.clearance?.length ?? 0;
                 const clearancePercent = totalDepts > 0 ? Math.round((clearedCount / totalDepts) * 100) : 0;
@@ -415,7 +526,7 @@ export default function OffboardingPage() {
                           {/* Row 2: Dates + Notice period */}
                           <div className="flex items-center gap-6 text-[13px] text-[#64748B]">
                             <span>
-                              {formatDate(record.resignationDate)} → {formatDate(record.lastWorkingDay)}
+                              {formatDate(record.resignationDate)} → {formatDate(getLastWorkingDay(record))}
                             </span>
                             <span>
                               Notice: {record.noticePeriodDays} days
@@ -441,11 +552,11 @@ export default function OffboardingPage() {
                           )}
 
                           {/* Row 4: F&F amount if calculated */}
-                          {record.fnfBreakdown && record.fnfBreakdown.totalPayable > 0 && (
+                          {record.fnfSettlement && record.fnfSettlement.totalPayable > 0 && (
                             <div className="text-[13px]">
                               <span className="text-[#64748B]">F&F Payable: </span>
                               <span className="font-semibold text-[#0F172A]">
-                                {formatCurrency(record.fnfBreakdown.totalPayable)}
+                                {formatCurrency(record.fnfSettlement.totalPayable)}
                               </span>
                             </div>
                           )}
@@ -507,15 +618,19 @@ export default function OffboardingPage() {
               <h2 className="text-[17px] font-bold text-[#0F172A] mb-4">Initiate Offboarding</h2>
 
               <div className="space-y-4">
-                {/* Employee ID */}
+                {/* Employee — autocomplete picker (was free-text).
+                    Offboarding keys off the business `employeeId`
+                    (backend stores it that way; F&F flow then
+                    resolves to HR _id internally for cross-service
+                    lookups). */}
                 <div>
-                  <label className="block text-[13px] font-medium text-[#334155] mb-1">Employee ID</label>
-                  <input
-                    type="text"
+                  <label className="block text-[13px] font-medium text-[#334155] mb-1">Employee</label>
+                  <EmployeePicker
                     value={initiateForm.employeeId}
-                    onChange={(e) => setInitiateForm((f) => ({ ...f, employeeId: e.target.value }))}
-                    className="w-full border border-[#E2E8F0] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#2E86C1]/30 focus:border-[#2E86C1]"
-                    placeholder="e.g. EMP001"
+                    onChange={(next) => setInitiateForm((f) => ({ ...f, employeeId: next }))}
+                    valueKind="businessId"
+                    placeholder="Search employees by name, ID, or email…"
+                    required
                   />
                 </div>
 
@@ -832,22 +947,22 @@ export default function OffboardingPage() {
                 {/* ---- F&F Settlement Tab ---- */}
                 {activeTab === "fnf" && (
                   <div className="space-y-4">
-                    {selectedRecord.fnfBreakdown ? (
+                    {selectedRecord.fnfSettlement ? (
                       <>
                         {/* F&F Status badge */}
                         <div className="flex items-center gap-2 mb-2">
                           <span className="text-[13px] text-[#64748B]">F&F Status:</span>
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${
-                            selectedRecord.fnfBreakdown.status === "approved"
+                            selectedRecord.fnfSettlement.status === "approved"
                               ? "bg-emerald-50 text-emerald-700"
-                              : selectedRecord.fnfBreakdown.status === "paid"
+                              : selectedRecord.fnfSettlement.status === "paid"
                               ? "bg-green-50 text-green-700"
-                              : selectedRecord.fnfBreakdown.status === "calculated"
+                              : selectedRecord.fnfSettlement.status === "calculated"
                               ? "bg-blue-50 text-blue-700"
                               : "bg-gray-100 text-gray-600"
                           }`}>
-                            {selectedRecord.fnfBreakdown.status
-                              ? selectedRecord.fnfBreakdown.status.charAt(0).toUpperCase() + selectedRecord.fnfBreakdown.status.slice(1)
+                            {selectedRecord.fnfSettlement.status
+                              ? selectedRecord.fnfSettlement.status.charAt(0).toUpperCase() + selectedRecord.fnfSettlement.status.slice(1)
                               : "Pending"}
                           </span>
                         </div>
@@ -856,33 +971,197 @@ export default function OffboardingPage() {
                         <Card className="rounded-xl border border-[#E2E8F0]">
                           <CardContent className="p-5 space-y-3">
                             {[
-                              { label: "Basic Due", value: selectedRecord.fnfBreakdown.basicDue, negative: false },
-                              { label: "Leave Encashment", value: selectedRecord.fnfBreakdown.leaveEncashment, negative: false },
-                              { label: "Bonus", value: selectedRecord.fnfBreakdown.bonus, negative: false },
-                              { label: "Gratuity", value: selectedRecord.fnfBreakdown.gratuity, negative: false },
-                              { label: "Pending Reimbursements", value: selectedRecord.fnfBreakdown.pendingReimbursements, negative: false },
-                              { label: "Notice Recovery", value: selectedRecord.fnfBreakdown.noticeRecovery, negative: true },
-                              { label: "Other Deductions", value: selectedRecord.fnfBreakdown.otherDeductions, negative: true },
+                              { label: "Basic Due", value: selectedRecord.fnfSettlement.basicDue, negative: false },
+                              { label: "Leave Encashment", value: selectedRecord.fnfSettlement.leaveEncashment, negative: false },
+                              { label: "Bonus", value: selectedRecord.fnfSettlement.bonusDue ?? selectedRecord.fnfSettlement.bonus, negative: false },
+                              { label: "Gratuity", value: selectedRecord.fnfSettlement.gratuity, negative: false },
+                              { label: "Pending Reimbursements", value: selectedRecord.fnfSettlement.pendingReimbursements, negative: false },
+                              { label: "Notice Recovery", value: selectedRecord.fnfSettlement.noticeRecovery, negative: true },
+                              { label: "Other Deductions", value: selectedRecord.fnfSettlement.otherDeductions, negative: true },
                             ].map((item) => (
                               <div key={item.label} className="flex items-center justify-between">
                                 <span className="text-[13px] text-[#64748B]">{item.label}</span>
                                 <span className={`text-[13px] font-medium ${item.negative ? "text-red-600" : "text-[#0F172A]"}`}>
-                                  {item.negative && item.value > 0 ? "- " : ""}
-                                  {formatCurrency(item.value || 0)}
+                                  {item.negative && (item.value ?? 0) > 0 ? "- " : ""}
+                                  {formatCurrency(item.value ?? 0)}
                                 </span>
                               </div>
                             ))}
                             <div className="border-t border-[#E2E8F0] pt-3 flex items-center justify-between">
                               <span className="text-[14px] font-bold text-[#0F172A]">Total Payable</span>
                               <span className="text-[14px] font-bold text-[#0F172A]">
-                                {formatCurrency(selectedRecord.fnfBreakdown.totalPayable)}
+                                {formatCurrency(selectedRecord.fnfSettlement.totalPayable)}
                               </span>
                             </div>
                           </CardContent>
                         </Card>
 
+                        {/* Gratuity detail (#12). Shown whenever the
+                            backend ran a gratuity calc — eligible OR
+                            not — so HR can explain "why ₹0" to a
+                            <5-year departee as easily as "why this
+                            amount" to a long-service one. `capped`
+                            flags the ₹20L statutory ceiling so HR
+                            doesn't have to apologise to a veteran. */}
+                        {selectedRecord.fnfSettlement.gratuityDetail && (
+                          <Card className="rounded-xl border border-[#E2E8F0]">
+                            <CardContent className="p-5 space-y-2">
+                              <div className="flex items-center justify-between mb-1">
+                                <h4 className="text-[13px] font-semibold text-[#0F172A]">
+                                  Gratuity detail
+                                </h4>
+                                <span
+                                  className={`text-[11px] font-medium px-2 py-0.5 rounded ${
+                                    selectedRecord.fnfSettlement.gratuityDetail.eligible
+                                      ? "bg-emerald-50 text-emerald-700"
+                                      : "bg-gray-100 text-gray-600"
+                                  }`}
+                                >
+                                  {selectedRecord.fnfSettlement.gratuityDetail.eligible
+                                    ? "Eligible"
+                                    : "Not eligible"}
+                                </span>
+                              </div>
+                              {(() => {
+                                const g = selectedRecord.fnfSettlement.gratuityDetail!;
+                                const reason = g.eligible ? g.eligibleReason : g.ineligibleReason;
+                                return (
+                                  <>
+                                    {reason && (
+                                      <p className="text-[12px] text-[#64748B] italic">
+                                        {reason}
+                                      </p>
+                                    )}
+                                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[12px] mt-2">
+                                      <div className="text-[#64748B]">Years of service</div>
+                                      <div className="text-right text-[#0F172A]">
+                                        {g.yearsOfService} yr ({g.rawMonthsOfService} months raw)
+                                      </div>
+                                      <div className="text-[#64748B]">Monthly wage (basic + DA)</div>
+                                      <div className="text-right text-[#0F172A]">
+                                        {formatCurrency(g.monthlyWage)}
+                                      </div>
+                                      <div className="text-[#64748B]">Computed</div>
+                                      <div className="text-right text-[#0F172A]">
+                                        {formatCurrency(g.computed)}
+                                      </div>
+                                      {g.capped && (
+                                        <>
+                                          <div className="text-amber-700">Capped at statutory ceiling</div>
+                                          <div className="text-right text-amber-700">
+                                            {formatCurrency(g.cap)}
+                                          </div>
+                                        </>
+                                      )}
+                                      <div className="text-[#0F172A] font-semibold">Paid</div>
+                                      <div className="text-right text-[#0F172A] font-semibold">
+                                        {formatCurrency(g.amount)}
+                                      </div>
+                                    </div>
+                                  </>
+                                );
+                              })()}
+                            </CardContent>
+                          </Card>
+                        )}
+
+                        {/* Leave encashment detail (#13). Per-bucket
+                            breakdown with encashable flag so HR can
+                            explain "your casual leave exists but
+                            isn't cashable at exit". `source: fallback`
+                            tells HR leave-service was unreachable and
+                            they should verify manually. */}
+                        {selectedRecord.fnfSettlement.leaveEncashmentDetail && (
+                          <Card className="rounded-xl border border-[#E2E8F0]">
+                            <CardContent className="p-5 space-y-2">
+                              <div className="flex items-center justify-between mb-1">
+                                <h4 className="text-[13px] font-semibold text-[#0F172A]">
+                                  Leave encashment detail
+                                </h4>
+                                <span
+                                  className={`text-[11px] font-medium px-2 py-0.5 rounded ${
+                                    selectedRecord.fnfSettlement.leaveEncashmentDetail.source === "leave_service"
+                                      ? "bg-emerald-50 text-emerald-700"
+                                      : "bg-amber-50 text-amber-700"
+                                  }`}
+                                >
+                                  {selectedRecord.fnfSettlement.leaveEncashmentDetail.source === "leave_service"
+                                    ? "Live balance"
+                                    : "Fallback (verify manually)"}
+                                </span>
+                              </div>
+                              {selectedRecord.fnfSettlement.leaveEncashmentDetail.note && (
+                                <p className="text-[12px] text-[#64748B] italic">
+                                  {selectedRecord.fnfSettlement.leaveEncashmentDetail.note}
+                                </p>
+                              )}
+                              <div className="text-[12px] text-[#64748B] mb-2">
+                                Per-day rate:{" "}
+                                <span className="text-[#0F172A] font-medium">
+                                  {formatCurrency(
+                                    selectedRecord.fnfSettlement.leaveEncashmentDetail.perDayRate,
+                                  )}
+                                </span>{" "}
+                                = (basic + DA) / 30
+                              </div>
+                              {selectedRecord.fnfSettlement.leaveEncashmentDetail.buckets.length > 0 ? (
+                                <table className="w-full text-[12px]">
+                                  <thead>
+                                    <tr className="text-[#64748B] border-b border-[#F1F5F9]">
+                                      <th className="text-left py-1">Leave type</th>
+                                      <th className="text-right py-1">Available</th>
+                                      <th className="text-right py-1">Encashable?</th>
+                                      <th className="text-right py-1">Included</th>
+                                      <th className="text-right py-1">Amount</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {selectedRecord.fnfSettlement.leaveEncashmentDetail.buckets.map((b) => (
+                                      <tr
+                                        key={b.leaveType}
+                                        className="border-b border-[#F8FAFC]"
+                                      >
+                                        <td className="py-1 text-[#0F172A]">{b.leaveType}</td>
+                                        <td className="py-1 text-right text-[#0F172A]">{b.availableDays}</td>
+                                        <td className="py-1 text-right">
+                                          {b.encashable ? (
+                                            <span className="text-emerald-700">yes</span>
+                                          ) : (
+                                            <span className="text-[#94A3B8]">no</span>
+                                          )}
+                                        </td>
+                                        <td className="py-1 text-right text-[#0F172A]">{b.includedDays}</td>
+                                        <td className="py-1 text-right text-[#0F172A]">
+                                          {formatCurrency(b.amount)}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                  <tfoot>
+                                    <tr className="font-semibold">
+                                      <td className="pt-2 text-[#0F172A]" colSpan={3}>
+                                        Total
+                                      </td>
+                                      <td className="pt-2 text-right text-[#0F172A]">
+                                        {selectedRecord.fnfSettlement.leaveEncashmentDetail.totalEncashableDays}
+                                      </td>
+                                      <td className="pt-2 text-right text-[#0F172A]">
+                                        {formatCurrency(
+                                          selectedRecord.fnfSettlement.leaveEncashmentDetail.totalAmount,
+                                        )}
+                                      </td>
+                                    </tr>
+                                  </tfoot>
+                                </table>
+                              ) : (
+                                <p className="text-[12px] text-[#94A3B8]">No buckets returned.</p>
+                              )}
+                            </CardContent>
+                          </Card>
+                        )}
+
                         {/* Approve button (admin only, if calculated but not approved) */}
-                        {hasOrgRole("admin") && selectedRecord.fnfBreakdown.status === "calculated" && (
+                        {hasOrgRole("admin") && selectedRecord.fnfSettlement.status === "calculated" && (
                           <Button
                             onClick={() => handleApproveFnF(selectedRecord.employeeId)}
                             disabled={actionLoading === `approve-${selectedRecord.employeeId}`}
@@ -917,30 +1196,38 @@ export default function OffboardingPage() {
                         <p className="text-[13px] text-emerald-700 font-medium">Letters have been generated.</p>
                         <div className="flex gap-3">
                           {selectedRecord.experienceLetterUrl && (
-                            <a
-                              href={selectedRecord.experienceLetterUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-[#E2E8F0] text-[13px] font-medium text-[#0F172A] hover:bg-[#F8FAFC] transition-colors"
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadLetter(selectedRecord.employeeId, "experience")}
+                              disabled={actionLoading === `letter-${selectedRecord.employeeId}-experience`}
+                              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-[#E2E8F0] text-[13px] font-medium text-[#0F172A] hover:bg-[#F8FAFC] transition-colors disabled:opacity-60"
                             >
-                              <svg className="w-4 h-4 text-[#64748B]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                              </svg>
+                              {actionLoading === `letter-${selectedRecord.employeeId}-experience` ? (
+                                <span className="animate-spin h-3.5 w-3.5 border-2 border-[#64748B] border-t-transparent rounded-full" />
+                              ) : (
+                                <svg className="w-4 h-4 text-[#64748B]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                              )}
                               Experience Letter
-                            </a>
+                            </button>
                           )}
                           {selectedRecord.relievingLetterUrl && (
-                            <a
-                              href={selectedRecord.relievingLetterUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-[#E2E8F0] text-[13px] font-medium text-[#0F172A] hover:bg-[#F8FAFC] transition-colors"
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadLetter(selectedRecord.employeeId, "relieving")}
+                              disabled={actionLoading === `letter-${selectedRecord.employeeId}-relieving`}
+                              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-[#E2E8F0] text-[13px] font-medium text-[#0F172A] hover:bg-[#F8FAFC] transition-colors disabled:opacity-60"
                             >
-                              <svg className="w-4 h-4 text-[#64748B]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                              </svg>
+                              {actionLoading === `letter-${selectedRecord.employeeId}-relieving` ? (
+                                <span className="animate-spin h-3.5 w-3.5 border-2 border-[#64748B] border-t-transparent rounded-full" />
+                              ) : (
+                                <svg className="w-4 h-4 text-[#64748B]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                              )}
                               Relieving Letter
-                            </a>
+                            </button>
                           )}
                         </div>
                       </div>

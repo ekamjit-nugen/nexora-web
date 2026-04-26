@@ -4,10 +4,12 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AttendanceController } from './attendance.controller';
 import { AttendanceService } from './attendance.service';
+import { PolicyClientService } from './policy-client.service';
 import { AttendanceSchema } from './schemas/attendance.schema';
 import { ShiftSchema } from './schemas/shift.schema';
 import { PolicySchema } from './schemas/policy.schema';
 import { AlertSchema } from './schemas/alert.schema';
+import { HolidaySchema } from './schemas/holiday.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @Module({
@@ -17,6 +19,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
       { name: 'Shift', schema: ShiftSchema },
       { name: 'Policy', schema: PolicySchema },
       { name: 'Alert', schema: AlertSchema },
+      { name: 'Holiday', schema: HolidaySchema },
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -27,7 +30,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
     }),
   ],
   controllers: [AttendanceController],
-  providers: [AttendanceService, JwtAuthGuard],
+  providers: [AttendanceService, PolicyClientService, JwtAuthGuard],
   exports: [AttendanceService],
 })
 export class AttendanceModule {}

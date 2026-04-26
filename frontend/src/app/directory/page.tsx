@@ -30,6 +30,16 @@ interface EmployeeFormData {
   skills: string;
   status: string;
   reportingManagerId: string;
+  // Statutory & banking — needed for PF ECR filing, Form 16, payslip PDF.
+  // All optional; backend validates format only when a value is provided.
+  pan: string;
+  uan: string;
+  pfAccountNumber: string;
+  esiNumber: string;
+  bankName: string;
+  bankAccountNumber: string;
+  bankIfsc: string;
+  bankAccountHolder: string;
 }
 
 const emptyForm: EmployeeFormData = {
@@ -47,6 +57,14 @@ const emptyForm: EmployeeFormData = {
   skills: "",
   status: "active",
   reportingManagerId: "",
+  pan: "",
+  uan: "",
+  pfAccountNumber: "",
+  esiNumber: "",
+  bankName: "",
+  bankAccountNumber: "",
+  bankIfsc: "",
+  bankAccountHolder: "",
 };
 
 function EmployeeFormModal({
@@ -72,6 +90,7 @@ function EmployeeFormModal({
 
   useEffect(() => {
     if (employee) {
+      const bank = (employee as any).bankDetails || {};
       setForm({
         userId: employee.userId || "",
         firstName: employee.firstName || "",
@@ -87,6 +106,14 @@ function EmployeeFormModal({
         skills: (employee.skills || []).join(", "),
         status: employee.status || "active",
         reportingManagerId: employee.reportingManagerId || "",
+        pan: (employee as any).pan || "",
+        uan: (employee as any).uan || "",
+        pfAccountNumber: (employee as any).pfAccountNumber || "",
+        esiNumber: (employee as any).esiNumber || "",
+        bankName: bank.bankName || "",
+        bankAccountNumber: bank.accountNumber || "",
+        bankIfsc: bank.ifsc || "",
+        bankAccountHolder: bank.accountHolder || "",
       });
     } else {
       setForm(emptyForm);
@@ -135,6 +162,27 @@ function EmployeeFormModal({
       if (form.reportingManagerId) payload.reportingManagerId = form.reportingManagerId;
       if (form.location.trim()) payload.location = form.location.trim();
       if (form.timezone.trim()) payload.timezone = form.timezone.trim();
+
+      // Statutory ids — send only when non-empty so we don't submit empty
+      // strings through the validator (the @Matches DTO rules reject "").
+      if (form.pan.trim()) payload.pan = form.pan.trim().toUpperCase();
+      if (form.uan.trim()) payload.uan = form.uan.trim();
+      if (form.pfAccountNumber.trim()) payload.pfAccountNumber = form.pfAccountNumber.trim();
+      if (form.esiNumber.trim()) payload.esiNumber = form.esiNumber.trim();
+
+      // Bank details — only send the subdoc if ANY field is populated;
+      // backend's BankDetailsDto is optional + individually-optional, so
+      // partial updates work (e.g. fixing just the IFSC).
+      const anyBank = [form.bankName, form.bankAccountNumber, form.bankIfsc, form.bankAccountHolder]
+        .some((v) => v.trim());
+      if (anyBank) {
+        const bankDetails: Record<string, string> = {};
+        if (form.bankName.trim()) bankDetails.bankName = form.bankName.trim();
+        if (form.bankAccountNumber.trim()) bankDetails.accountNumber = form.bankAccountNumber.trim();
+        if (form.bankIfsc.trim()) bankDetails.ifsc = form.bankIfsc.trim().toUpperCase();
+        if (form.bankAccountHolder.trim()) bankDetails.accountHolder = form.bankAccountHolder.trim();
+        payload.bankDetails = bankDetails;
+      }
 
       if (isEdit) {
         await hrApi.updateEmployee(employee._id, payload as Partial<Employee>);
@@ -378,6 +426,97 @@ function EmployeeFormModal({
               className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
             />
             <p className="text-[11px] text-[#94A3B8] mt-1">Separate skills with commas</p>
+          </div>
+
+          {/* Statutory & Banking
+              Needed for PF ECR filing, Form 16, and the payslip PDF header.
+              All optional — most orgs collect these during onboarding, not
+              on invite day, so empty submissions must pass. */}
+          <div className="pt-4 border-t border-[#F1F5F9]">
+            <h3 className="text-[13px] font-semibold text-[#0F172A] mb-1">Statutory & Banking</h3>
+            <p className="text-[11px] text-[#94A3B8] mb-4">Used for PF filing, Form 16 and payslip generation. All optional.</p>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">PAN</Label>
+                <Input
+                  value={form.pan}
+                  onChange={(e) => handleChange("pan", e.target.value.toUpperCase())}
+                  placeholder="ABCDE1234F"
+                  maxLength={10}
+                  className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg font-mono tracking-wider uppercase"
+                />
+              </div>
+              <div>
+                <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">UAN (PF)</Label>
+                <Input
+                  value={form.uan}
+                  onChange={(e) => handleChange("uan", e.target.value.replace(/\D/g, ""))}
+                  placeholder="12-digit number"
+                  maxLength={12}
+                  className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg font-mono tracking-wider"
+                />
+              </div>
+              <div>
+                <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Legacy PF A/C</Label>
+                <Input
+                  value={form.pfAccountNumber}
+                  onChange={(e) => handleChange("pfAccountNumber", e.target.value)}
+                  placeholder="e.g. BLR/BNG/0001234/001"
+                  className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg font-mono"
+                />
+              </div>
+              <div>
+                <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">ESI Number</Label>
+                <Input
+                  value={form.esiNumber}
+                  onChange={(e) => handleChange("esiNumber", e.target.value.replace(/\D/g, ""))}
+                  placeholder="10-digit ESIC #"
+                  maxLength={17}
+                  className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg font-mono tracking-wider"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mt-4">
+              <div>
+                <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Bank Name</Label>
+                <Input
+                  value={form.bankName}
+                  onChange={(e) => handleChange("bankName", e.target.value)}
+                  placeholder="HDFC Bank"
+                  className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                />
+              </div>
+              <div>
+                <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">IFSC</Label>
+                <Input
+                  value={form.bankIfsc}
+                  onChange={(e) => handleChange("bankIfsc", e.target.value.toUpperCase())}
+                  placeholder="HDFC0001234"
+                  maxLength={11}
+                  className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg font-mono tracking-wider uppercase"
+                />
+              </div>
+              <div>
+                <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Account Number</Label>
+                <Input
+                  value={form.bankAccountNumber}
+                  onChange={(e) => handleChange("bankAccountNumber", e.target.value)}
+                  placeholder="Account #"
+                  className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg font-mono"
+                />
+              </div>
+              <div>
+                <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Account Holder</Label>
+                <Input
+                  value={form.bankAccountHolder}
+                  onChange={(e) => handleChange("bankAccountHolder", e.target.value)}
+                  placeholder="Name on account"
+                  className="h-10 text-sm bg-[#F8FAFC] border-[#E2E8F0] rounded-lg"
+                />
+              </div>
+            </div>
           </div>
 
           {/* Actions */}
@@ -717,15 +856,28 @@ export default function DirectoryPage() {
 
   const canManageEmployees = user.roles?.some((r) => ["admin", "super_admin", "hr"].includes(r));
 
-  const handleDeleteEmployee = async () => {
+  // Terminate = reversible soft-termination. We do NOT permanently delete
+  // employees anywhere in the UI — admins can flip status between `active`
+  // and `exited` so history, payroll audit, and re-hire flows all stay intact.
+  const handleTerminateEmployee = async () => {
     if (!deletingEmployee) return;
     try {
-      await hrApi.deleteEmployee(deletingEmployee._id);
-      toast.success("Employee removed successfully");
+      await hrApi.updateEmployee(deletingEmployee._id, { status: "exited" });
+      toast.success(`${deletingEmployee.firstName} ${deletingEmployee.lastName} has been terminated`);
       setDeletingEmployee(null);
       fetchData();
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to delete employee");
+      toast.error(err instanceof Error ? err.message : "Failed to terminate employee");
+    }
+  };
+
+  const handleReactivateEmployee = async (emp: Employee) => {
+    try {
+      await hrApi.updateEmployee(emp._id, { status: "active" });
+      toast.success(`${emp.firstName} ${emp.lastName} reactivated`);
+      fetchData();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to reactivate employee");
     }
   };
 
@@ -748,6 +900,9 @@ export default function DirectoryPage() {
     active: "bg-emerald-50 text-emerald-700 border-emerald-200",
     invited: "bg-amber-50 text-amber-700 border-amber-200",
     pending: "bg-amber-50 text-amber-700 border-amber-200",
+    // Declined — muted rose tone so admins can clearly distinguish it
+    // from 'exited' (active employee who left) vs 'invited' (still pending).
+    declined: "bg-rose-50 text-rose-700 border-rose-200",
     on_notice: "bg-orange-50 text-orange-700 border-orange-200",
     exited: "bg-red-50 text-red-700 border-red-200",
     on_leave: "bg-blue-50 text-blue-700 border-blue-200",
@@ -772,7 +927,7 @@ export default function DirectoryPage() {
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
-      <main className="flex-1 ml-[260px] p-8">
+      <main className="flex-1 min-w-0 md:ml-[260px] p-8">
         {/* Page Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
@@ -780,15 +935,28 @@ export default function DirectoryPage() {
             <p className="text-[13px] text-[#64748B] mt-1">Browse and manage your organization&apos;s team members</p>
           </div>
           {canManageEmployees && (
-            <Button
-              onClick={openAddModal}
-              className="h-11 bg-[#2E86C1] hover:bg-[#2471A3] text-white font-medium px-5 rounded-xl text-[15px]"
-            >
-              <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-              Add Employee
-            </Button>
+            <div className="flex items-center gap-2">
+              {/* Quick link to the bank-change approval queue. Hidden
+                  for non-admins; backend role guard is the actual
+                  enforcement. */}
+              <Button
+                variant="outline"
+                onClick={() => { window.location.href = "/directory/bank-approvals"; }}
+                className="h-11 border-[#E2E8F0] text-[#0F172A] font-medium px-4 rounded-xl text-[13px]"
+              >
+                <svg className="w-4 h-4 mr-2 text-[#94A3B8]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z" /></svg>
+                Bank Approvals
+              </Button>
+              <Button
+                onClick={openAddModal}
+                className="h-11 bg-[#2E86C1] hover:bg-[#2471A3] text-white font-medium px-5 rounded-xl text-[15px]"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                Add Employee
+              </Button>
+            </div>
           )}
         </div>
 
@@ -948,18 +1116,28 @@ export default function DirectoryPage() {
                             <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                           </svg>
                         </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeletingEmployee(emp);
-                          }}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity w-8 h-8 rounded-lg flex items-center justify-center hover:bg-red-50 text-[#94A3B8] hover:text-red-500 shrink-0"
-                          title="Delete employee"
-                        >
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
+                        {/* Terminate / Reactivate — never permanent delete. */}
+                        {emp.status === "exited" ? (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleReactivateEmployee(emp); }}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity w-8 h-8 rounded-lg flex items-center justify-center hover:bg-emerald-50 text-[#94A3B8] hover:text-emerald-600 shrink-0"
+                            title="Reactivate employee"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setDeletingEmployee(emp); }}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity w-8 h-8 rounded-lg flex items-center justify-center hover:bg-red-50 text-[#94A3B8] hover:text-red-500 shrink-0"
+                            title="Terminate employee"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                            </svg>
+                          </button>
+                        )}
                       </>)}
                     </div>
 
@@ -983,13 +1161,13 @@ export default function DirectoryPage() {
                         <span className={`text-xs font-medium px-2.5 py-1 rounded-full border capitalize ${statusColors[emp.status] || "bg-gray-50 text-gray-600 border-gray-200"}`}>
                           {emp.status.replace("_", " ")}
                         </span>
-                        {(emp.status === "invited" || emp.status === "pending") && canManageEmployees && (
+                        {(emp.status === "invited" || emp.status === "pending" || emp.status === "declined") && canManageEmployees && (
                           <button
                             onClick={(e) => { e.stopPropagation(); handleResendInvite(emp); }}
                             disabled={resendingEmail === emp.email}
                             className="text-[11px] font-medium text-[#2E86C1] hover:text-[#1A5276] hover:bg-[#EBF5FB] px-2 py-0.5 rounded-full transition-colors disabled:opacity-50"
                           >
-                            {resendingEmail === emp.email ? "Sending..." : "Resend"}
+                            {resendingEmail === emp.email ? "Sending..." : (emp.status === "declined" ? "Re-invite" : "Resend")}
                           </button>
                         )}
                       </div>
@@ -1142,16 +1320,20 @@ export default function DirectoryPage() {
                         )}
                         <td className="px-5 py-3.5 text-right">
                           <div className="flex items-center justify-end gap-1">
-                            {(emp.status === "invited" || emp.status === "pending") && canManageEmployees && (
+                            {(emp.status === "invited" || emp.status === "pending" || emp.status === "declined") && canManageEmployees && (
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleResendInvite(emp); }}
                                 disabled={resendingEmail === emp.email}
-                                className="inline-flex items-center gap-1 text-[12px] font-medium text-amber-600 hover:text-amber-800 px-2.5 py-1.5 rounded-lg hover:bg-amber-50 transition-colors disabled:opacity-50"
+                                className={`inline-flex items-center gap-1 text-[12px] font-medium px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${
+                                  emp.status === "declined"
+                                    ? "text-rose-600 hover:text-rose-800 hover:bg-rose-50"
+                                    : "text-amber-600 hover:text-amber-800 hover:bg-amber-50"
+                                }`}
                               >
                                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                                 </svg>
-                                {resendingEmail === emp.email ? "Sending..." : "Resend"}
+                                {resendingEmail === emp.email ? "Sending..." : (emp.status === "declined" ? "Re-invite" : "Resend")}
                               </button>
                             )}
                             {canManageEmployees && (
@@ -1206,19 +1388,21 @@ export default function DirectoryPage() {
         onUpdated={fetchData}
       />
 
-      {/* Delete Confirmation Modal */}
+      {/* Terminate Confirmation Modal — intentionally NOT "Delete". Termination
+          is reversible: the record is preserved and the admin can reactivate
+          later from the same directory. */}
       {deletingEmployee && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[100] p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
             <div className="px-6 py-5 text-center">
               <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center mx-auto mb-3">
                 <svg className="w-6 h-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                 </svg>
               </div>
-              <h3 className="text-sm font-bold text-[#0F172A] mb-1">Delete Employee</h3>
+              <h3 className="text-sm font-bold text-[#0F172A] mb-1">Terminate Employee</h3>
               <p className="text-[13px] text-[#64748B]">
-                Are you sure you want to remove <span className="font-semibold text-[#334155]">{deletingEmployee.firstName} {deletingEmployee.lastName}</span>? This action cannot be undone.
+                <span className="font-semibold text-[#334155]">{deletingEmployee.firstName} {deletingEmployee.lastName}</span> will be marked as exited and lose access to this organization. You can reactivate them later from the directory.
               </p>
             </div>
             <div className="flex items-center gap-3 px-6 py-4 border-t border-[#E2E8F0]">
@@ -1229,10 +1413,10 @@ export default function DirectoryPage() {
                 Cancel
               </button>
               <button
-                onClick={handleDeleteEmployee}
+                onClick={handleTerminateEmployee}
                 className="flex-1 h-9 rounded-lg text-[13px] font-medium text-white bg-red-500 hover:bg-red-600 transition-colors"
               >
-                Delete
+                Terminate
               </button>
             </div>
           </div>

@@ -26,11 +26,71 @@ export interface IExitInterview {
   wouldRecommend?: boolean;
 }
 
+/**
+ * Gratuity detail block — persisted on the F&F settlement so HR, the
+ * employee, and an external auditor can all see *why* the number is
+ * what it is, not just the bottom line. Mandatory under Payment of
+ * Gratuity Act 1972 §4 (employer has to be able to explain the calc).
+ *
+ * - `eligibleReason` distinguishes eligible-by-tenure (the normal case)
+ *   from eligible-by-exception (death / disability / retirement — the
+ *   5-year minimum is waived for these).
+ * - `capped` flags the ₹20 lakh statutory ceiling so HR can explain to
+ *   a long-tenure exec why they aren't getting the full formula amount.
+ * - `monthlyWage` isolates the (basic+DA) figure used in the formula so
+ *   the employee can verify it matches their last payslip.
+ */
+export interface IGratuityDetail {
+  eligible: boolean;
+  eligibleReason?: string;
+  ineligibleReason?: string;
+  yearsOfService: number;          // completed years after rounding
+  rawMonthsOfService: number;       // exact, pre-rounding — audit only
+  monthlyWage: number;              // basic + DA
+  computed: number;                 // before cap
+  amount: number;                   // final paid (capped ≤ 20L)
+  capped: boolean;
+  cap: number;                      // cap value used (for reference)
+}
+
+/**
+ * Leave encashment detail block — persisted on the F&F settlement so
+ * HR and the employee can see which leave types contributed to the
+ * encashment, how many days, and what per-day rate was used. #13
+ * replaces a hardcoded `leaveBalance = 15` with a real cross-lookup
+ * of leave-service + policy-service. Shape mirrors `IGratuityDetail`
+ * so UI can render the two blocks with the same template.
+ *
+ * `source` distinguishes the happy path (leave-service responded) from
+ * the fallback path (leave-service down / employee not in balance
+ * records) — helpful when HR is reconciling numbers against the leave
+ * app directly.
+ */
+export interface ILeaveEncashmentBucket {
+  leaveType: string;
+  availableDays: number;
+  encashable: boolean;
+  includedDays: number;   // 0 when non-encashable
+  amount: number;
+}
+
+export interface ILeaveEncashmentDetail {
+  source: 'leave_service' | 'fallback';
+  perDayRate: number;           // (basic + DA) / 30
+  monthlyWage: number;           // basic + DA (same denominator as gratuity)
+  totalEncashableDays: number;
+  totalAmount: number;
+  buckets: ILeaveEncashmentBucket[];
+  note?: string;                 // human explanation (e.g. "leave-service unreachable")
+}
+
 export interface IFnFSettlement {
   basicDue: number;
   leaveEncashment: number;
+  leaveEncashmentDetail?: ILeaveEncashmentDetail;
   bonusDue: number;
   gratuity: number;
+  gratuityDetail?: IGratuityDetail;
   pendingReimbursements: number;
   noticeRecovery: number;
   otherDeductions: number;
@@ -79,7 +139,7 @@ export const OffboardingSchema = new Schema<IOffboarding>(
     type: {
       type: String,
       required: true,
-      enum: ['resignation', 'termination', 'retirement', 'contract_end', 'mutual_separation'],
+      enum: ['resignation', 'termination', 'retirement', 'contract_end', 'mutual_separation', 'death', 'disability'],
     },
     status: {
       type: String,
@@ -125,8 +185,37 @@ export const OffboardingSchema = new Schema<IOffboarding>(
     fnfSettlement: {
       basicDue: { type: Number, default: 0 },
       leaveEncashment: { type: Number, default: 0 },
+      leaveEncashmentDetail: {
+        source: { type: String, enum: ['leave_service', 'fallback'], default: 'fallback' },
+        perDayRate: { type: Number, default: 0 },
+        monthlyWage: { type: Number, default: 0 },
+        totalEncashableDays: { type: Number, default: 0 },
+        totalAmount: { type: Number, default: 0 },
+        buckets: [
+          {
+            leaveType: { type: String, required: true },
+            availableDays: { type: Number, default: 0 },
+            encashable: { type: Boolean, default: false },
+            includedDays: { type: Number, default: 0 },
+            amount: { type: Number, default: 0 },
+          },
+        ],
+        note: { type: String, default: null },
+      },
       bonusDue: { type: Number, default: 0 },
       gratuity: { type: Number, default: 0 },
+      gratuityDetail: {
+        eligible: { type: Boolean, default: false },
+        eligibleReason: { type: String, default: null },
+        ineligibleReason: { type: String, default: null },
+        yearsOfService: { type: Number, default: 0 },
+        rawMonthsOfService: { type: Number, default: 0 },
+        monthlyWage: { type: Number, default: 0 },
+        computed: { type: Number, default: 0 },
+        amount: { type: Number, default: 0 },
+        capped: { type: Boolean, default: false },
+        cap: { type: Number, default: 2000000 },  // ₹20 lakh statutory cap
+      },
       pendingReimbursements: { type: Number, default: 0 },
       noticeRecovery: { type: Number, default: 0 },
       otherDeductions: { type: Number, default: 0 },

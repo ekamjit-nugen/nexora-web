@@ -44,13 +44,21 @@ const QUESTION_TYPE_OPTIONS = [
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+// Backend schema stores the question prompt as `question`; older
+// responses used `text`. `questionText(q)` in helpers.ts below handles
+// both shapes so renderers don't need to branch.
 interface SurveyQuestion {
   _id?: string;
-  text: string;
+  id?: string;
+  text?: string;         // legacy field
+  question?: string;     // current backend field
   type: string;
   options?: string[];
   required?: boolean;
 }
+
+const questionText = (q: { text?: string; question?: string }): string =>
+  q.question ?? q.text ?? "";
 
 interface Survey {
   _id: string;
@@ -72,14 +80,17 @@ interface Survey {
 
 interface QuestionResult {
   questionId?: string;
-  questionText: string;
-  questionType: string;
-  // For choice questions
+  questionText?: string;         // legacy
+  question?: string;              // current backend field
+  questionType?: string;
+  type?: string;
+  // Choice questions. Backend returns `distribution: Array<{option, count, percentage}>`.
+  // `optionCounts` is kept for legacy responses where it was `Record<string, number>`.
+  distribution?: Array<{ option: string; count: number; percentage?: number }> | Record<string, number>;
   optionCounts?: Record<string, number>;
   totalResponses?: number;
   // For rating / scale
   average?: number;
-  distribution?: Record<string, number>;
   // For NPS
   promoters?: number;
   passives?: number;
@@ -88,6 +99,22 @@ interface QuestionResult {
   // For text
   responses?: string[];
 }
+
+// Choice-question results in either legacy record shape or modern
+// array shape. Returns `{ option, count }` pairs for rendering.
+const choiceBuckets = (qr: QuestionResult): Array<{ option: string; count: number }> => {
+  const dist = qr.distribution;
+  if (Array.isArray(dist)) {
+    return dist.map((b) => ({ option: b.option, count: b.count }));
+  }
+  if (dist && typeof dist === "object") {
+    return Object.entries(dist).map(([option, count]) => ({ option, count: Number(count) || 0 }));
+  }
+  if (qr.optionCounts) {
+    return Object.entries(qr.optionCounts).map(([option, count]) => ({ option, count }));
+  }
+  return [];
+};
 
 interface SurveyResults {
   survey?: Survey;
@@ -331,7 +358,7 @@ export default function SurveysPage() {
     }
     for (let i = 0; i < newQuestions.length; i++) {
       const q = newQuestions[i];
-      if (!q.text.trim()) {
+      if (!(questionText(q)).trim()) {
         toast.error(`Question ${i + 1} is empty`);
         return;
       }
@@ -360,8 +387,13 @@ export default function SurveysPage() {
         type: newType,
         isAnonymous: newIsAnonymous,
         targetAudience: newAudience,
-        questions: newQuestions.map((q) => ({
-          text: q.text.trim(),
+        questions: newQuestions.map((q, qi) => ({
+          // Backend DTO field is `question`; keep `text` too for
+          // forward-compat if the API accepts it. Auto-generate stable
+          // IDs so results can key off them without backend having to
+          // synthesize them post-create.
+          id: q.id || `q-${qi + 1}`,
+          question: questionText(q).trim(),
           type: q.type,
           options: q.options?.filter((o) => o.trim()).map((o) => o.trim()),
           required: !!q.required,
@@ -446,11 +478,16 @@ export default function SurveysPage() {
 
     setSubmittingResponse(true);
     try {
+      // Backend DTO accepts `{ questionId, answer }[]` only — the old
+      // `questionIndex` was silently dropped by the whitelist. Prefer
+      // the stable `id` on newly-created surveys; fall back to `_id`
+      // for legacy data, and to an index-synthesized key as a last
+      // resort (matches backend's `q${i}` pattern).
       const answers = respondSurvey.questions.map((q, i) => {
-        const key = q._id || `q${i}`;
+        const qid = (q as any).id || q._id || `q${i + 1}`;
+        const key = q._id || (q as any).id || `q${i}`;
         return {
-          questionId: q._id,
-          questionIndex: i,
+          questionId: qid,
           answer: responseAnswers[key] ?? null,
         };
       });
@@ -672,7 +709,7 @@ export default function SurveysPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] flex flex-col min-h-screen">
+      <main className="flex-1 min-w-0 md:ml-[260px] flex flex-col min-h-screen">
         {/* Header */}
         <div className="bg-white border-b border-[#E2E8F0] px-8 py-5 flex items-center justify-between sticky top-0 z-20">
           <div>
@@ -946,27 +983,34 @@ export default function SurveysPage() {
                         </div>
                       </div>
 
-                      {(results.questions || []).map((qr, qIdx) => (
+                      {(results.questions || []).map((qr, qIdx) => {
+                        // Backend returns `question` / `type` / `distribution`;
+                        // legacy responses used `questionText` / `questionType` /
+                        // `optionCounts`. Helpers accept both.
+                        const qText = questionText(qr as any) || (qr as any).questionText || "";
+                        const qType = (qr as any).type ?? qr.questionType;
+                        const buckets = choiceBuckets(qr);
+                        return (
                         <div
                           key={qIdx}
                           className="bg-white border border-[#E2E8F0] rounded-xl p-5"
                         >
                           <h3 className="text-[14px] font-bold text-[#0F172A] mb-3">
-                            {qIdx + 1}. {qr.questionText}
+                            {qIdx + 1}. {qText}
                           </h3>
 
-                          {(qr.questionType === "single_choice" ||
-                            qr.questionType === "multi_choice" ||
-                            qr.questionType === "yes_no") &&
-                            qr.optionCounts && (
+                          {(qType === "single_choice" ||
+                            qType === "multi_choice" ||
+                            qType === "yes_no") &&
+                            buckets.length > 0 && (
                               <div className="space-y-3">
-                                {Object.entries(qr.optionCounts).map(([opt, count]) =>
-                                  renderResultBar(opt, count, qr.totalResponses || 0),
+                                {buckets.map((b) =>
+                                  renderResultBar(b.option, b.count, qr.totalResponses || 0),
                                 )}
                               </div>
                             )}
 
-                          {(qr.questionType === "rating" || qr.questionType === "scale") && (
+                          {(qType === "rating" || qType === "scale") && (
                             <div className="space-y-3">
                               {typeof qr.average === "number" && (
                                 <div className="bg-[#F0F9FF] border border-[#BAE6FD] rounded-lg p-3">
@@ -985,7 +1029,7 @@ export default function SurveysPage() {
                             </div>
                           )}
 
-                          {qr.questionType === "nps" && (
+                          {qType === "nps" && (
                             <div className="space-y-3">
                               {typeof qr.npsScore === "number" && (
                                 <div className="bg-[#F0F9FF] border border-[#BAE6FD] rounded-lg p-3">
@@ -1026,7 +1070,7 @@ export default function SurveysPage() {
                             </div>
                           )}
 
-                          {qr.questionType === "text" && qr.responses && (
+                          {qType === "text" && qr.responses && (
                             <div className="space-y-2">
                               {qr.responses.slice(0, 20).map((resp, rIdx) => (
                                 <div
@@ -1044,7 +1088,8 @@ export default function SurveysPage() {
                             </div>
                           )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
 
@@ -1257,8 +1302,13 @@ export default function SurveysPage() {
                         <input
                           type="text"
                           placeholder="Question text"
-                          value={q.text}
-                          onChange={(e) => updateQuestion(qIdx, { text: e.target.value })}
+                          value={questionText(q)}
+                          onChange={(e) =>
+                            // Keep both fields in sync so legacy reads
+                            // of `text` still work while we migrate callers
+                            // to `question`.
+                            updateQuestion(qIdx, { text: e.target.value, question: e.target.value })
+                          }
                           className="flex-1 border border-[#D1D5DB] rounded-lg px-3 py-2 text-[13px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[#2E86C1]/30 focus:border-[#2E86C1]"
                         />
                         <button
@@ -1398,7 +1448,7 @@ export default function SurveysPage() {
               {respondSurvey.questions.map((q, qIdx) => (
                 <div key={qIdx} className="space-y-2">
                   <label className="block text-[13px] font-semibold text-[#0F172A]">
-                    {qIdx + 1}. {q.text}
+                    {qIdx + 1}. {questionText(q)}
                     {q.required && <span className="text-red-500 ml-1">*</span>}
                   </label>
                   {renderQuestionInput(q, qIdx)}

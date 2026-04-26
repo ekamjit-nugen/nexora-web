@@ -1,3 +1,16 @@
+/**
+ * @deprecated since #10 (policy consolidation). policy-service is now
+ * the source of truth for leave rules via its `leaveConfig.leaveTypes[]`
+ * field. `leave.service.ts::initializeBalance` reads from policy-service
+ * first and falls back to this collection only when:
+ *   (a) policy-service is unreachable, or
+ *   (b) the tenant hasn't migrated their leave config yet.
+ *
+ * Keep this schema + collection around for backward compatibility and
+ * historical data — do NOT delete before a migration plan is in place.
+ * New leave rules should be created via policy-service's `leave`
+ * category policy, not via LeavePolicyCRUD on this service.
+ */
 import { Schema, Document } from 'mongoose';
 
 export interface ILeaveTypeConfig {

@@ -54,7 +54,7 @@ export default function AllTicketsPage() {
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="ml-[260px] p-8">
+      <main className="md:ml-[260px] p-8">
         <h1 className="text-2xl font-bold text-[#0F172A] mb-1">All Tickets</h1>
         <p className="text-sm text-[#64748B] mb-6">{pagination.total} total tickets across all teams</p>
 

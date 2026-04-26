@@ -50,7 +50,40 @@ interface ILWFConfig {
 
 interface IOvertimeConfig {
   applicable: boolean;
-  rate: number;
+  rate: number;                    // weekday multiplier, default 2
+  weekendRate?: number;             // defaults to `rate`
+  holidayRate?: number;             // defaults to weekendRate ?? rate
+  // Night-shift premium applied when the attendance record is flagged
+  // `isNightShift` (resolved at clock-in from the shift policy). Takes
+  // precedence over weekday/weekend/holiday — Factories Act §59 treats
+  // night-shift hours as their own category. Defaults to `rate`.
+  nightShiftMultiplier?: number;
+  hoursPerDay?: number;             // standard shift length, default 8
+  maxOvertimeHoursPerMonth?: number; // 0/undefined = no cap
+  includeDA?: boolean;              // fold DA into hourly rate, default true
+}
+
+interface IOvertimeBreakdown {
+  weekdayHours: number;
+  weekendHours: number;
+  holidayHours: number;
+  nightShiftHours: number;
+  weekdayPay: number;
+  weekendPay: number;
+  holidayPay: number;
+  nightShiftPay: number;
+  totalPay: number;
+  hourlyRate: number;
+  capped: boolean;
+}
+
+// Per-run (and per-employee when overridden) LOP policy. Lets an org
+// decide how half-days and absents fold into the deduction instead of
+// the old hardcoded "1 absent = 1 LOP, half-day = ignored" behaviour.
+interface ILopConfig {
+  includeAbsentInLop: boolean;   // default true
+  includeHalfDayInLop: boolean;  // default true
+  halfDayLopFactor: number;      // default 0.5
 }
 
 interface IPayrollConfig {
@@ -60,6 +93,7 @@ interface IPayrollConfig {
   ptConfig: IPTConfig;
   lwfConfig: ILWFConfig;
   overtime: IOvertimeConfig;
+  lopConfig: ILopConfig;
 }
 
 interface IPayPeriod {
@@ -159,6 +193,10 @@ interface IComputedPayrollResult {
   attendance: IAttendanceSummary;
   payPeriod: { month: number; year: number };
   netPayableInWords: string;
+  // Per-bucket OT breakdown. Null when OT wasn't applicable this run.
+  // processPayrollRun persists this on the PayrollEntry so the payslip
+  // generator can synthesise distinct "Overtime (Weekend)" rows later.
+  overtime: IOvertimeBreakdown | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +259,21 @@ export class PayrollCalculationService {
       `Computing payroll for employee ${salaryStructure.employeeId}, period ${payPeriod.month}/${payPeriod.year}`,
     );
 
+    // --- 0. Policy-driven LOP days ---
+    //
+    // Historically `attendance.lopDays` was just the raw count of `absent`
+    // records from attendance-service — half-days and any other nuance
+    // were dropped. Make the engine consult `lopConfig` so:
+    //   - half-days fold in as partial LOP (0.5 by default)
+    //   - an org can explicitly opt absents *out* of LOP (rare, e.g. a
+    //     paid-time-off-first policy) without touching attendance data
+    // Everything else (joining proration, per-component rate) still keys
+    // off this single number, so the rest of the method is unchanged.
+    const effectiveLopDays = this.computeEffectiveLopDays(
+      attendance,
+      payrollConfig.lopConfig,
+    );
+
     // --- 1. Earnings ---
     const earningComponents = salaryStructure.components.filter(
       (c) => c.type === 'earning',
@@ -228,7 +281,7 @@ export class PayrollCalculationService {
     const earnings = this.calculateEarnings(
       earningComponents,
       attendance.totalWorkingDays,
-      attendance.lopDays,
+      effectiveLopDays,
       joiningDate,
       payPeriod,
     );
@@ -268,35 +321,34 @@ export class PayrollCalculationService {
     const daMonthly = daComponent ? daComponent.actualAmount : 0;
 
     // --- 3. LOP deduction (already reflected in prorated earnings, track for totals) ---
-    const lopDeduction = this.calculateLOP(
-      grossEarnings + this.calculateLOP(grossEarnings, attendance.lopDays, attendance.totalWorkingDays - attendance.lopDays > 0 ? attendance.totalWorkingDays - attendance.lopDays : attendance.totalWorkingDays),
-      attendance.lopDays,
-      attendance.totalWorkingDays,
-    );
-    // Note: earnings are already prorated for LOP, so lopDeduction is tracked for display only.
-    // We recalculate based on full amounts for the display line.
+    // Use policy-driven `effectiveLopDays` so the display number matches
+    // the actual proration applied above. Previously this block recomputed
+    // from raw `attendance.lopDays` and the payslip's "LOP Deduction" line
+    // diverged from the prorated earnings once half-days were involved.
     const fullGross = earnings.reduce((sum, e) => sum + e.fullAmount, 0);
     const displayLopDeduction = this.calculateLOP(
       fullGross,
-      attendance.lopDays,
+      effectiveLopDays,
       attendance.totalWorkingDays,
     );
 
     // --- 4. Overtime ---
+    // Policy-driven: weekday/weekend/holiday buckets each get their own
+    // multiplier. Engine falls back to "all OT is weekday" when the
+    // caller didn't categorise (preserves the old single-rate behaviour).
+    // `includeDA` toggles whether DA folds into the hourly rate; some orgs
+    // pay OT on basic alone and the engine used to assume basic+DA
+    // unconditionally.
     let overtimePay = 0;
-    if (
-      payrollConfig.overtime.applicable &&
-      attendance.overtimeHours > 0
-    ) {
-      const hoursPerDay = 8;
-      overtimePay = this.calculateOvertime(
+    let overtimeBreakdown: IOvertimeBreakdown | null = null;
+    if (payrollConfig.overtime.applicable && attendance.overtimeHours > 0) {
+      overtimeBreakdown = this.calculateOvertime(
         basicMonthly,
         daMonthly,
-        attendance.overtimeHours,
-        attendance.totalWorkingDays,
-        hoursPerDay,
-        payrollConfig.overtime.rate,
+        attendance,
+        payrollConfig.overtime,
       );
+      overtimePay = overtimeBreakdown.totalPay;
     }
 
     // --- 5. Statutory: PF ---
@@ -457,6 +509,31 @@ export class PayrollCalculationService {
       `Payroll computed: gross=${grossEarnings}, deductions=${totalDeductions}, net=${netPayable}`,
     );
 
+    // Echo the policy-resolved LOP back into the stored summary so the
+    // payslip, downstream reports, and any audit log show the same
+    // number the engine actually prorated against (not the raw absent
+    // count). Keep the original `absentDays` / `halfDays` buckets intact.
+    // Same story for OT: if the engine applied a cap, persist the capped
+    // numbers so "actually paid" always reconciles with "actually
+    // worked minus cap".
+    const resolvedAttendance: IAttendanceSummary = {
+      ...attendance,
+      lopDays: effectiveLopDays,
+      ...(overtimeBreakdown
+        ? {
+            overtimeHours:
+              overtimeBreakdown.weekdayHours +
+              overtimeBreakdown.weekendHours +
+              overtimeBreakdown.holidayHours +
+              overtimeBreakdown.nightShiftHours,
+            weekdayOvertimeHours: overtimeBreakdown.weekdayHours,
+            weekendOvertimeHours: overtimeBreakdown.weekendHours,
+            holidayOvertimeHours: overtimeBreakdown.holidayHours,
+            nightShiftOvertimeHours: overtimeBreakdown.nightShiftHours,
+          }
+        : {}),
+    };
+
     return {
       earnings,
       deductions,
@@ -464,10 +541,48 @@ export class PayrollCalculationService {
       bonuses,
       loanDeductions: loanDeductionEntries,
       totals,
-      attendance,
+      attendance: resolvedAttendance,
       payPeriod: { month: payPeriod.month, year: payPeriod.year },
       netPayableInWords,
+      overtime: overtimeBreakdown,
     };
+  }
+
+  // =========================================================================
+  // computeEffectiveLopDays — policy-driven LOP resolution
+  // =========================================================================
+  //
+  // Fold the raw attendance buckets (absent, half-day) into a single LOP
+  // day count using the org/employee `lopConfig`. Kept tiny on purpose —
+  // the shape of this rule is going to grow (unpaid-leave-types, WFH
+  // partial, shift-specific weights) and localising the logic means we
+  // don't have to chase the arithmetic through calculateEarnings/LOP/
+  // payslip rendering every time a new bucket is added.
+  computeEffectiveLopDays(
+    attendance: IAttendanceSummary,
+    lopConfig?: ILopConfig,
+  ): number {
+    const cfg: ILopConfig = {
+      includeAbsentInLop: lopConfig?.includeAbsentInLop ?? true,
+      includeHalfDayInLop: lopConfig?.includeHalfDayInLop ?? true,
+      halfDayLopFactor:
+        typeof lopConfig?.halfDayLopFactor === 'number'
+          ? lopConfig.halfDayLopFactor
+          : 0.5,
+    };
+
+    const absentContribution = cfg.includeAbsentInLop
+      ? attendance.absentDays ?? attendance.lopDays ?? 0
+      : 0;
+    const halfDayContribution = cfg.includeHalfDayInLop
+      ? (attendance.halfDays ?? 0) * cfg.halfDayLopFactor
+      : 0;
+
+    const total = absentContribution + halfDayContribution;
+    // Never exceed expected working days — a misconfigured policy
+    // (e.g. halfDayLopFactor = 2) shouldn't turn earnings negative.
+    const capped = Math.min(total, attendance.totalWorkingDays ?? total);
+    return Math.max(0, capped);
   }
 
   // =========================================================================
@@ -539,9 +654,15 @@ export class PayrollCalculationService {
       return { pfEmployee: 0, pfEmployer: 0, adminCharges: 0, edli: 0 };
     }
 
-    // wageCeiling is in rupees — convert to paise for comparison
-    const wageCeilingPaise = pfConfig.wageCeiling * 100;
-    const pfWage = Math.min(basicMonthly, wageCeilingPaise);
+    // Unit fix (Option B side-effect): `basicMonthly` arrives in RUPEES
+    // (derived from salary-structure components which are also rupees),
+    // and `pfConfig.wageCeiling` is already in rupees. Earlier code did
+    // `wageCeiling * 100` assuming basicMonthly was in paise, which meant
+    // the ceiling (₹15k → 1,500,000) was never lower than basic
+    // (₹50,000 treated as rupees but compared to paise) and PF applied
+    // on the full basic. With the ceiling now applied, PF for a ₹50k
+    // basic at 12% becomes ₹1,800/mo instead of ₹6,000/mo.
+    const pfWage = Math.min(basicMonthly, pfConfig.wageCeiling);
 
     const pfEmployee = Math.round(pfWage * pfConfig.employeeRate);
     const pfEmployer = Math.round(pfWage * pfConfig.employerRate);
@@ -559,9 +680,12 @@ export class PayrollCalculationService {
       return { esiEmployee: 0, esiEmployer: 0 };
     }
 
-    const grossInRupees = grossMonthly / 100;
-
-    if (grossInRupees > esiConfig.wageCeiling) {
+    // Unit fix: grossMonthly is already in rupees. Removing the /100
+    // that was dividing it to "convert from paise" but actually turned
+    // ₹95,000 → ₹950, which stayed below the ₹21,000 ceiling forever
+    // so ESI applied even for highly-paid employees (wrong for India —
+    // ESI only applies when gross is ≤ ₹21k).
+    if (grossMonthly > esiConfig.wageCeiling) {
       return { esiEmployee: 0, esiEmployer: 0 };
     }
 
@@ -577,7 +701,11 @@ export class PayrollCalculationService {
   calculateProfessionalTax(grossMonthly: number, ptConfig: IPTConfig): number {
     if (!ptConfig.applicable) return 0;
 
-    const grossInRupees = grossMonthly / 100;
+    // Unit fix: `grossMonthly` is in rupees (see the same fix note in
+    // calculateESI). Earlier code divided by 100 pretending it was paise,
+    // which made a ₹95,000 gross come out as ₹950 — every employee fell
+    // into the lowest (zero-PT) slab and PT was stuck at ₹0 for everyone.
+    const grossInRupees = grossMonthly;
     const state = (ptConfig.state || '').toLowerCase().trim();
 
     switch (state) {
@@ -603,41 +731,44 @@ export class PayrollCalculationService {
     }
   }
 
-  // ---- PT slab implementations (all return paise) ----
+  // ---- PT slab implementations — now returning RUPEES to match the
+  // rest of the pipeline. Earlier each function returned paise (e.g. 20000
+  // = Rs 200) while the caller summed them straight into a rupees total,
+  // producing ₹20,000/mo PT for Maharashtra. ----
 
   private ptMaharashtra(grossRupees: number): number {
     if (grossRupees <= 7500) return 0;
-    if (grossRupees <= 10000) return 17500; // Rs 175
-    return 20000; // Rs 200 (Feb: Rs 300 handled via annual adjustment)
+    if (grossRupees <= 10000) return 175;
+    return 200; // Feb collects Rs 300 — handled via annual adjustment elsewhere
   }
 
   private ptKarnataka(grossRupees: number): number {
     if (grossRupees <= 15000) return 0;
-    if (grossRupees <= 25000) return 15000; // Rs 150
-    return 20000; // Rs 200
+    if (grossRupees <= 25000) return 150;
+    return 200;
   }
 
   private ptTamilNadu(grossRupees: number): number {
-    // Tamil Nadu collects half-yearly; monthly approximation
+    // Tamil Nadu collects half-yearly; monthly approximation.
     if (grossRupees <= 3500) return 0;
-    if (grossRupees <= 5000) return 1625; // Rs 16.25 approx (Rs 97.5 half-yearly / 6)
-    if (grossRupees <= 7500) return 3125; // Rs 31.25
-    if (grossRupees <= 10000) return 6250; // Rs 62.50
-    if (grossRupees <= 12500) return 10400; // Rs 104
-    return 20800; // Rs 208 per month
+    if (grossRupees <= 5000) return 17; // approx Rs 97.5 half-yearly / 6
+    if (grossRupees <= 7500) return 31;
+    if (grossRupees <= 10000) return 63;
+    if (grossRupees <= 12500) return 104;
+    return 208;
   }
 
   private ptTelangana(grossRupees: number): number {
     if (grossRupees <= 15000) return 0;
-    if (grossRupees <= 20000) return 15000; // Rs 150
-    return 20000; // Rs 200
+    if (grossRupees <= 20000) return 150;
+    return 200;
   }
 
   private ptGujarat(grossRupees: number): number {
     if (grossRupees <= 6000) return 0;
-    if (grossRupees <= 9000) return 8000; // Rs 80
-    if (grossRupees <= 12000) return 15000; // Rs 150
-    return 20000; // Rs 200
+    if (grossRupees <= 9000) return 80;
+    if (grossRupees <= 12000) return 150;
+    return 200;
   }
 
   // =========================================================================
@@ -789,21 +920,113 @@ export class PayrollCalculationService {
   }
 
   // =========================================================================
-  // Method 8: calculateOvertime
+  // Method 8: calculateOvertime — policy-driven, bucketed
   // =========================================================================
+  //
+  // Returns a full breakdown instead of a single number because:
+  //   1. Payslip needs per-bucket rows ("Overtime (Weekend) @ 2.5x")
+  //   2. Audit/reporting wants to see which buckets contributed what
+  //   3. The monthly cap applies across buckets, so the breakdown must
+  //      record which hours were capped — otherwise a finance user can't
+  //      explain to the employee why 60 hours of OT only paid 50
+  //
+  // Falls back cleanly: if `attendance.weekday/weekend/holidayOvertimeHours`
+  // are all undefined, we treat `attendance.overtimeHours` as pure weekday
+  // OT (preserves legacy behaviour for older callers).
   calculateOvertime(
     basicMonthly: number,
     daMonthly: number,
-    overtimeHours: number,
-    workingDaysInMonth: number,
-    hoursPerDay: number,
-    overtimeRate: number,
-  ): number {
-    if (workingDaysInMonth <= 0 || hoursPerDay <= 0) return 0;
-    const hourlyRate = Math.round(
-      (basicMonthly + daMonthly) / (workingDaysInMonth * hoursPerDay),
+    attendance: IAttendanceSummary,
+    overtimeConfig: IOvertimeConfig,
+  ): IOvertimeBreakdown {
+    const zero: IOvertimeBreakdown = {
+      weekdayHours: 0,
+      weekendHours: 0,
+      holidayHours: 0,
+      nightShiftHours: 0,
+      weekdayPay: 0,
+      weekendPay: 0,
+      holidayPay: 0,
+      nightShiftPay: 0,
+      totalPay: 0,
+      hourlyRate: 0,
+      capped: false,
+    };
+
+    const workingDays = attendance.totalWorkingDays ?? 0;
+    const hoursPerDay = overtimeConfig.hoursPerDay ?? 8;
+    if (workingDays <= 0 || hoursPerDay <= 0) return zero;
+
+    // Bucketed hours, defaulting to "all weekday" if caller didn't split.
+    const hasSplit =
+      attendance.weekdayOvertimeHours !== undefined ||
+      attendance.weekendOvertimeHours !== undefined ||
+      attendance.holidayOvertimeHours !== undefined ||
+      attendance.nightShiftOvertimeHours !== undefined;
+    let weekdayHours = hasSplit
+      ? attendance.weekdayOvertimeHours ?? 0
+      : attendance.overtimeHours ?? 0;
+    let weekendHours = hasSplit ? attendance.weekendOvertimeHours ?? 0 : 0;
+    let holidayHours = hasSplit ? attendance.holidayOvertimeHours ?? 0 : 0;
+    let nightShiftHours = hasSplit
+      ? attendance.nightShiftOvertimeHours ?? 0
+      : 0;
+
+    // Monthly cap (shared across buckets). Apply in priority order —
+    // night-shift > holiday > weekend > weekday — so the highest-premium
+    // hours are paid first if the employee blew past the cap. Matches
+    // what a finance team would do manually: "give them credit for the
+    // big multipliers, trim the weekday hours."
+    const cap = overtimeConfig.maxOvertimeHoursPerMonth ?? 0;
+    let capped = false;
+    if (cap > 0) {
+      let remaining = cap;
+      const take = (want: number): number => {
+        const got = Math.min(want, remaining);
+        remaining -= got;
+        if (got < want) capped = true;
+        return got;
+      };
+      nightShiftHours = take(nightShiftHours);
+      holidayHours = take(holidayHours);
+      weekendHours = take(weekendHours);
+      weekdayHours = take(weekdayHours);
+    }
+
+    // Hourly rate. DA folds in by default; some orgs pay OT on basic
+    // alone and the old engine assumed basic+DA unconditionally.
+    const includeDA = overtimeConfig.includeDA ?? true;
+    const wageForOT = includeDA ? basicMonthly + daMonthly : basicMonthly;
+    const hourlyRate = Math.round(wageForOT / (workingDays * hoursPerDay));
+
+    const weekdayRate = overtimeConfig.rate ?? 2;
+    const weekendRate = overtimeConfig.weekendRate ?? weekdayRate;
+    const holidayRate =
+      overtimeConfig.holidayRate ?? weekendRate ?? weekdayRate;
+    const nightShiftRate =
+      overtimeConfig.nightShiftMultiplier ?? weekdayRate;
+
+    const weekdayPay = Math.round(weekdayHours * hourlyRate * weekdayRate);
+    const weekendPay = Math.round(weekendHours * hourlyRate * weekendRate);
+    const holidayPay = Math.round(holidayHours * hourlyRate * holidayRate);
+    const nightShiftPay = Math.round(
+      nightShiftHours * hourlyRate * nightShiftRate,
     );
-    return Math.round(overtimeHours * hourlyRate * overtimeRate);
+    const totalPay = weekdayPay + weekendPay + holidayPay + nightShiftPay;
+
+    return {
+      weekdayHours,
+      weekendHours,
+      holidayHours,
+      nightShiftHours,
+      weekdayPay,
+      weekendPay,
+      holidayPay,
+      nightShiftPay,
+      totalPay,
+      hourlyRate,
+      capped,
+    };
   }
 
   // =========================================================================

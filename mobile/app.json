@@ -13,13 +13,20 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "io.nexora.mobile"
+      "bundleIdentifier": "io.nexora.mobile",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Nexora attaches your location to attendance check-ins and check-outs so administrators can verify on-site presence. You can deny this and still clock in — your record will be tagged as having no location."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#2E86C1"
       },
-      "package": "io.nexora.mobile"
+      "package": "io.nexora.mobile",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
     },
     "platforms": [
       "ios",
@@ -30,7 +37,13 @@
       "expo-secure-store",
       "expo-local-authentication",
       "expo-asset",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Nexora attaches your location to attendance check-ins so administrators can verify on-site presence."
+        }
+      ]
     ]
   }
 }

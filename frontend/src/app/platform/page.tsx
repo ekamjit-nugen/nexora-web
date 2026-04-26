@@ -144,7 +144,7 @@ export default function PlatformDashboardPage() {
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
-      <main className="flex-1 ml-[260px] p-8">
+      <main className="flex-1 min-w-0 md:ml-[260px] p-8">
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center gap-2 mb-1">

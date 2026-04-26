@@ -935,12 +935,12 @@ export default function MessagesPage() {
 
       {/* Offline banner */}
       {!offlineCache.isOnline && (
-        <div className="ml-[260px] bg-amber-500 text-white text-center text-sm py-1.5 px-4 font-medium shrink-0">
+        <div className="md:ml-[260px] bg-amber-500 text-white text-center text-sm py-1.5 px-4 font-medium shrink-0">
           You&apos;re offline — showing cached messages
         </div>
       )}
 
-      <main className="ml-[260px] flex-1 flex min-h-0 h-full">
+      <main className="md:ml-[260px] flex-1 flex min-h-0 h-full">
         {/* ── Left Panel: Conversation List ── */}
         <ConversationSidebar
           conversations={conversations}

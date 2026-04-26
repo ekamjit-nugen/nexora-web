@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsDateString, IsNumber, Min, Max, IsBoolean, IsArray, ValidateNested, IsEmail, MaxLength, ArrayMaxSize, ArrayMinSize, IsMongoId } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsDateString, IsNumber, Min, Max, IsBoolean, IsArray, ValidateNested, IsEmail, MaxLength, ArrayMaxSize, ArrayMinSize, IsMongoId, IsNotEmpty } from 'class-validator';
 import { Type } from 'class-transformer';
 
 // ── Salary Component DTO ──
@@ -139,6 +139,39 @@ export class AdHocItemDto {
 
 // ── Override Entry DTO ──
 
+/**
+ * Arrear item — money owed for a PRIOR period being paid in the
+ * current run. Distinct from `AdHocItemDto` because:
+ *   - `componentCode` targets an existing salary component (BASIC,
+ *     HRA, etc.) so the amount rolls into that component's
+ *     `arrearAmount` field instead of creating a separate earning
+ *     line. Payslip + statutory reports then show arrears correctly.
+ *   - `pertainsToMonth/Year` is persisted on the audit trail so the
+ *     "what period did this back-pay cover" question is answerable
+ *     later (auditors and 24Q reviewers ask this routinely).
+ *
+ * Common cause: a backdated raise or missed reimbursement. Engine
+ * aggregates arrears into `totals.totalArrears` for run summary +
+ * 24Q reporting; component-level `arrearAmount` feeds the payslip's
+ * "Arrears" column.
+ */
+export class ArrearItemDto {
+  @IsString() @IsNotEmpty() @MaxLength(32)
+  componentCode: string;   // e.g. "BASIC", "HRA", "SPECIAL"
+
+  @IsNumber() @Min(0)
+  amount: number;          // rupees
+
+  @IsOptional() @IsNumber() @Min(1) @Max(12)
+  pertainsToMonth?: number;
+
+  @IsOptional() @IsNumber() @Min(2020)
+  pertainsToYear?: number;
+
+  @IsOptional() @IsString() @MaxLength(500)
+  reason?: string;
+}
+
 export class OverrideEntryDto {
   @IsOptional()
   @IsArray()
@@ -151,6 +184,15 @@ export class OverrideEntryDto {
   @ValidateNested({ each: true })
   @Type(() => AdHocItemDto)
   additionalDeductions?: AdHocItemDto[];
+
+  // Retroactive pay — rolls into the matching component's
+  // `arrearAmount` so the payslip can render "Arrears: ₹X" and
+  // downstream reports (24Q, payroll-entry totals) track them.
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ArrearItemDto)
+  arrears?: ArrearItemDto[];
 
   @IsOptional() @IsString()
   notes?: string;
@@ -348,7 +390,11 @@ export class VerifyDocumentDto {
 
 export class InitiateOffboardingDto {
   @IsString() employeeId: string;
-  @IsEnum(['resignation', 'termination', 'retirement', 'contract_end', 'mutual_separation']) type: string;
+  // `death` and `disability` are statutory special cases — Payment of
+  // Gratuity Act §4(1) proviso waives the 5-year threshold, and F&F
+  // beneficiary handling differs. Accepted here so HR can record the
+  // actual reason instead of shoehorning into `termination`.
+  @IsEnum(['resignation', 'termination', 'retirement', 'contract_end', 'mutual_separation', 'death', 'disability']) type: string;
   @IsDateString() resignationDate: string;
   @IsDateString() lastWorkingDate: string;
   @IsOptional() @IsNumber() noticePeriodDays?: number;
@@ -533,9 +579,31 @@ export class RejectSalaryStructureDto {
   @IsOptional() @IsString() reason?: string;
 }
 
+/**
+ * Per-item verified amount. HR typically accepts part of a declared
+ * claim (e.g. employee declared ₹150k 80C but proof only covers ₹120k).
+ * Addressed by (section, itemIndex) so the verifier UI can edit each
+ * row independently. Amounts are in rupees, capped at declaredAmount
+ * server-side to prevent HR accidentally verifying more than declared.
+ */
+export class VerifiedItemAmountDto {
+  @IsString() section: string;
+  @IsNumber() @Min(0) itemIndex: number;
+  @IsNumber() @Min(0) verifiedAmount: number;
+}
+
 export class VerifyInvestmentDto {
   @IsBoolean() verified: boolean;
   @IsOptional() @IsString() remarks?: string;
+  // P2.2-follow-up: per-item amounts. When provided, service applies
+  // each `{section, itemIndex, verifiedAmount}` to the matching row
+  // in the declaration and recomputes `totalVerified`. Without this
+  // the admin UI's editable amounts were silently dropped.
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => VerifiedItemAmountDto)
+  items?: VerifiedItemAmountDto[];
 }
 
 export class UploadDocumentDto {
@@ -863,6 +931,10 @@ export class AnnouncementQueryDto {
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsNumber() @Min(1) page?: number;
   @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
+  // UI-3: frontend dashboard sends `sort=-createdAt`. Without this field,
+  // `ValidationPipe({ forbidNonWhitelisted: true })` rejected the request
+  // with 400 on every dashboard load. Whitelist the common Mongo-style sort.
+  @IsOptional() @IsString() @MaxLength(64) sort?: string;
 }
 
 export class AnnouncementReactDto {

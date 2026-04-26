@@ -12,12 +12,18 @@ async function bootstrap() {
   app.enableCors({ origin: true, credentials: true });
   app.use(helmet());
 
+  // `enableImplicitConversion: true` is removed because it coerced
+  // `"false"` query-string → boolean `true` (non-empty string is truthy),
+  // which made `?isTemplate=false` silently exclude everything. DTOs use
+  // explicit `@Type(() => Number)` for numeric fields and `@Transform`
+  // for booleans, so nothing structurally depends on implicit coercion.
+  // Regression caught by the attendance-service PolicyClient, which had
+  // to filter client-side as a workaround.
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
-      transformOptions: { enableImplicitConversion: true },
     }),
   );
 

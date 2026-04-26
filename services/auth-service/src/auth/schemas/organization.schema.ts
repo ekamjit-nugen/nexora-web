@@ -22,6 +22,18 @@ export interface IOrganizationFeatures {
   assetManagement: IFeatureFlag;
   expenseManagement: IFeatureFlag;
   recruitment: IFeatureFlag;
+  // Section-level toggles. Previously the sidebar exposed these whole
+  // sections regardless of the org's plan, leaking features (Payroll,
+  // Performance reviews, Helpdesk, Wiki) to tenants that hadn't paid
+  // for them. Now each section is gated by its own flag — when the
+  // super-admin disables one, the entire section disappears from
+  // navigation for every member of that org.
+  payroll: IFeatureFlag;       // Payroll Runs, Payslips, Salary, Declarations,
+                               // Statutory Reports, Loans, Onboarding/Offboarding,
+                               // Payroll Analytics
+  performance: IFeatureFlag;   // Goals & OKRs, Reviews, Cycles, Kudos, Surveys, Learning
+  helpdesk: IFeatureFlag;      // Internal IT/HR ticketing
+  knowledge: IFeatureFlag;     // Wiki + bookmarks + search
 }
 
 // ── Settings sub-document ──
@@ -335,6 +347,11 @@ export interface IOrganization extends Document {
 
 export const OrganizationSchema = new Schema<IOrganization>(
   {
+    // Bug #6 (P3) decision: organisation display names are NOT globally unique
+    // by design. Two different tenants can legitimately both be "Acme Corp";
+    // they are distinguished by `slug` (which IS unique, disambiguated via
+    // `ensureUniqueSlug` — e.g. "acme-corp", "acme-corp-2") and by `_id`.
+    // Do not add a unique index here without a migration for existing data.
     name: { type: String, required: true, trim: true },
     slug: { type: String, required: true, unique: true, lowercase: true, trim: true },
     industry: { type: String, default: 'other' },
@@ -370,7 +387,12 @@ export const OrganizationSchema = new Schema<IOrganization>(
       financialYearStart: { type: Number, default: 4 }, // April
     },
 
-    // Feature flags
+    // Feature flags. NOTE: existing orgs created before the section-level
+    // flags (payroll/performance/helpdesk/knowledge) were added will not
+    // have those keys in their persisted documents — `isFeatureEnabled`
+    // on the frontend treats `undefined` as enabled to preserve backward
+    // compat. New orgs get the explicit defaults below; super-admins can
+    // disable any section per tenant from /platform/organizations/[id].
     features: {
       type: Schema.Types.Mixed,
       default: () => ({
@@ -389,6 +411,10 @@ export const OrganizationSchema = new Schema<IOrganization>(
         assetManagement:  { enabled: false },
         expenseManagement: { enabled: false },
         recruitment:      { enabled: false },
+        payroll:          { enabled: true },
+        performance:      { enabled: true },
+        helpdesk:         { enabled: true },
+        knowledge:        { enabled: true },
       }),
     },
 

@@ -162,9 +162,13 @@ export class OtpService {
   }> {
     const user = await this.userModel.findOne({ email: email.toLowerCase() }).select('+otp +otpExpiresAt +otpAttempts');
 
+    // Bug #5 (P3): previously returned `404 USER_NOT_FOUND`, which let an
+    // attacker enumerate accounts by diffing 404 vs 400. Collapse to the same
+    // generic `INVALID_OTP` response the invalid-code branch uses so the
+    // existence of the user cannot be inferred from the response.
     if (!user) throw new HttpException(
-      { success: false, error: { code: 'USER_NOT_FOUND', message: 'User not found' } },
-      HttpStatus.NOT_FOUND,
+      { success: false, error: { code: 'INVALID_OTP', message: 'Invalid OTP. Please try again.' } },
+      HttpStatus.BAD_REQUEST,
     );
 
     // Check lockout

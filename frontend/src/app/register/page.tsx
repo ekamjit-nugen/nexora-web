@@ -62,8 +62,11 @@ export default function RegisterPage() {
     setEmailLoading(true);
     try {
       await authApi.sendOtp(email);
+      // Single toast — the duplicate ("DEV: Check backend console …") was
+      // a leftover dev hint that survived after MailHog became the canonical
+      // source for OTPs in dev. Login page dropped this back when; keep
+      // register/invite in sync.
       toast.success("OTP sent to your email");
-      toast.info("DEV: Check backend console for OTP");
       setPhase("otp");
       setResendCooldown(60);
     } catch (err: unknown) {
@@ -122,7 +125,6 @@ export default function RegisterPage() {
     try {
       await authApi.sendOtp(email);
       toast.success("OTP resent to your email");
-      toast.info("DEV: Check backend console for OTP");
       setResendCooldown(60);
       setOtp("");
     } catch (err: unknown) {
