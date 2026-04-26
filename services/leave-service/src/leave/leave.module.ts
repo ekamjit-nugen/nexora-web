@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { LeaveController } from './leave.controller';
 import { LeaveService } from './leave.service';
+import { PolicyClientService } from './policy-client.service';
 import { LeaveSchema } from './schemas/leave.schema';
 import { LeaveBalanceSchema } from './schemas/leave-balance.schema';
 import { LeavePolicySchema } from './schemas/leave-policy.schema';
@@ -25,7 +26,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
     }),
   ],
   controllers: [LeaveController],
-  providers: [LeaveService, JwtAuthGuard],
+  providers: [LeaveService, PolicyClientService, JwtAuthGuard],
   exports: [LeaveService],
 })
 export class LeaveModule {}

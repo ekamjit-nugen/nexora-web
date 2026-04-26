@@ -108,6 +108,11 @@ export interface Employee {
   phone?: string;
   departmentId?: string;
   designationId?: string;
+  // Populated by hr-service's getEmployeeById (joins against
+  // departments/designations collections). Not stored on the Employee
+  // document; only available on single-employee reads.
+  departmentName?: string | null;
+  designationName?: string | null;
   reportingManagerId?: string;
   employmentType: string;
   joiningDate: string;
@@ -117,6 +122,56 @@ export interface Employee {
   policyIds?: string[];
   status: string;
   isActive: boolean;
+  // Statutory identifiers. Optional — collected during onboarding, not
+  // invite. Bank details live in a subdoc because there are multiple
+  // related fields that we want to update atomically.
+  pan?: string;
+  uan?: string;
+  pfAccountNumber?: string;
+  esiNumber?: string;
+  bankDetails?: {
+    bankName?: string;
+    accountNumber?: string;
+    ifsc?: string;
+    accountHolder?: string;
+  };
+  // Self-editable personal fields. Surfaced on the employee's own
+  // profile page; admins can also edit on the directory detail view.
+  personalEmail?: string | null;
+  maritalStatus?: 'single' | 'married' | 'divorced' | 'widowed' | null;
+  bloodGroup?: 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-' | null;
+  emergencyContact?: { name?: string; relation?: string; phone?: string } | null;
+  address?: { street?: string; city?: string; state?: string; country?: string; zip?: string } | null;
+  permanentAddress?: { street?: string; city?: string; state?: string; country?: string; zip?: string } | null;
+  // Pending bank-details change awaiting admin approval. When non-null
+  // the profile UI shows a "Pending review" badge and disables the
+  // submit form.
+  pendingBankChange?: {
+    bankDetails: { bankName: string; accountNumber: string; ifsc: string; accountHolder: string };
+    submittedAt: string;
+    submittedBy: string;
+    reason?: string | null;
+  } | null;
+  bankChangeHistory?: Array<{
+    bankDetails: { bankName: string; accountNumber: string; ifsc: string; accountHolder: string };
+    submittedAt: string;
+    submittedBy: string;
+    approvedAt: string;
+    approvedBy: string;
+  }>;
+}
+
+// One row in the employee profile audit timeline.
+export interface EmployeeProfileAuditEntry {
+  _id: string;
+  organizationId: string;
+  employeeId: string;
+  actorUserId: string;
+  actorType: 'self' | 'admin';
+  action: string;
+  changes: Array<{ field: string; from: any; to: any }>;
+  reason?: string | null;
+  createdAt: string;
 }
 
 export interface Department {
@@ -235,6 +290,51 @@ export const hrApi = {
   deleteEmployee: (id: string) =>
     request(`/employees/${id}`, { method: "DELETE" }),
 
+  // ── Employee self-service ──
+  // The /me endpoints resolve the calling user's own employee record
+  // server-side. No employee-id is passed (that's the security boundary).
+  // updateMe is whitelisted to safe personal fields only — see
+  // UpdateSelfProfileDto in hr-service. Sensitive fields (department,
+  // designation, statutory, bankDetails) require admin or maker-checker.
+  getMyEmployee: () => request<Employee>("/employees/me"),
+  updateMyProfile: (data: {
+    phone?: string;
+    personalEmail?: string;
+    maritalStatus?: 'single' | 'married' | 'divorced' | 'widowed';
+    bloodGroup?: 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-';
+    address?: { street?: string; city?: string; state?: string; country?: string; zip?: string };
+    permanentAddress?: { street?: string; city?: string; state?: string; country?: string; zip?: string };
+    emergencyContact?: { name?: string; relation?: string; phone?: string };
+    skills?: string[];
+  }) => request<Employee>("/employees/me", { method: "PATCH", body: JSON.stringify(data) }),
+
+  // Bank-detail change submission (maker-checker). The new details DO
+  // NOT take effect until an admin approves; the employee profile shows
+  // the pending state until then.
+  submitMyBankChange: (data: {
+    bankDetails: { bankName: string; accountNumber: string; ifsc: string; accountHolder: string };
+    reason?: string;
+  }) => request<Employee>("/employees/me/bank-change", { method: "POST", body: JSON.stringify(data) }),
+  withdrawMyBankChange: () =>
+    request<{ ok: boolean }>("/employees/me/bank-change", { method: "DELETE" }),
+
+  // ── Bank-change approval queue (admin/HR) ──
+  listPendingBankChanges: () =>
+    request<Employee[]>("/employees/bank-changes/pending"),
+  approveBankChange: (employeeId: string) =>
+    request<Employee>(`/employees/${employeeId}/bank-change/approve`, { method: "POST" }),
+  rejectBankChange: (employeeId: string, reason: string) =>
+    request<{ ok: boolean }>(`/employees/${employeeId}/bank-change/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+
+  // Audit timeline for one employee — admin/HR only.
+  getEmployeeAudit: (employeeId: string, limit?: number) =>
+    request<EmployeeProfileAuditEntry[]>(
+      `/employees/${employeeId}/audit${limit ? `?limit=${limit}` : ''}`,
+    ),
+
   // Employee Policies
   attachPolicy: (employeeId: string, policyId: string) =>
     request(`/employees/${employeeId}/policies`, { method: "POST", body: JSON.stringify({ policyId }) }),
@@ -346,6 +446,13 @@ export const clientApi = {
 
 // ── Types: Attendance, Leave, Project, Task ──
 
+export interface AttendanceLocation {
+  latitude: number;
+  longitude: number;
+  accuracy?: number | null;
+  address?: string | null;
+}
+
 export interface Attendance {
   _id: string;
   employeeId: string;
@@ -358,6 +465,24 @@ export interface Attendance {
   checkInMethod?: string;
   approvalStatus?: string;
   notes?: string;
+  // Audit metadata captured at clock-in/out. Always optional — older
+  // records pre-date the geolocation feature, and even on new ones
+  // the location can be null when the employee declined the browser
+  // permission.
+  checkInIP?: string | null;
+  checkOutIP?: string | null;
+  checkInLocation?: AttendanceLocation | null;
+  checkOutLocation?: AttendanceLocation | null;
+  // Shift-resolution fields (#9) — resolved at clock-in/out from the
+  // employee's applicable working-hours policy. Lets the UI show
+  // "why am I marked late?" and flags night-shift records for OT
+  // premium computation downstream in payroll.
+  isLateArrival?: boolean;
+  lateByMinutes?: number;
+  isEarlyDeparture?: boolean;
+  earlyByMinutes?: number;
+  isNightShift?: boolean;
+  appliedShiftPolicyId?: string | null;
 }
 
 export interface Leave {
@@ -375,8 +500,20 @@ export interface Leave {
 // ── Attendance API ──
 
 export const attendanceApi = {
-  checkIn: () => request("/attendance/check-in", { method: "POST" }),
-  checkOut: () => request("/attendance/check-out", { method: "POST" }),
+  // Geolocation is optional — pass `{ location: { latitude, longitude,
+  // accuracy } }` when the browser hands it over; otherwise omit and
+  // the backend stores null. The attendance page's check-in handler
+  // requests permission and calls accordingly.
+  checkIn: (data?: { method?: string; location?: AttendanceLocation }) =>
+    request("/attendance/check-in", {
+      method: "POST",
+      body: JSON.stringify(data || {}),
+    }),
+  checkOut: (data?: { method?: string; location?: AttendanceLocation }) =>
+    request("/attendance/check-out", {
+      method: "POST",
+      body: JSON.stringify(data || {}),
+    }),
   getToday: () => request<Attendance>("/attendance/today"),
   getMy: (params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";
@@ -395,7 +532,26 @@ export const attendanceApi = {
   getPendingApprovals: () => request("/attendance/pending-approvals"),
   approveEntry: (id: string, data: { approved: boolean; rejectionReason?: string }) =>
     request(`/attendance/${id}/approve`, { method: "PUT", body: JSON.stringify(data) }),
+
+  // Holiday calendar. Read is open to all; write is admin-gated
+  // server-side. Year filter is optional — omitted = all holidays.
+  listHolidays: (year?: number) =>
+    request<Holiday[]>(year ? `/holidays?year=${year}` : "/holidays"),
+  createHoliday: (data: { date: string; name: string; type?: string; description?: string }) =>
+    request<Holiday>("/holidays", { method: "POST", body: JSON.stringify(data) }),
+  deleteHoliday: (id: string) =>
+    request<void>(`/holidays/${id}`, { method: "DELETE" }),
 };
+
+export interface Holiday {
+  _id: string;
+  organizationId: string;
+  date: string;
+  name: string;
+  type: "national" | "regional" | "optional" | "bank" | "other";
+  description?: string | null;
+  year: number;
+}
 
 // ── Leave API ──
 
@@ -1084,6 +1240,16 @@ export interface OrgFeatures {
   chat?:       { enabled: boolean };
   calls?:      { enabled: boolean };
   ai?:         { enabled: boolean };
+  assetManagement?:   { enabled: boolean };
+  expenseManagement?: { enabled: boolean };
+  recruitment?:       { enabled: boolean };
+  // Section-level gates (added to support per-tenant feature scoping —
+  // e.g. Nugen IT Services only sees attendance/tasks/clients/invoices/
+  // reports, with payroll/performance/helpdesk/knowledge hidden).
+  payroll?:     { enabled: boolean };
+  performance?: { enabled: boolean };
+  helpdesk?:    { enabled: boolean };
+  knowledge?:   { enabled: boolean };
   [key: string]: { enabled: boolean } | undefined;
 }
 
@@ -1197,6 +1363,9 @@ export const settingsApi = {
 
   // Completeness
   getCompleteness: () => request("/settings/completeness"),
+  // Per-user profile completeness — drives the "Complete Your Profile"
+  // widget for non-admin roles on the dashboard.
+  getProfileCompleteness: () => request("/settings/profile-completeness"),
 };
 
 // ── Types: Call Log ──
@@ -1333,8 +1502,46 @@ export interface Invoice {
   isDeleted: boolean;
   createdBy?: string;
   updatedBy?: string;
+  // Lifecycle fields populated by InvoiceLifecycleService daily scan.
+  // Drives the colored chips on the list and the stats cards. All
+  // optional — older invoices may not have run through the cron yet.
+  lifecycleState?: 'upcoming' | 'due_soon' | 'due_today' | 'overdue' | 'paid' | null;
+  daysUntilDue?: number;
+  overdueDays?: number;
+  lastLifecycleScanAt?: string;
+  lastReminderSentAt?: string | null;
+  reminderCount?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+// ── Invoice lifecycle / notifications ──
+
+export interface InvoiceLifecycleStats {
+  upcoming:  { count: number; totalValue: number };
+  due_soon:  { count: number; totalValue: number };
+  due_today: { count: number; totalValue: number };
+  overdue:   { count: number; totalValue: number };
+  paid:      { count: number; totalValue: number };
+}
+
+export interface InvoiceNotification {
+  _id: string;
+  organizationId: string;
+  userId: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  clientId?: string | null;
+  type: 'invoice_upcoming' | 'invoice_due_today' | 'invoice_overdue' | 'invoice_overdue_repeat';
+  title: string;
+  message: string;
+  amount?: number | null;
+  currency?: string;
+  daysUntilDue?: number | null;
+  read: boolean;
+  readAt?: string | null;
+  actionUrl: string;
+  createdAt: string;
 }
 
 export interface InvoiceTemplate {
@@ -1398,6 +1605,39 @@ export const invoiceApi = {
     request<InvoiceTemplate>("/invoices/templates", { method: "POST", body: JSON.stringify(data) }),
   deleteTemplate: (id: string) =>
     request(`/invoices/templates/${id}`, { method: "DELETE" }),
+
+  // ── Lifecycle (cron-driven) ──
+  // `getLifecycleStats` powers the colored cards at the top of the
+  // invoice list. `runLifecycleScan` is admin-only — useful right after
+  // bulk-importing invoices to populate the lifecycle fields before the
+  // 9am IST daily cron would otherwise touch them.
+  getLifecycleStats: () => request<InvoiceLifecycleStats>("/invoices/lifecycle/stats"),
+  runLifecycleScan: () =>
+    request<{ scanned: number; updated: number; notifications: number }>(
+      "/invoices/lifecycle/run",
+      { method: "POST" },
+    ),
+
+  // ── Notifications (in-app, per-user, persistent) ──
+  // The bell-style dropdown on the invoice page polls `getNotifications`
+  // every minute or so; the response carries `unreadCount` as a sibling
+  // of `data` (not inside it) so the badge stays in sync without a
+  // second round-trip. The cast extends ApiResponse with the extra field;
+  // the underlying request<T> signature only models `data`.
+  getNotifications: (unreadOnly = false) =>
+    request<InvoiceNotification[]>(
+      `/invoices/notifications${unreadOnly ? "?unreadOnly=true" : ""}`,
+    ) as Promise<{
+      success: boolean;
+      message: string;
+      data?: InvoiceNotification[];
+      unreadCount?: number;
+      error?: { code: string; message: string };
+    }>,
+  markNotificationRead: (id: string) =>
+    request<{ ok: boolean }>(`/invoices/notifications/${id}/read`, { method: "POST" }),
+  markAllNotificationsRead: () =>
+    request<{ ok: boolean; count: number }>("/invoices/notifications/mark-all-read", { method: "POST" }),
 };
 
 // ── Project API ──
@@ -3151,8 +3391,17 @@ export const payrollApi = {
   // Salary Structures
   createSalaryStructure: (data: Record<string, unknown>) =>
     request("/salary-structures", { method: "POST", body: JSON.stringify(data) }),
+  // Admin-scoped org-wide list (P-6). Employee-scoped getters live below.
+  listSalaryStructures: (params?: Record<string, string | number | undefined>) => {
+    const clean = Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== "");
+    const qs = clean.length ? "?" + new URLSearchParams(clean as [string, string][]).toString() : "";
+    return request(`/salary-structures${qs}`);
+  },
   getSalaryStructure: (employeeId: string) =>
     request(`/salary-structures/${employeeId}`),
+  // Self-service — employee view. No admin role required.
+  getMySalaryStructure: (status?: "active" | "pending_approval" | "draft") =>
+    request(`/salary-structures/me${status ? `?status=${status}` : ""}`),
   getSalaryHistory: (employeeId: string) =>
     request(`/salary-structures/${employeeId}/history`),
   updateSalaryStructure: (id: string, data: Record<string, unknown>) =>
@@ -3178,6 +3427,13 @@ export const payrollApi = {
     request(`/payroll-runs/${id}/process`, { method: "POST" }),
   updateRunStatus: (id: string, data: { status: string; notes?: string; paymentReference?: string }) =>
     request(`/payroll-runs/${id}/status`, { method: "PUT", body: JSON.stringify(data) }),
+  // P1.5 reopen endpoint — lets admin rewind a `finalized` run back to
+  // `review` for correction before disbursement. Separate from
+  // `updateRunStatus` because it enforces maker-checker (reopener ≠
+  // finalizer, owner bypass) and requires a reason string. Paid runs
+  // are rejected by the backend with a pointer to supplementary-run.
+  reopenRun: (id: string, data: { reason: string }) =>
+    request(`/payroll-runs/${id}/reopen`, { method: "POST", body: JSON.stringify(data) }),
   getRunEntries: (id: string, params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";
     return request(`/payroll-runs/${id}/entries${qs}`);
@@ -3216,10 +3472,22 @@ export const payrollApi = {
   submitDeclaration: (data: Record<string, unknown>) =>
     request("/investment-declarations", { method: "POST", body: JSON.stringify(data) }),
   getMyDeclarations: () => request("/investment-declarations/my"),
+  // Admin-only: list across the whole org for the verify UI (#15).
+  getAllDeclarations: (params?: Record<string, string>) => {
+    const qs = params && Object.keys(params).length ? `?${new URLSearchParams(params).toString()}` : "";
+    return request(`/investment-declarations${qs}`);
+  },
   getDeclaration: (id: string) => request(`/investment-declarations/${id}`),
   updateDeclaration: (id: string, data: Record<string, unknown>) =>
     request(`/investment-declarations/${id}`, { method: "PUT", body: JSON.stringify(data) }),
-  verifyDeclaration: (id: string, data: { verified: boolean; remarks?: string }) =>
+  verifyDeclaration: (
+    id: string,
+    data: {
+      verified: boolean;
+      remarks?: string;
+      items?: Array<{ section: string; itemIndex: number; verifiedAmount: number }>;
+    },
+  ) =>
     request(`/investment-declarations/${id}/verify`, { method: "POST", body: JSON.stringify(data) }),
 
   // Expense Claims
@@ -3364,6 +3632,11 @@ export const payrollApi = {
   // AI Recruitment
   parseResume: (data: { resumeText: string; jobPostingId?: string }) =>
     request("/candidates/parse-resume", { method: "POST", body: JSON.stringify(data) }),
+  // #17 — one-shot: parse + create candidate in a single call. Backend
+  // requires jobPostingId + email (for dedup) in addition to the resume
+  // text. Used by the "Upload Resume" button in the candidates tab.
+  parseAndCreateCandidate: (data: { resumeText: string; jobPostingId: string; email: string }) =>
+    request("/candidates/parse-and-create", { method: "POST", body: JSON.stringify(data) }),
   parseAndCreateCandidate: (data: { jobPostingId: string; resumeText: string; email: string }) =>
     request("/candidates/parse-and-create", { method: "POST", body: JSON.stringify(data) }),
   smartMatchCandidates: (data: { jobPostingId: string; minScore?: number; limit?: number }) =>

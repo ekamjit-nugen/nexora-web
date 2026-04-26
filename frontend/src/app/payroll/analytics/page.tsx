@@ -370,17 +370,24 @@ export default function HRAnalyticsPage() {
           : []
       );
 
-      // Cost
-      const costRaw = (costRes.data as unknown) ?? [];
+      // Cost. Backend returns `{ monthlyCosts: [...], avgCost, byDepartment }`
+      // — not a bare array. Old code only matched the array branch so
+      // the chart stayed empty. Accept both shapes and read the per-point
+      // amount under its real field name (`totalPayroll`) with
+      // back-compat aliases.
+      const costDataAny: any = costRes.data;
+      const costRaw: any[] = Array.isArray(costDataAny)
+        ? costDataAny
+        : (costDataAny?.monthlyCosts ?? []);
       setCostData(
-        Array.isArray(costRaw)
-          ? costRaw.map((p: any) => ({
-              month: String(p.month ?? ""),
-              year: Number(p.year ?? 0),
-              label: buildLabel(p as CostPoint),
-              totalCost: Number(p.totalCost ?? p.totalPayrollCost ?? 0),
-            }))
-          : []
+        costRaw.map((p: any) => ({
+          month: String(p.month ?? ""),
+          year: Number(p.year ?? 0),
+          label: buildLabel(p as CostPoint),
+          totalCost: Number(
+            p.totalCost ?? p.totalPayroll ?? p.totalPayrollCost ?? 0,
+          ),
+        })),
       );
 
       // Attendance
@@ -501,7 +508,7 @@ export default function HRAnalyticsPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user!} onLogout={logout} />
-      <main className="flex-1 ml-[260px] p-8">
+      <main className="flex-1 min-w-0 md:ml-[260px] p-8">
         {/* ----------------------------------------------------------------- */}
         {/* Header                                                            */}
         {/* ----------------------------------------------------------------- */}

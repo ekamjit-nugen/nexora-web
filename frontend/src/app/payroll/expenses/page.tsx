@@ -52,6 +52,14 @@ interface ExpenseItem {
   date: string;
 }
 
+interface ApprovalChainEntry {
+  level: "manager" | "hr" | "finance";
+  status: "pending" | "approved" | "rejected";
+  approvedBy?: string;
+  approvedAt?: string;
+  remarks?: string;
+}
+
 interface ExpenseClaim {
   _id: string;
   claimNumber?: string;
@@ -62,14 +70,51 @@ interface ExpenseClaim {
   status: string;
   createdAt?: string;
   remarks?: string;
+  approvalChain?: ApprovalChainEntry[];
 }
+
+/**
+ * Next pending tier on the claim's approval chain. Used to build a
+ * "Needs finance approval" badge and a context-aware button label so
+ * approvers see exactly which tier they're acting at (#16).
+ */
+const nextApprovalTier = (
+  claim: ExpenseClaim,
+): "manager" | "hr" | "finance" | null => {
+  const chain = claim.approvalChain || [];
+  const next = chain.find((e) => e.status === "pending");
+  return next?.level ?? null;
+};
+
+const tierConfig: Record<
+  "manager" | "hr" | "finance",
+  { label: string; chip: string; buttonLabel: string }
+> = {
+  manager: {
+    label: "Needs Manager approval",
+    chip: "bg-indigo-50 text-indigo-700 border border-indigo-200",
+    buttonLabel: "Approve as Manager",
+  },
+  hr: {
+    label: "Needs HR approval",
+    chip: "bg-violet-50 text-violet-700 border border-violet-200",
+    buttonLabel: "Approve as HR",
+  },
+  finance: {
+    label: "Needs Finance approval",
+    chip: "bg-amber-50 text-amber-800 border border-amber-200",
+    buttonLabel: "Approve as Finance",
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const formatCurrency = (paise: number | undefined | null) => {
-  if (typeof paise !== "number" || isNaN(paise)) return "\u20B90.00";
-  const rupees = paise / 100;
+// Expense amounts are stored in rupees on the backend (same convention
+// as payroll entries / payslips). Dividing by 100 made ₹12,500 show as
+// ₹125.00.
+const formatCurrency = (rupees: number | undefined | null) => {
+  if (typeof rupees !== "number" || isNaN(rupees)) return "\u20B90.00";
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
@@ -126,7 +171,12 @@ export default function ExpenseClaimsPage() {
     if (!user) return;
     try {
       const res = await payrollApi.getMyExpenseClaims();
-      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.claims ?? [];
+      const raw: any = res.data;
+      const data = Array.isArray(raw)
+        ? raw
+        : Array.isArray(raw?.data)
+          ? raw.data
+          : raw?.claims ?? [];
       setClaims(data);
     } catch (err: any) {
       toast.error(err.message || "Failed to load expense claims");
@@ -137,7 +187,12 @@ export default function ExpenseClaimsPage() {
     if (!user || !isManager) return;
     try {
       const res = await payrollApi.getPendingExpenses();
-      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.claims ?? [];
+      const raw: any = res.data;
+      const data = Array.isArray(raw)
+        ? raw
+        : Array.isArray(raw?.data)
+          ? raw.data
+          : raw?.claims ?? [];
       setPendingClaims(data);
     } catch (err: any) {
       toast.error(err.message || "Failed to load pending claims");
@@ -148,7 +203,12 @@ export default function ExpenseClaimsPage() {
     if (!user || !isManager) return;
     try {
       const res = await payrollApi.getAllExpenseClaims();
-      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.claims ?? [];
+      const raw: any = res.data;
+      const data = Array.isArray(raw)
+        ? raw
+        : Array.isArray(raw?.data)
+          ? raw.data
+          : raw?.claims ?? [];
       setAllClaims(data);
     } catch (err: any) {
       toast.error(err.message || "Failed to load all claims");
@@ -247,20 +307,21 @@ export default function ExpenseClaimsPage() {
         return;
       }
 
+      // Backend stores amounts in rupees and computes `totalAmount` via a
+      // pre-save hook, so (a) don't ×100 here and (b) don't ship the
+      // total up — the DTO whitelists items only and rejects unknown
+      // keys with a 400 ("property totalAmount should not exist").
       const items = validItems
         .map((i) => ({
           description: i.description.trim(),
-          amount: Math.round(parseFloat(i.amount || "0") * 100),
+          amount: Math.round(parseFloat(i.amount || "0")),
           date: i.date || new Date().toISOString().split("T")[0],
         }));
-
-      const totalAmount = items.reduce((sum, i) => sum + i.amount, 0);
 
       const res = await payrollApi.createExpenseClaim({
         title: newTitle.trim(),
         category: newCategory,
         items,
-        totalAmount,
       });
 
       if (submitAfter && res.data) {
@@ -345,7 +406,7 @@ export default function ExpenseClaimsPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] flex flex-col min-h-screen">
+      <main className="flex-1 min-w-0 md:ml-[260px] flex flex-col min-h-screen">
         {/* ----------------------------------------------------------------- */}
         {/* Header                                                            */}
         {/* ----------------------------------------------------------------- */}
@@ -549,27 +610,39 @@ export default function ExpenseClaimsPage() {
                         {/* Actions */}
                         <td className="px-5 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
-                            {/* Pending Approval tab: Approve / Reject */}
-                            {activeTab === "pending" && (
-                              <>
-                                <Button
-                                  size="sm"
-                                  className="h-7 text-[12px] bg-emerald-600 hover:bg-emerald-700"
-                                  disabled={isLoading}
-                                  onClick={() => handleApprove(claim._id)}
-                                >
-                                  {isLoading ? "..." : "Approve"}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  className="h-7 text-[12px] bg-red-600 hover:bg-red-700"
-                                  disabled={isLoading}
-                                  onClick={() => handleReject(claim._id)}
-                                >
-                                  {isLoading ? "..." : "Reject"}
-                                </Button>
-                              </>
-                            )}
+                            {/* Pending Approval tab: tier-aware Approve/Reject (#16) */}
+                            {activeTab === "pending" && (() => {
+                              const tier = nextApprovalTier(claim);
+                              const cfg = tier ? tierConfig[tier] : null;
+                              return (
+                                <>
+                                  {cfg && (
+                                    <span
+                                      className={`px-2 py-0.5 rounded text-[11px] font-medium ${cfg.chip} whitespace-nowrap`}
+                                      title="Which approval tier this claim is waiting on"
+                                    >
+                                      {cfg.label}
+                                    </span>
+                                  )}
+                                  <Button
+                                    size="sm"
+                                    className="h-7 text-[12px] bg-emerald-600 hover:bg-emerald-700 whitespace-nowrap"
+                                    disabled={isLoading}
+                                    onClick={() => handleApprove(claim._id)}
+                                  >
+                                    {isLoading ? "..." : cfg ? cfg.buttonLabel : "Approve"}
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    className="h-7 text-[12px] bg-red-600 hover:bg-red-700"
+                                    disabled={isLoading}
+                                    onClick={() => handleReject(claim._id)}
+                                  >
+                                    {isLoading ? "..." : "Reject"}
+                                  </Button>
+                                </>
+                              );
+                            })()}
 
                             {/* My Claims / All Claims tab actions */}
                             {activeTab !== "pending" && (

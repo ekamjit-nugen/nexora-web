@@ -361,7 +361,7 @@ export default function DepartmentsPage() {
     return (
       <div className="min-h-screen flex bg-[#F8FAFC]">
         <Sidebar user={user} onLogout={logout} />
-        <main className="flex-1 ml-[260px] p-8">
+        <main className="flex-1 min-w-0 md:ml-[260px] p-8">
           <div className="flex items-center justify-center min-h-[60vh]">
             <Card className="border-0 shadow-sm max-w-md w-full">
               <CardContent className="flex flex-col items-center justify-center py-16 px-8">
@@ -408,7 +408,7 @@ export default function DepartmentsPage() {
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
-      <main className="flex-1 ml-[260px] p-8">
+      <main className="flex-1 min-w-0 md:ml-[260px] p-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>

@@ -3,14 +3,21 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { payrollApi } from "@/lib/api";
+import { payrollApi, hrApi, Employee } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
+import { EmployeePicker } from "@/components/EmployeePicker";
 import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+// Backend stores `isCompleted` / `isRequired` on the schema. The page
+// previously read `completed` / `required` which always came back as
+// undefined, so (a) Mark Complete never visibly flipped the checkbox,
+// (b) task-done counters stayed at 0/10 forever, and (c) the Required
+// badge never rendered. Typed with both shapes for safety; the helpers
+// below always prefer the `isX` fields.
 interface ChecklistItem {
   _id?: string;
   taskId: string;
@@ -19,9 +26,16 @@ interface ChecklistItem {
   assignedTo?: string;
   dueDate?: string;
   required?: boolean;
-  completed: boolean;
+  isRequired?: boolean;
+  completed?: boolean;
+  isCompleted?: boolean;
   completedAt?: string;
 }
+
+const isTaskCompleted = (t: ChecklistItem): boolean =>
+  Boolean(t.isCompleted ?? t.completed);
+const isTaskRequired = (t: ChecklistItem): boolean =>
+  Boolean(t.isRequired ?? t.required ?? false);
 
 interface OnboardingDocument {
   type: string;
@@ -115,12 +129,32 @@ export default function OnboardingPage() {
   // ---------------------------------------------------------------------------
   // Data fetching
   // ---------------------------------------------------------------------------
+  // Build a lookup so the onboarding cards can show "Jamie Jones (NXR-0003)"
+  // instead of just the raw business id. Backend only returns `employeeId`
+  // on onboarding records — no joined name — so we resolve client-side
+  // against the HR employee list.
+  const [employeeLookup, setEmployeeLookup] = useState<Record<string, Employee>>({});
+
   const fetchOnboardings = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await payrollApi.getAllOnboardings();
+      const [res, empsRes] = await Promise.all([
+        payrollApi.getAllOnboardings(),
+        hrApi.getEmployees({ limit: "100" }).catch(() => ({ data: [] as any })),
+      ]);
       const data = Array.isArray(res.data) ? res.data : (res.data as any)?.records ?? [];
       setOnboardings(data);
+
+      const empsList: any[] = Array.isArray(empsRes?.data)
+        ? empsRes.data
+        : Array.isArray((empsRes?.data as any)?.data)
+          ? (empsRes.data as any).data
+          : [];
+      const map: Record<string, Employee> = {};
+      // Onboarding records use the business `employeeId` (e.g. NXR-0003),
+      // not the HR ObjectId, so key the lookup by that.
+      for (const e of empsList) if (e?.employeeId) map[e.employeeId] = e;
+      setEmployeeLookup(map);
     } catch (err: any) {
       toast.error(err.message || "Failed to load onboarding records");
     } finally {
@@ -244,13 +278,13 @@ export default function OnboardingPage() {
   // ---------------------------------------------------------------------------
   const getProgress = (rec: OnboardingRecord) => {
     if (!rec.checklist || rec.checklist.length === 0) return 0;
-    const done = rec.checklist.filter((t) => t.completed).length;
+    const done = rec.checklist.filter(isTaskCompleted).length;
     return Math.round((done / rec.checklist.length) * 100);
   };
 
   const getChecklistSummary = (rec: OnboardingRecord) => {
     const total = rec.checklist?.length ?? 0;
-    const done = rec.checklist?.filter((t) => t.completed).length ?? 0;
+    const done = rec.checklist?.filter(isTaskCompleted).length ?? 0;
     return `${done} of ${total} tasks complete`;
   };
 
@@ -261,9 +295,11 @@ export default function OnboardingPage() {
   };
 
   const canConfirm = (rec: OnboardingRecord) => {
+    // Only tasks explicitly marked required gate confirmation; the rest
+    // are optional welcome/training niceties.
     const allRequiredDone = rec.checklist
-      ?.filter((t) => t.required !== false)
-      .every((t) => t.completed) ?? false;
+      ?.filter(isTaskRequired)
+      .every(isTaskCompleted) ?? false;
     const allDocsVerified = rec.documents?.every((d) => d.status === "verified") ?? false;
     return allRequiredDone && allDocsVerified && !rec.confirmed;
   };
@@ -274,7 +310,7 @@ export default function OnboardingPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] flex flex-col min-h-screen">
+      <main className="flex-1 min-w-0 md:ml-[260px] flex flex-col min-h-screen">
         {/* Header */}
         <div className="bg-white border-b border-[#E2E8F0] px-8 py-5 sticky top-0 z-20">
           <div className="flex items-center justify-between">
@@ -351,10 +387,21 @@ export default function OnboardingPage() {
                     <div className="px-6 py-5">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
-                          <div className="flex items-center gap-3">
-                            <h3 className="text-[15px] font-semibold text-[#0F172A]">
-                              {rec.employeeId}
-                            </h3>
+                          <div className="flex items-center flex-wrap gap-2">
+                            {(() => {
+                              const emp = employeeLookup[rec.employeeId];
+                              const fullName = emp
+                                ? [emp.firstName, emp.lastName].filter(Boolean).join(" ")
+                                : "";
+                              return fullName ? (
+                                <>
+                                  <h3 className="text-[15px] font-semibold text-[#0F172A]">{fullName}</h3>
+                                  <span className="text-[12px] text-[#94A3B8]">{rec.employeeId}</span>
+                                </>
+                              ) : (
+                                <h3 className="text-[15px] font-semibold text-[#0F172A]">{rec.employeeId}</h3>
+                              );
+                            })()}
                             <span
                               className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${stCfg.color}`}
                             >
@@ -420,6 +467,8 @@ export default function OnboardingPage() {
                               <div className="space-y-2">
                                 {rec.checklist.map((task) => {
                                   const catCfg = categoryConfig[task.category] || categoryConfig.other;
+                                  const taskDone = isTaskCompleted(task);
+                                  const taskRequired = isTaskRequired(task);
                                   return (
                                     <div
                                       key={task.taskId}
@@ -428,7 +477,7 @@ export default function OnboardingPage() {
                                       <div className="flex items-center gap-3 flex-1 min-w-0">
                                         <input
                                           type="checkbox"
-                                          checked={task.completed}
+                                          checked={taskDone}
                                           readOnly
                                           className="h-4 w-4 rounded border-gray-300 text-blue-600 cursor-default"
                                         />
@@ -436,7 +485,7 @@ export default function OnboardingPage() {
                                           <div className="flex items-center gap-2">
                                             <span
                                               className={`text-[13px] font-medium ${
-                                                task.completed
+                                                taskDone
                                                   ? "text-[#94A3B8] line-through"
                                                   : "text-[#0F172A]"
                                               }`}
@@ -448,7 +497,7 @@ export default function OnboardingPage() {
                                             >
                                               {catCfg.label}
                                             </span>
-                                            {task.required && (
+                                            {taskRequired && (
                                               <span className="text-[10px] text-red-500 font-medium">
                                                 Required
                                               </span>
@@ -460,7 +509,7 @@ export default function OnboardingPage() {
                                           </div>
                                         </div>
                                       </div>
-                                      {!task.completed && isManager && (
+                                      {!taskDone && isManager && (
                                         <Button
                                           size="sm"
                                           onClick={() => handleCompleteTask(rec.employeeId, task.taskId)}
@@ -649,17 +698,21 @@ export default function OnboardingPage() {
             </div>
 
             <div className="space-y-4">
-              {/* Employee ID */}
+              {/* Employee — autocomplete picker (was free-text).
+                  Onboarding records key off the business `employeeId`
+                  (e.g. NXR-0003), so we request `valueKind="businessId"`.
+                  This matches the existing backend contract without a
+                  migration. */}
               <div>
                 <label className="block text-[13px] font-medium text-[#374151] mb-1">
-                  Employee ID <span className="text-red-500">*</span>
+                  Employee <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="text"
+                <EmployeePicker
                   value={formEmployeeId}
-                  onChange={(e) => setFormEmployeeId(e.target.value)}
-                  placeholder="e.g. EMP-001"
-                  className="w-full border border-[#E2E8F0] rounded-lg px-3 py-2 text-[13px] text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  onChange={(next) => setFormEmployeeId(next)}
+                  valueKind="businessId"
+                  placeholder="Search employees by name, ID, or email…"
+                  required
                 />
               </div>
 

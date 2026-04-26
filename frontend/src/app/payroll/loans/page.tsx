@@ -49,7 +49,10 @@ interface EmiInstallment {
 interface Loan {
   _id: string;
   loanNumber?: string;
-  loanType: string;
+  // Schema column is `type` but earlier client code read `loanType`, so
+  // the column rendered empty. Accept both.
+  type?: string;
+  loanType?: string;
   amount: number;
   tenure: number;
   interestRate: number;
@@ -65,9 +68,11 @@ interface Loan {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const formatCurrency = (paise: number | undefined | null) => {
-  if (typeof paise !== "number" || isNaN(paise)) return "\u20B90.00";
-  const rupees = paise / 100;
+// Loan amounts are stored in rupees on the backend (same convention as
+// payroll entries / payslips / expense claims). The previous divide by
+// 100 turned a ₹50,000 loan into ₹500.
+const formatCurrency = (rupees: number | undefined | null) => {
+  if (typeof rupees !== "number" || isNaN(rupees)) return "\u20B90.00";
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
@@ -281,9 +286,12 @@ export default function EmployeeLoansPage() {
 
     setSaving(true);
     try {
+      // Backend DTO uses `type` (not `loanType`) and expects rupees
+      // (not paise). Earlier code shipped the wrong key + ×100 and the
+      // server bounced it every time.
       await payrollApi.applyLoan({
-        loanType: newType,
-        amount: Math.round(amount * 100),
+        type: newType,
+        amount: Math.round(amount),
         tenure,
         interestRate,
         reason: newReason.trim(),
@@ -398,7 +406,7 @@ export default function EmployeeLoansPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] flex flex-col min-h-screen">
+      <main className="flex-1 min-w-0 md:ml-[260px] flex flex-col min-h-screen">
         {/* ----------------------------------------------------------------- */}
         {/* Header                                                            */}
         {/* ----------------------------------------------------------------- */}
@@ -525,7 +533,7 @@ export default function EmployeeLoansPage() {
                           <td className="px-5 py-3.5 text-[13px] font-medium text-[#0F172A]">
                             {loan.loanNumber || loan._id.slice(-8).toUpperCase()}
                           </td>
-                          <td className="px-5 py-3.5">{renderBadge(loan.loanType, typeConfig)}</td>
+                          <td className="px-5 py-3.5">{renderBadge(loan.type || loan.loanType || "", typeConfig)}</td>
                           <td className="px-5 py-3.5 text-[13px] font-medium text-[#0F172A]">{formatCurrency(loan.amount)}</td>
                           <td className="px-5 py-3.5 text-[13px] text-[#475569]">{formatCurrency(loan.emiAmount)}</td>
                           <td className="px-5 py-3.5 text-[13px] text-[#475569]">{loan.tenure} mo</td>

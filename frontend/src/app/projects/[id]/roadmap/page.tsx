@@ -129,7 +129,7 @@ export default function ProjectRoadmapPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] p-8">
+      <main className="flex-1 min-w-0 md:ml-[260px] p-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">

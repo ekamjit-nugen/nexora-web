@@ -46,10 +46,22 @@ export interface IPayrollRun extends Document {
   summary: IPayrollRunSummary;
   employeePayrolls: string[];
   auditTrail: IAuditTrailEntry[];
+  // Actor attribution for maker-checker (#11). The run moves through
+  // four actor roles — preparer (creates the run), processor (runs the
+  // compute), approver (signs off the numbers), finalizer (commits to
+  // accounting), disburser (releases payment). Strict SoD requires each
+  // transition to be signed by a DIFFERENT administrator; owners are
+  // allowed to self-approve to avoid single-admin deadlock. All fields
+  // are audit breadcrumbs — the `auditTrail[]` carries the human-readable
+  // history; these flat fields make "who approved this run" a one-hop
+  // read for UI badges.
+  processedBy?: string;
+  processedAt?: Date;
   approvedBy?: string;
   approvedAt?: Date;
   finalizedBy?: string;
   finalizedAt?: Date;
+  paidBy?: string;
   paidAt?: Date;
   paymentReference?: string;
   isDeleted: boolean;
@@ -105,10 +117,13 @@ export const PayrollRunSchema = new Schema<IPayrollRun>(
         newStatus: { type: String, default: null },
       },
     ],
+    processedBy: { type: String, default: null },
+    processedAt: { type: Date, default: null },
     approvedBy: { type: String, default: null },
     approvedAt: { type: Date, default: null },
     finalizedBy: { type: String, default: null },
     finalizedAt: { type: Date, default: null },
+    paidBy: { type: String, default: null },
     paidAt: { type: Date, default: null },
     paymentReference: { type: String, default: null },
     isDeleted: { type: Boolean, default: false },

@@ -88,7 +88,7 @@ export default function SpacePage() {
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="ml-[260px] flex">
+      <main className="md:ml-[260px] flex">
         {/* Wiki Sidebar */}
         <div className="w-[280px] border-r border-[#E2E8F0] bg-white min-h-screen p-4">
           <button onClick={() => router.push("/wiki")} className="text-xs text-[#64748B] hover:text-[#2E86C1] mb-3 flex items-center gap-1">

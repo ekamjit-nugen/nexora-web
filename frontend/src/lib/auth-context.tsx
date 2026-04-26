@@ -2,8 +2,22 @@
 
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from "react";
 import { authApi, orgApi, User, Organization, OrgFeatures } from "./api";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { resetTheme } from "./theme";
+
+// UI-4: client-side route guard. A user whose JWT has `organizationId: null`
+// (just verified OTP, hasn't created/joined any org yet) should never end up
+// on an org-scoped route — the backend now 403s those requests (Bug #1 fix),
+// but we also redirect client-side for a cleaner UX. Allow `/auth/*`,
+// `/login`, `/logout`, `/platform/*`, and public pages through.
+const ORG_SCOPED_PATH_PREFIXES = [
+  '/dashboard', '/directory', '/projects', '/tasks', '/boards', '/calendar',
+  '/attendance', '/leaves', '/leave-management', '/payroll', '/invoices',
+  '/expenses', '/documents', '/assets', '/recruitment', '/crm', '/clients',
+  '/knowledge', '/helpdesk', '/performance', '/settings', '/analytics',
+  '/chat', '/standups', '/meetings', '/my-work', '/manager', '/employees',
+  '/bench', '/wiki', '/onboarding',
+];
 
 // SECURITY NOTE: Tokens are stored in localStorage, which is vulnerable to XSS attacks.
 // TODO: Migrate to httpOnly cookie-based auth to eliminate XSS token theft risk.
@@ -56,6 +70,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [needsOrgSelection, setNeedsOrgSelection] = useState(false);
   const [orgRole, setOrgRole] = useState<string>('member');
   const router = useRouter();
+  const pathname = usePathname();
+
+  // UI-4: redirect null-org authenticated users off org-scoped routes.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!pathname) return;
+    const token = localStorage.getItem('accessToken');
+    if (!token) return; // unauthenticated — let the normal /login redirects handle it
+    const payload = decodeJwtPayload(token);
+    const hasOrg = !!payload?.organizationId;
+    if (hasOrg) return;
+    const isOrgScoped = ORG_SCOPED_PATH_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + '/'));
+    if (isOrgScoped) {
+      router.replace('/auth/setup-organization');
+    }
+  }, [pathname, router]);
 
   const extractOrgRoleFromToken = useCallback(() => {
     const token = localStorage.getItem('accessToken');

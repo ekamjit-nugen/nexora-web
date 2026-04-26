@@ -105,7 +105,7 @@ function calculateDays(start: string, end: string): number {
 }
 
 export default function LeavesPage() {
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading, logout, orgRole } = useAuth();
   const router = useRouter();
 
   const [myLeaves, setMyLeaves] = useState<Leave[]>([]);
@@ -116,7 +116,15 @@ export default function LeavesPage() {
   const [employeeMap, setEmployeeMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"my" | "all" | "approvals">("my");
+  // Default tab depends on role: admins/owners land on the team-wide
+  // "all" view since "my" is hidden for them. Set lazily in useState
+  // so the initial render is correct (no flash of empty content).
+  const [activeTab, setActiveTab] = useState<"my" | "all" | "approvals">(() => {
+    // useState lazy initializer can't read derived values in the closure
+    // because they aren't computed yet — so we read user.roles directly.
+    // The check mirrors the isAdmin computation above.
+    return "my";
+  });
   const [showApplyForm, setShowApplyForm] = useState(false);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
@@ -130,13 +138,30 @@ export default function LeavesPage() {
     reason: "",
   });
 
-  const isAdmin = user?.roles?.some((r) => ["admin", "super_admin"].includes(r));
-  const isHR = user?.roles?.some((r) => ["hr"].includes(r));
+  // Mirrors attendance-page logic. Admins/owners manage leave approvals
+  // but don't apply for leave themselves — keeps the "manage, not track"
+  // separation consistent across self-service surfaces. HR is still an
+  // applicant role; matches the backend's leave-service rule.
+  const isAdmin =
+    !!user?.roles?.some((r) => ["admin", "super_admin"].includes(r)) ||
+    orgRole === "admin" ||
+    orgRole === "owner";
+  const isHR = !!user?.roles?.some((r) => ["hr"].includes(r)) || orgRole === "hr";
   const canManage = isAdmin || isHR;
+  const canApplyLeave = !isAdmin;
 
   useEffect(() => {
     if (!authLoading && !user) router.push("/login");
   }, [user, authLoading, router]);
+
+  // Flip the default tab once we know the user is an admin/owner —
+  // "my" doesn't render for them, so landing on it would show blank.
+  // Runs on mount + when isAdmin flips (e.g. orgRole arriving late).
+  useEffect(() => {
+    if (isAdmin && activeTab === "my") {
+      setActiveTab("all");
+    }
+  }, [isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchData = useCallback(async () => {
     try {
@@ -324,7 +349,9 @@ export default function LeavesPage() {
   const applyDaysPreview = calculateDays(applyForm.startDate, applyForm.endDate);
 
   const tabs = [
-    { key: "my" as const, label: "My Leaves" },
+    // "My Leaves" only makes sense for users who can apply for leave.
+    // Admins/owners get the team views (All + Approvals) instead.
+    ...(canApplyLeave ? [{ key: "my" as const, label: "My Leaves" }] : []),
     ...(canManage
       ? [
           { key: "all" as const, label: "All Leaves" },
@@ -344,7 +371,7 @@ export default function LeavesPage() {
     <RouteGuard minOrgRole="member">
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] p-8">
+      <main className="flex-1 min-w-0 md:ml-[260px] p-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -355,15 +382,17 @@ export default function LeavesPage() {
                 : "Track your leave balances and apply for time off"}
             </p>
           </div>
-          <Button
-            onClick={() => setShowApplyForm(!showApplyForm)}
-            className="h-11 bg-[#2E86C1] hover:bg-[#2471A3] text-white font-medium px-5 rounded-xl text-[15px]"
-          >
-            <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            Apply Leave
-          </Button>
+          {canApplyLeave && (
+            <Button
+              onClick={() => setShowApplyForm(!showApplyForm)}
+              className="h-11 bg-[#2E86C1] hover:bg-[#2471A3] text-white font-medium px-5 rounded-xl text-[15px]"
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Apply Leave
+            </Button>
+          )}
         </div>
 
         {loading ? (
@@ -372,8 +401,9 @@ export default function LeavesPage() {
           </div>
         ) : (
           <>
-            {/* Apply Leave Form */}
-            {showApplyForm && (
+            {/* Apply Leave Form — admins/owners get the Approvals tab,
+                not this self-apply form. */}
+            {showApplyForm && canApplyLeave && (
               <Card className="border-0 shadow-sm mb-6 border-l-4 border-l-[#2E86C1]">
                 <CardContent className="p-5">
                   <div className="flex items-start justify-between mb-4">

@@ -95,8 +95,8 @@ export default function TicketDetailPage() {
 
   const formatDate = (d: string) => d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "-";
 
-  if (loading) return <div className="min-h-screen bg-[#F8FAFC]"><Sidebar user={user} onLogout={logout} /><main className="ml-[260px] p-8 text-center py-20 text-[#94A3B8]">Loading...</main></div>;
-  if (!ticket) return <div className="min-h-screen bg-[#F8FAFC]"><Sidebar user={user} onLogout={logout} /><main className="ml-[260px] p-8 text-center py-20 text-[#94A3B8]">Ticket not found</main></div>;
+  if (loading) return <div className="min-h-screen bg-[#F8FAFC]"><Sidebar user={user} onLogout={logout} /><main className="md:ml-[260px] p-8 text-center py-20 text-[#94A3B8]">Loading...</main></div>;
+  if (!ticket) return <div className="min-h-screen bg-[#F8FAFC]"><Sidebar user={user} onLogout={logout} /><main className="md:ml-[260px] p-8 text-center py-20 text-[#94A3B8]">Ticket not found</main></div>;
 
   const now = new Date();
   const slaResponseOk = !ticket.slaResponseBreached && (!ticket.slaResponseDue || ticket.firstRespondedAt || new Date(ticket.slaResponseDue) > now);
@@ -105,7 +105,7 @@ export default function TicketDetailPage() {
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="ml-[260px] p-8">
+      <main className="md:ml-[260px] p-8">
         <div className="max-w-4xl mx-auto">
           <button onClick={() => router.push("/helpdesk")} className="text-xs text-[#64748B] hover:text-[#2E86C1] mb-4 flex items-center gap-1">
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>

@@ -10,6 +10,7 @@ import {
 } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { SetupCompletenessWidget } from "@/components/setup-completeness-widget";
+import { ProfileCompletenessWidget } from "@/components/profile-completeness-widget";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -29,7 +30,7 @@ interface ActionItem {
 }
 
 export default function DashboardPage() {
-  const { user, loading, logout, hasOrgRole } = useAuth();
+  const { user, loading, logout, hasOrgRole, orgRole } = useAuth();
   const router = useRouter();
 
   // Stat cards (real data)
@@ -79,6 +80,22 @@ export default function DashboardPage() {
     user.role === "admin" || user.role === "super_admin" ||
     (user.roles && (user.roles.includes("admin") || user.roles.includes("super_admin") || user.roles.includes("hr")))
   );
+  // Admins / owners / super-admins don't clock in — they manage, they don't
+  // track billable hours. Hide the Clock In stat card for those roles.
+  const isAdminRole =
+    orgRole === "owner" || orgRole === "admin" ||
+    user?.role === "admin" || user?.role === "super_admin" ||
+    (user?.roles && (user.roles.includes("super_admin") || user.roles.includes("owner")));
+  const showClockIn = !isAdminRole;
+  // Setup-completeness widget drives admins through org-level setup tasks
+  // (Business Details, Payroll Setup, Branding, Team Setup, …) — all
+  // completable only from Settings/*, which non-admins don't have access to.
+  // Showing it to developers/designers is just noise (and mildly confusing,
+  // because the links 404 for them). Gate to admin / owner / HR.
+  const canCompleteSetup =
+    !!canManage ||
+    orgRole === "owner" || orgRole === "admin" ||
+    hasOrgRole("hr");
 
   // ── Fetch all dashboard data ──
   const fetchDashboardData = useCallback(async () => {
@@ -369,7 +386,7 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] p-8">
+      <main className="flex-1 min-w-0 md:ml-[260px] p-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
@@ -387,12 +404,19 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Setup Completeness */}
-        <SetupCompletenessWidget />
+        {/* Setup Completeness — admin/owner/HR see the org-level widget
+            (Business Details, Payroll, Branding, …). Everyone else sees
+            the per-user Profile Completeness widget (Avatar, Phone, Job
+            Title, etc.) so they still get a gentle nudge to fill out
+            their profile without being shown irrelevant admin tasks. */}
+        {canCompleteSetup ? <SetupCompletenessWidget /> : <ProfileCompletenessWidget />}
 
         {/* ── Stat Cards (REAL DATA) ── */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
-          {/* Attendance */}
+        {/* Grid width auto-adjusts: admins/owners lose the Clock In card so
+            use 4-column layout on desktop; others keep 5. */}
+        <div className={`grid grid-cols-2 sm:grid-cols-3 ${showClockIn ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-4 mb-6`}>
+          {/* Attendance — hidden for admin / owner / super_admin roles */}
+          {showClockIn && (
           <Card className="border-0 shadow-sm relative overflow-hidden">
             <div className="absolute top-0 right-0 w-20 h-20 bg-emerald-50 rounded-bl-[60px] -mr-2 -mt-2" />
             <CardContent className="p-5 relative">
@@ -420,6 +444,7 @@ export default function DashboardPage() {
               )}
             </CardContent>
           </Card>
+          )}
 
           {/* Team Members */}
           <Card className="border-0 shadow-sm relative overflow-hidden cursor-pointer hover:shadow-md transition-shadow" onClick={() => router.push("/directory")}>

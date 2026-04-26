@@ -199,7 +199,12 @@ export default function LearningPage() {
       if (filterLevel) params.level = filterLevel;
       if (searchQuery.trim()) params.search = searchQuery.trim();
       const res = await payrollApi.listCourses(params);
-      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.courses ?? [];
+      // Backend list envelope: `{ items, total, page, limit }`. The old
+      // `.courses` alias never existed server-side — fallback silently
+      // rendered an empty catalog.
+      const data = Array.isArray(res.data)
+        ? res.data
+        : ((res.data as any)?.items ?? (res.data as any)?.courses ?? []);
       setCatalog(data);
     } catch (err: any) {
       toast.error(err.message || "Failed to load catalog");
@@ -209,7 +214,9 @@ export default function LearningPage() {
   const fetchCertificates = useCallback(async () => {
     try {
       const res = await payrollApi.getMyCertificates();
-      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.certificates ?? [];
+      const data = Array.isArray(res.data)
+        ? res.data
+        : ((res.data as any)?.items ?? (res.data as any)?.certificates ?? []);
       setCertificates(data);
     } catch (err: any) {
       toast.error(err.message || "Failed to load certificates");
@@ -220,7 +227,12 @@ export default function LearningPage() {
     if (!isAdmin) return;
     try {
       const res = await payrollApi.listCourses();
-      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.courses ?? [];
+      // Backend list envelope: `{ items, total, page, limit }`. The old
+      // `.courses` alias never existed server-side — fallback silently
+      // rendered an empty catalog.
+      const data = Array.isArray(res.data)
+        ? res.data
+        : ((res.data as any)?.items ?? (res.data as any)?.courses ?? []);
       setAdminCourses(data);
     } catch (err: any) {
       toast.error(err.message || "Failed to load admin courses");
@@ -482,7 +494,11 @@ export default function LearningPage() {
                 Continue Learning
               </Button>
             )}
-            {enrollment && (status === "enrolled" || status === "not_started") && (
+            {/* Backend enrollment enum only has `enrolled` | `in_progress` |
+                `completed` | `dropped` | `expired` | `overdue`. `not_started`
+                is a lesson-progress concept, never an enrollment status;
+                the old check matched nothing. */}
+            {enrollment && status === "enrolled" && (
               <Button
                 size="sm"
                 className="flex-1"
@@ -647,11 +663,14 @@ export default function LearningPage() {
             cert.course?.category ||
             "other";
           const cat = categoryConfig[category] || categoryConfig.other;
+          // Backend schema field is `isRevoked`; old read of `cert.revoked`
+          // was always undefined so the revoked visual state never fired.
+          const isRevoked = (cert as any).isRevoked === true || (cert as any).revoked === true;
           return (
             <div
               key={cert._id}
               className={`bg-white border rounded-xl p-5 flex items-center gap-4 ${
-                cert.revoked ? "border-red-200 opacity-75" : "border-gray-200"
+                isRevoked ? "border-red-200 opacity-75" : "border-gray-200"
               }`}
             >
               <div className="w-14 h-14 rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-3xl">
@@ -663,7 +682,7 @@ export default function LearningPage() {
                   <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${cat.color}`}>
                     {cat.label}
                   </span>
-                  {cert.revoked && (
+                  {isRevoked && (
                     <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-700">
                       Revoked
                     </span>
@@ -781,7 +800,7 @@ export default function LearningPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] p-6">
+      <main className="flex-1 min-w-0 md:ml-[260px] p-6">
         {/* Header */}
         <div className="flex items-start justify-between mb-6">
           <div>

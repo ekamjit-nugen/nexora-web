@@ -125,7 +125,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
 
-      <main className="flex-1 md:ml-[260px] p-4 md:p-8">
+      <main className="flex-1 min-w-0 md:ml-[260px] p-4 md:p-8">
         <div className="mb-6 flex items-center gap-3">
           {/* Mobile hamburger for settings nav */}
           <button

@@ -145,12 +145,24 @@ export default function KudosPage() {
   // -------------------------------------------------------------------------
   // Data fetching
   // -------------------------------------------------------------------------
+  // Backend returns `{ items, total, page, limit }` for all kudos list
+  // endpoints and a bare array for the leaderboard. The old
+  // `.kudos`/`.leaderboard` aliases never existed on the server —
+  // fallbacks silently rendered empty tabs. Accept historical shapes.
+  const unwrapList = <T,>(res: any, arrayAlias?: string): T[] => {
+    const d = res?.data;
+    if (Array.isArray(d)) return d as T[];
+    if (Array.isArray(d?.items)) return d.items as T[];
+    if (Array.isArray(d?.records)) return d.records as T[];
+    if (arrayAlias && Array.isArray(d?.[arrayAlias])) return d[arrayAlias] as T[];
+    return [];
+  };
+
   const fetchFeed = useCallback(async () => {
     if (!user) return;
     try {
       const res = await payrollApi.listKudos();
-      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.kudos ?? [];
-      setFeed(data as Kudos[]);
+      setFeed(unwrapList<Kudos>(res, "kudos"));
     } catch (err: any) {
       toast.error(err.message || "Failed to load kudos feed");
     }
@@ -160,8 +172,7 @@ export default function KudosPage() {
     if (!user) return;
     try {
       const res = await payrollApi.getMyReceivedKudos();
-      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.kudos ?? [];
-      setReceived(data as Kudos[]);
+      setReceived(unwrapList<Kudos>(res, "kudos"));
     } catch {
       // ignore
     }
@@ -171,8 +182,7 @@ export default function KudosPage() {
     if (!user) return;
     try {
       const res = await payrollApi.getMyGivenKudos();
-      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.kudos ?? [];
-      setGiven(data as Kudos[]);
+      setGiven(unwrapList<Kudos>(res, "kudos"));
     } catch {
       // ignore
     }
@@ -182,8 +192,7 @@ export default function KudosPage() {
     if (!user) return;
     try {
       const res = await payrollApi.getKudosLeaderboard(10);
-      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.leaderboard ?? [];
-      setLeaderboard(data as LeaderboardEntry[]);
+      setLeaderboard(unwrapList<LeaderboardEntry>(res, "leaderboard"));
     } catch {
       // ignore
     }
@@ -394,15 +403,19 @@ export default function KudosPage() {
     return null;
   };
 
+  // Exclude the current user from the recipient picker — backend
+  // rejects self-kudos with a 400, this stops the UX dead-end.
   const filteredUsers = useMemo(() => {
-    if (!searchQuery.trim()) return users;
+    const me = user?._id;
+    const base = me ? users.filter((u) => (u as any)?._id !== me) : users;
+    if (!searchQuery.trim()) return base;
     const q = searchQuery.toLowerCase();
-    return users.filter(
+    return base.filter(
       (u) =>
         `${u.firstName || ""} ${u.lastName || ""}`.toLowerCase().includes(q) ||
         u.email.toLowerCase().includes(q),
     );
-  }, [users, searchQuery]);
+  }, [users, searchQuery, user]);
 
   // -------------------------------------------------------------------------
   // Auth gate
@@ -421,7 +434,7 @@ export default function KudosPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] flex flex-col min-h-screen">
+      <main className="flex-1 min-w-0 md:ml-[260px] flex flex-col min-h-screen">
         {/* Header */}
         <div className="bg-white border-b border-[#E2E8F0] px-8 py-5 flex items-center justify-between sticky top-0 z-20">
           <div>
@@ -561,6 +574,17 @@ export default function KudosPage() {
                       {leaderboard.map((entry, idx) => {
                         const rank = entry.rank || idx + 1;
                         const medal = medalFor(rank);
+                        // Backend leaderboard returns only `{userId, totalPoints, kudosCount}`;
+                        // name/avatar are not joined server-side. Resolve
+                        // against the already-loaded `users[]` directory so
+                        // the table shows real names instead of "Unknown".
+                        const hydrated = users.find((u) => (u as any)?._id === entry.userId);
+                        const firstName = entry.firstName ?? hydrated?.firstName;
+                        const lastName = entry.lastName ?? hydrated?.lastName;
+                        const displayName =
+                          firstName || lastName
+                            ? `${firstName || ""} ${lastName || ""}`.trim()
+                            : entry.name || hydrated?.email || "Unknown";
                         return (
                           <div
                             key={entry.userId}
@@ -574,13 +598,11 @@ export default function KudosPage() {
                             <div className="col-span-6 flex items-center gap-3">
                               <Avatar className="h-9 w-9 bg-[#2E86C1]">
                                 <AvatarFallback className="bg-[#2E86C1] text-white text-[11px] font-semibold">
-                                  {getInitials(entry.firstName, entry.lastName, entry.name)}
+                                  {getInitials(firstName, lastName, entry.name)}
                                 </AvatarFallback>
                               </Avatar>
                               <span className="text-[14px] font-semibold text-[#0F172A]">
-                                {entry.firstName || entry.lastName
-                                  ? `${entry.firstName || ""} ${entry.lastName || ""}`.trim()
-                                  : entry.name || "Unknown"}
+                                {displayName}
                               </span>
                             </div>
                             <div className="col-span-2 text-right text-[14px] font-semibold text-[#64748B]">

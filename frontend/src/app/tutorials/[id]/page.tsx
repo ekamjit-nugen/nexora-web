@@ -36,7 +36,7 @@ export default function TutorialDetailPage() {
     return (
       <div className="min-h-screen bg-[#F8FAFC]">
         <Sidebar user={user} onLogout={logout} />
-        <main className="ml-[260px] p-8">
+        <main className="md:ml-[260px] p-8">
           <div className="text-center py-20 text-[#94A3B8]">Tutorial not found</div>
         </main>
       </div>
@@ -62,7 +62,7 @@ export default function TutorialDetailPage() {
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="ml-[260px] p-8">
+      <main className="md:ml-[260px] p-8">
         <div className="max-w-3xl mx-auto">
           {/* Back Button */}
           <button

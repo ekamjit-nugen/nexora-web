@@ -10,6 +10,7 @@ import { IOrgMembership } from './schemas/org-membership.schema';
 import { IUser } from './schemas/user.schema';
 import { IRole } from './schemas/role.schema';
 import { AuditService, AuditAction } from './audit.service';
+import { HrSyncService } from './services/hr-sync.service';
 import { CreateOrganizationDto, UpdateOrganizationDto } from './dto/organization.dto';
 
 @Injectable()
@@ -25,6 +26,7 @@ export class OrganizationService {
     @InjectModel('Role') private roleModel: Model<IRole>,
     private jwtService: JwtService,
     private auditService: AuditService,
+    private hrSyncService: HrSyncService,
   ) {
     this.frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3100';
     this.mailTransporter = nodemailer.createTransport({
@@ -823,10 +825,15 @@ export class OrganizationService {
   async resendInvite(orgId: string, memberEmail: string, performedBy: string): Promise<IOrgMembership> {
     this.logger.debug(`Resending invite to ${memberEmail} for org: ${orgId}`);
 
-    // First try finding by email on the membership
+    // Admins must be able to revive a previously-DECLINED invite (invitee
+    // may have declined by mistake, or the admin changes their mind).
+    // The decline flow sets the membership to `removed`, so accept that too.
+    const REVIVABLE_STATUSES = ['pending', 'invited', 'removed'];
+
+    // First try finding by email on the membership (email-only invite path)
     let membership = await this.orgMembershipModel.findOne({
       organizationId: orgId,
-      status: { $in: ['pending', 'invited'] },
+      status: { $in: REVIVABLE_STATUSES },
       email: memberEmail,
     });
 
@@ -836,27 +843,46 @@ export class OrganizationService {
       if (user) {
         membership = await this.orgMembershipModel.findOne({
           organizationId: orgId,
-          status: { $in: ['pending', 'invited'] },
+          status: { $in: REVIVABLE_STATUSES },
           userId: user._id.toString(),
         });
       }
     }
 
     if (!membership) {
-      throw new HttpException('No pending invitation found for this email', HttpStatus.NOT_FOUND);
+      throw new HttpException('No invitation found for this email in this organization', HttpStatus.NOT_FOUND);
     }
 
-    // Generate new invite token with fresh expiry
+    const wasDeclined = membership.status === 'removed';
+
+    // Generate new invite token with fresh expiry and revive the membership
     const newToken = uuidv4();
     membership.inviteToken = newToken;
     membership.inviteExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     membership.invitedAt = new Date();
+    membership.status = 'pending';
     await membership.save();
 
     // Get org for email
     const organization = await this.organizationModel.findById(orgId);
     if (organization) {
       await this.sendInvitationEmail(memberEmail, organization, orgId, newToken);
+    }
+
+    // If the invite was previously declined, roll the HR employee status
+    // back from `declined` to `invited` so the directory reflects the new
+    // pending state instead of the old rejection.
+    if (wasDeclined) {
+      try {
+        await this.hrSyncService.syncEmployeeStatus(
+          memberEmail,
+          'invited',
+          orgId,
+          membership.userId || performedBy,
+        );
+      } catch (err: any) {
+        this.logger.warn(`Failed to revert HR status to 'invited' on re-invite: ${err?.message}`);
+      }
     }
 
     this.logger.log(`[DEV] Resend invite link for ${memberEmail}: ${this.frontendUrl}/auth/accept-invite?token=${newToken}`);
@@ -868,7 +894,7 @@ export class OrganizationService {
       resource: 'membership',
       resourceId: membership._id.toString(),
       organizationId: orgId,
-      details: { email: memberEmail },
+      details: { email: memberEmail, wasDeclined },
     });
 
     return membership;
@@ -901,7 +927,13 @@ export class OrganizationService {
     user.defaultOrganizationId = orgId;
     await user.save();
 
-    // Generate new tokens with org context
+    // Generate new tokens with org context.
+    // NOTE: `validateJwtPayload` in AuthService requires `isPlatformAdmin` to
+    // be a boolean and `orgRole` to be a string|null|undefined. Previously
+    // this payload omitted both, which left switch-org tokens (and post-org-
+    // creation tokens, since setup-organization calls switchOrg immediately)
+    // failing JWT validation on every subsequent guarded endpoint — including
+    // /complete-profile. Always include the full canonical claim set.
     const payload = {
       sub: user._id,
       email: user.email,
@@ -909,6 +941,8 @@ export class OrganizationService {
       lastName: user.lastName,
       roles: user.roles,
       organizationId: orgId,
+      orgRole: membership?.role || null,
+      isPlatformAdmin: user.isPlatformAdmin || false,
     };
 
     const jwtExpiry = process.env.JWT_EXPIRY || '7d';
@@ -1021,6 +1055,68 @@ export class OrganizationService {
     else if (!checks.workConfig.complete) nextAction = 'Configure working hours and holidays';
     else if (!checks.payrollSetup.complete) nextAction = 'Set up payroll configuration';
     else if (!checks.branding.complete) nextAction = 'Upload your organization logo';
+
+    return { percentage, categories: checks, nextAction };
+  }
+
+  /**
+   * Calculate personal profile completeness for a user.
+   * Non-admin roles (developer, designer, employee, etc.) see this widget
+   * on their dashboard instead of the org-level Setup widget. Categories
+   * mirror the fields editable from /settings/profile.
+   */
+  async calculateProfileCompleteness(userId: string): Promise<{
+    percentage: number;
+    categories: Record<string, { weight: number; complete: boolean; label: string; link: string }>;
+    nextAction: string;
+  }> {
+    const user = await this.userModel.findById(userId);
+    if (!user) throw new HttpException('User not found', HttpStatus.NOT_FOUND);
+
+    const u: any = user;
+    const hasName = !!(u.firstName && u.lastName && u.firstName !== 'Pending' && u.lastName !== 'User');
+
+    const checks = {
+      basicInfo: {
+        weight: 20,
+        complete: hasName,
+        label: 'Basic Info',
+        link: '/settings/profile',
+      },
+      profilePhoto: {
+        weight: 20,
+        complete: !!u.avatar,
+        label: 'Profile Photo',
+        link: '/settings/profile',
+      },
+      contactInfo: {
+        weight: 20,
+        complete: !!u.phoneNumber,
+        label: 'Contact Info',
+        link: '/settings/profile',
+      },
+      roleInfo: {
+        weight: 20,
+        complete: !!(u.jobTitle && u.department),
+        label: 'Role & Department',
+        link: '/settings/profile',
+      },
+      bio: {
+        weight: 20,
+        complete: !!u.bio,
+        label: 'About You',
+        link: '/settings/profile',
+      },
+    };
+
+    const percentage = Object.values(checks).reduce((sum, c) => sum + (c.complete ? c.weight : 0), 0);
+
+    let nextAction = '';
+    if (!checks.basicInfo.complete) nextAction = 'Add your full name';
+    else if (!checks.profilePhoto.complete) nextAction = 'Upload a profile photo so your teammates recognise you';
+    else if (!checks.contactInfo.complete) nextAction = 'Add your phone number for urgent contact';
+    else if (!checks.roleInfo.complete) nextAction = 'Set your job title and department';
+    else if (!checks.bio.complete) nextAction = 'Write a short bio about yourself';
 
     return { percentage, categories: checks, nextAction };
   }

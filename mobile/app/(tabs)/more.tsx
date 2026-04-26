@@ -24,11 +24,24 @@ interface MenuItem {
   subtitle?: string;
   color?: string;
   onPress?: () => void;
+  // Optional feature key — when set, the item only appears if the
+  // current org has the matching feature toggle enabled. Items
+  // without a feature key are always visible (Profile, Notifications,
+  // Settings — universal admin/profile actions).
+  feature?:
+    | "leaves"
+    | "tasks"
+    | "timesheets"
+    | "projects"
+    | "attendance"
+    | "chat"
+    | "calls"
+    | "policies";
 }
 
 export default function MoreScreen() {
   const router = useRouter();
-  const { user, currentOrg, logout, organizations } = useAuth();
+  const { user, currentOrg, logout, organizations, isFeatureEnabled } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
 
   const handleLogout = () => {
@@ -62,12 +75,18 @@ export default function MoreScreen() {
     { id: "settings", label: "Settings", icon: "cog-outline", color: COLORS.textSecondary, onPress: () => Alert.alert("Settings", "App settings coming in a future update.") },
   ];
 
-  const workItems: MenuItem[] = [
-    { id: "leave", label: "Leave", icon: "calendar-check-outline", subtitle: "Apply & manage leaves", color: COLORS.primary, onPress: () => router.push("/leave") },
+  // Per-tenant feature gating. Items with a `feature:` key drop out
+  // when the org has the flag off (e.g. Nugen with timesheets disabled
+  // won't see the Timesheets row). Directory has no gate — it's
+  // assumed always-on across tenants. Policies follows policy/work-
+  // config which is part of `attendance` for now.
+  const workItemsAll: MenuItem[] = [
+    { id: "leave", label: "Leave", icon: "calendar-check-outline", subtitle: "Apply & manage leaves", color: COLORS.primary, onPress: () => router.push("/leave"), feature: "leaves" },
     { id: "directory", label: "Directory", icon: "account-group-outline", subtitle: "Browse team members", color: COLORS.accent, onPress: () => router.push("/directory") },
-    { id: "timesheets", label: "Timesheets", icon: "table-clock", subtitle: "View and submit timesheets", color: COLORS.success, onPress: () => router.push("/timesheets") },
+    { id: "timesheets", label: "Timesheets", icon: "table-clock", subtitle: "View and submit timesheets", color: COLORS.success, onPress: () => router.push("/timesheets"), feature: "timesheets" },
     { id: "policies", label: "Policies", icon: "shield-check-outline", subtitle: "Company policies", color: COLORS.secondary, onPress: () => router.push("/policies") },
   ];
+  const workItems = workItemsAll.filter((it) => !it.feature || isFeatureEnabled(it.feature));
 
   const orgItems: MenuItem[] = [
     {
@@ -104,14 +123,23 @@ export default function MoreScreen() {
     </TouchableOpacity>
   );
 
-  const renderSection = (title: string, items: MenuItem[]) => (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      <View style={styles.sectionCard}>
-        {items.map((item, idx) => renderMenuItem(item, idx === items.length - 1))}
+  const renderSection = (title: string, items: MenuItem[]) => {
+    // Skip an entirely empty section — happens when every item in
+    // the section is gated off for the current tenant. Without this,
+    // a Nugen-style tenant with leaves+timesheets disabled would see
+    // a "Work" section header followed by just Directory + Policies,
+    // which is fine — but a tenant with everything disabled would
+    // see a header with no rows beneath it.
+    if (items.length === 0) return null;
+    return (
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        <View style={styles.sectionCard}>
+          {items.map((item, idx) => renderMenuItem(item, idx === items.length - 1))}
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   if (loggingOut) {
     return (

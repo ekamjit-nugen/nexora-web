@@ -318,7 +318,7 @@ export default function ProjectProfitabilityPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] flex flex-col min-h-screen">
+      <main className="flex-1 min-w-0 md:ml-[260px] flex flex-col min-h-screen">
         {/* Header */}
         <div className="bg-white border-b border-[#E2E8F0] px-8 py-5 flex items-center justify-between sticky top-0 z-20">
           <div>

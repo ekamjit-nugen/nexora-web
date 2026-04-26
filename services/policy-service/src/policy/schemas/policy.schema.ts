@@ -14,9 +14,49 @@ export interface IPolicy extends Document {
   category: string;
 
   // Category-specific configs (only relevant one populated)
-  workTiming?: { startTime?: string; endTime?: string; timezone?: string; graceMinutes?: number; minWorkingHours?: number; breakMinutes?: number };
+  //
+  // `workTiming` now carries the full shift contract. Attendance-service
+  // uses it to resolve `late` / `half_day` / `present` on clock-in/out:
+  //   - graceMinutes:       free window after startTime (was already there)
+  //   - lateToHalfDayMinutes: late beyond this → status jumps to half_day
+  //   - minHoursForPresent: worked < this → half_day regardless of late
+  //   - isNightShift:       start > end implies straddles midnight; payroll
+  //                         applies nightShiftMultiplier to OT on these shifts
+  workTiming?: {
+    startTime?: string;
+    endTime?: string;
+    timezone?: string;
+    graceMinutes?: number;
+    minWorkingHours?: number;
+    breakMinutes?: number;
+    lateToHalfDayMinutes?: number;
+    minHoursForPresent?: number;
+    isNightShift?: boolean;
+  };
   wfhConfig?: { maxDaysPerMonth?: number; requiresApproval?: boolean; allowedDays?: string[] };
-  leaveConfig?: { leaveTypes?: Array<{ type: string; label?: string; annualAllocation: number; accrualFrequency?: string; maxCarryForward?: number; encashable?: boolean; maxConsecutiveDays?: number; requiresDocument?: boolean }>; yearStart?: string; halfDayAllowed?: boolean; backDatedLeaveMaxDays?: number };
+  // `leaveConfig` subsumes leave-service's legacy `LeavePolicy` — the
+  // three fields it had that policy-service lacked (blackoutPeriods,
+  // probation rules) now live here so the admin has a single config
+  // surface. leave-service reads this via policy-client (#10).
+  leaveConfig?: {
+    leaveTypes?: Array<{
+      type: string;
+      label?: string;
+      annualAllocation: number;
+      accrualFrequency?: string;
+      maxCarryForward?: number;
+      encashable?: boolean;
+      maxConsecutiveDays?: number;
+      requiresDocument?: boolean;
+      minServiceMonths?: number;
+      applicableTo?: string; // 'all' | 'male' | 'female'
+    }>;
+    yearStart?: string;
+    halfDayAllowed?: boolean;
+    backDatedLeaveMaxDays?: number;
+    probationLeaveAllowed?: boolean;
+    blackoutPeriods?: Array<{ startDate: Date; endDate: Date; reason: string }>;
+  };
   overtimeConfig?: { maxOvertimeHoursPerDay?: number; maxOvertimeHoursPerWeek?: number; requiresApproval?: boolean; multiplier?: number };
   shiftConfig?: { shifts?: Array<{ name: string; startTime: string; endTime: string; isNightShift?: boolean }> };
   expenseConfig?: { maxAmountPerTransaction?: number; requiresReceipt?: boolean; approvalThreshold?: number; allowedCategories?: string[] };
@@ -25,6 +65,63 @@ export interface IPolicy extends Document {
   invoiceConfig?: { paymentTermDays?: number; lateFeePercentage?: number; currency?: string };
   exemptionConfig?: { exemptionType?: string; criteria?: string; autoApprove?: boolean };
   attendanceConfig?: { maxWorkingHoursPerWeek?: number; alerts?: { lateArrival?: boolean; earlyDeparture?: boolean; missedClockIn?: boolean; overtimeAlert?: boolean } };
+
+  // Per-employee statutory overrides for payroll. When a policy in this
+  // category is attached to an employee, payroll-service's `processRun`
+  // layers these on top of the org-level config from /settings/payroll
+  // (most-specific wins). All sub-fields optional — override only what
+  // you want, e.g. "reduced PF rate for interns" sets just pfConfig.
+  payrollOverrides?: {
+    pfConfig?: {
+      applicable?: boolean;
+      employeeRate?: number;
+      employerRate?: number;
+      wageCeiling?: number;
+      adminChargesRate?: number;
+      edliRate?: number;
+    };
+    esiConfig?: {
+      applicable?: boolean;
+      employeeRate?: number;
+      employerRate?: number;
+      wageCeiling?: number;
+    };
+    ptConfig?: {
+      applicable?: boolean;
+      state?: string;
+    };
+    // Overtime policy. The engine used to treat every OT hour as a flat
+    // `rate × (basic+DA) / (workingDays × 8)` which is both under-specified
+    // (no separate weekend/holiday premium) and unit-stuck (8 hrs/day was
+    // hardcoded). These fields let an org honour Factories Act-style
+    // overtime — weekday 2×, holiday 2.5× — and cap abuse via a monthly
+    // limit without leaving the config surface.
+    overtime?: {
+      applicable?: boolean;
+      rate?: number;                      // weekday multiplier, default 2
+      weekendRate?: number;                // defaults to `rate`
+      holidayRate?: number;                // defaults to `weekendRate` ?? `rate`
+      // Night-shift premium applied when the attendance record is flagged
+      // `isNightShift` (resolved at clock-in from the shift policy). Takes
+      // precedence over weekday/weekend/holiday buckets — Factories Act §59
+      // treats night-shift hours as its own category. Defaults to `rate`.
+      nightShiftMultiplier?: number;
+      hoursPerDay?: number;                // standard shift length, default 8
+      maxOvertimeHoursPerMonth?: number;   // cap total paid OT; 0/undefined = no cap
+      includeDA?: boolean;                 // fold DA into hourly rate, default true
+    };
+    // LOP (Loss of Pay) policy. Payroll-service consults this when
+    // building the attendance summary — currently the engine treats
+    // every `absent` record as 1 LOP day and ignores half-days entirely,
+    // which is wrong for any org that pays half-day absences at 50%.
+    // All fields optional; unset falls back to the engine default
+    // (absents count as 1, half-days count as 0.5 when enabled).
+    lopConfig?: {
+      includeAbsentInLop?: boolean;   // default true
+      includeHalfDayInLop?: boolean;  // default true — counts half-days as partial LOP
+      halfDayLopFactor?: number;      // default 0.5
+    };
+  };
 
   // Dynamic rules
   rules: IPolicyRule[];
@@ -84,6 +181,20 @@ const LeaveTypeSubSchema = new Schema(
     encashable: { type: Boolean, default: false },
     maxConsecutiveDays: { type: Number },
     requiresDocument: { type: Boolean, default: false },
+    // Pulled in from leave-service's legacy LeavePolicy so an org-wide
+    // rule like "casual leave unlocks after 3 months" fits inside one
+    // policy doc instead of being split across services.
+    minServiceMonths: { type: Number, default: 0 },
+    applicableTo: { type: String, default: 'all' },
+  },
+  { _id: false },
+);
+
+const BlackoutPeriodSubSchema = new Schema(
+  {
+    startDate: { type: Date, required: true },
+    endDate: { type: Date, required: true },
+    reason: { type: String, required: true },
   },
   { _id: false },
 );
@@ -108,7 +219,11 @@ export const PolicySchema = new Schema(
     category: {
       type: String,
       required: true,
-      enum: ['attendance', 'working_hours', 'leave', 'wfh', 'overtime', 'shift', 'invoices', 'expenses', 'exemptions', 'travel', 'reimbursement'],
+      // `payroll_override` was added to carry per-employee statutory
+      // overrides (PF/ESI/PT rate tweaks for a specific hire, e.g.
+      // "intern PF @ 8%"). Payroll-service reads policies of this
+      // category attached via employee.policyIds[] when computing runs.
+      enum: ['attendance', 'working_hours', 'leave', 'wfh', 'overtime', 'shift', 'invoices', 'expenses', 'exemptions', 'travel', 'reimbursement', 'payroll_override'],
     },
 
     // Category-specific configs
@@ -119,6 +234,10 @@ export const PolicySchema = new Schema(
       graceMinutes: { type: Number },
       minWorkingHours: { type: Number },
       breakMinutes: { type: Number },
+      // Status-resolution thresholds used by attendance-service:
+      lateToHalfDayMinutes: { type: Number },
+      minHoursForPresent: { type: Number },
+      isNightShift: { type: Boolean },
     },
     wfhConfig: {
       maxDaysPerMonth: { type: Number },
@@ -130,6 +249,8 @@ export const PolicySchema = new Schema(
       yearStart: { type: String },
       halfDayAllowed: { type: Boolean },
       backDatedLeaveMaxDays: { type: Number },
+      probationLeaveAllowed: { type: Boolean, default: false },
+      blackoutPeriods: [BlackoutPeriodSubSchema],
     },
     overtimeConfig: {
       maxOvertimeHoursPerDay: { type: Number },
@@ -174,6 +295,43 @@ export const PolicySchema = new Schema(
         earlyDeparture: { type: Boolean },
         missedClockIn: { type: Boolean },
         overtimeAlert: { type: Boolean },
+      },
+    },
+    payrollOverrides: {
+      pfConfig: {
+        applicable: { type: Boolean },
+        employeeRate: { type: Number },
+        employerRate: { type: Number },
+        wageCeiling: { type: Number },
+        adminChargesRate: { type: Number },
+        edliRate: { type: Number },
+      },
+      esiConfig: {
+        applicable: { type: Boolean },
+        employeeRate: { type: Number },
+        employerRate: { type: Number },
+        wageCeiling: { type: Number },
+      },
+      ptConfig: {
+        applicable: { type: Boolean },
+        state: { type: String },
+      },
+      overtime: {
+        applicable: { type: Boolean },
+        rate: { type: Number },
+        weekendRate: { type: Number },
+        holidayRate: { type: Number },
+        nightShiftMultiplier: { type: Number },
+        hoursPerDay: { type: Number },
+        maxOvertimeHoursPerMonth: { type: Number },
+        includeDA: { type: Boolean },
+      },
+      // LOP config: lets an org (or a specific employee via override)
+      // tune how half-days and absents fold into the LOP deduction.
+      lopConfig: {
+        includeAbsentInLop: { type: Boolean },
+        includeHalfDayInLop: { type: Boolean },
+        halfDayLopFactor: { type: Number },
       },
     },
 

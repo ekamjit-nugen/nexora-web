@@ -34,7 +34,10 @@ export class CreatePolicyDto {
   @IsString()
   description?: string;
 
-  @IsEnum(['attendance', 'working_hours', 'leave', 'wfh', 'overtime', 'shift', 'invoices', 'expenses', 'exemptions', 'travel', 'reimbursement'])
+  // `payroll_override` covers per-employee statutory tweaks (PF/ESI/PT
+  // rate overrides) that payroll-service applies on top of the org-level
+  // /settings/payroll config.
+  @IsEnum(['attendance', 'working_hours', 'leave', 'wfh', 'overtime', 'shift', 'invoices', 'expenses', 'exemptions', 'travel', 'reimbursement', 'payroll_override'])
   category: string;
 
   @IsOptional()
@@ -80,6 +83,13 @@ export class CreatePolicyDto {
   @IsOptional()
   @IsObject()
   attendanceConfig?: any;
+
+  // Per-employee statutory overrides (PF rate tweak, PT state, ESI
+  // applicability, etc.) — payroll-service reads these when this policy
+  // is attached via employee.policyIds[].
+  @IsOptional()
+  @IsObject()
+  payrollOverrides?: any;
 
   @IsOptional()
   @IsArray()
@@ -134,7 +144,10 @@ export class UpdatePolicyDto {
   description?: string;
 
   @IsOptional()
-  @IsEnum(['attendance', 'working_hours', 'leave', 'wfh', 'overtime', 'shift', 'invoices', 'expenses', 'exemptions', 'travel', 'reimbursement'])
+  // `payroll_override` covers per-employee statutory tweaks (PF/ESI/PT
+  // rate overrides) that payroll-service applies on top of the org-level
+  // /settings/payroll config.
+  @IsEnum(['attendance', 'working_hours', 'leave', 'wfh', 'overtime', 'shift', 'invoices', 'expenses', 'exemptions', 'travel', 'reimbursement', 'payroll_override'])
   category?: string;
 
   @IsOptional()
@@ -180,6 +193,13 @@ export class UpdatePolicyDto {
   @IsOptional()
   @IsObject()
   attendanceConfig?: any;
+
+  // Per-employee statutory overrides (PF rate tweak, PT state, ESI
+  // applicability, etc.) — payroll-service reads these when this policy
+  // is attached via employee.policyIds[].
+  @IsOptional()
+  @IsObject()
+  payrollOverrides?: any;
 
   @IsOptional()
   @IsArray()
@@ -242,7 +262,10 @@ export class UpdatePolicyDto {
 
 export class PolicyQueryDto {
   @IsOptional()
-  @IsEnum(['attendance', 'working_hours', 'leave', 'wfh', 'overtime', 'shift', 'invoices', 'expenses', 'exemptions', 'travel', 'reimbursement'])
+  // `payroll_override` covers per-employee statutory tweaks (PF/ESI/PT
+  // rate overrides) that payroll-service applies on top of the org-level
+  // /settings/payroll config.
+  @IsEnum(['attendance', 'working_hours', 'leave', 'wfh', 'overtime', 'shift', 'invoices', 'expenses', 'exemptions', 'travel', 'reimbursement', 'payroll_override'])
   category?: string;
 
   @IsOptional()

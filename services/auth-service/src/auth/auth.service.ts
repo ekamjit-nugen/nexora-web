@@ -143,9 +143,14 @@ export class AuthService {
       return { route: '/auth/setup-organization', reason: 'new_user' };
     }
 
-    // Case 2: Invited user — has pending/invited membership, first login
-    if (user.setupStage === 'invited' && memberships.some(m => m.status === 'pending' || m.status === 'invited')) {
-      const pendingMembership = memberships.find(m => m.status === 'pending' || m.status === 'invited');
+    // Case 2: Any user with a pending/invited membership should always be routed
+    // to the accept-invite screen first — even if they also have another active
+    // membership. Previously this block was gated on `setupStage === 'invited'`,
+    // which meant a fully-onboarded user (Bob) accepting a cross-org invite
+    // (Beta) fell through to Case 5/6 and got `/dashboard` / `single_active_org`,
+    // silently burying the pending invite. (Bug #4)
+    const pendingMembership = memberships.find(m => m.status === 'pending' || m.status === 'invited');
+    if (pendingMembership) {
       return {
         route: '/auth/accept-invite',
         reason: 'pending_invite',
@@ -866,10 +871,11 @@ export class AuthService {
   }> {
     const user = await this.userModel.findOne({ email: email.toLowerCase() }).select('+otp +otpExpiresAt +otpAttempts');
 
-    // Uniform error for unknown email. Returning 404 USER_NOT_FOUND here let an attacker
-    // distinguish "no such user" from "wrong OTP" — a cheap email-enumeration oracle.
-    // Match the real INVALID_OTP branch below (400) so the two responses are indistinguishable.
-    // (Bug #5 in auth QA 2026-04-17.)
+    // Bug #5 (P3, auth QA 2026-04-17): previously `404 USER_NOT_FOUND`, which
+    // let an attacker distinguish "no such user" from "wrong OTP" by diffing
+    // 404 vs 400 — a cheap email-enumeration oracle. Collapse to the same
+    // generic INVALID_OTP / 400 response the "wrong code" branch uses so an
+    // observer cannot infer whether the email exists.
     if (!user) throw new HttpException(
       { success: false, error: { code: 'INVALID_OTP', message: 'Invalid OTP. Please try again.' } },
       HttpStatus.BAD_REQUEST,

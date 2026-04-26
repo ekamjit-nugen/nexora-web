@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException, ConflictException, BadRequestExc
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { IEmployee } from './schemas/employee.schema';
+import { IEmployeeProfileAudit } from './schemas/employee-audit.schema';
 import { IDepartment } from './schemas/department.schema';
 import { IDesignation } from './schemas/designation.schema';
 import { ITeam } from './schemas/team.schema';
@@ -13,6 +14,7 @@ import { IBillingRate } from './schemas/billing-rate.schema';
 import { IEmployeeStatus, DEFAULT_EMPLOYEE_STATUSES } from './schemas/employee-status.schema';
 import {
   CreateEmployeeDto, UpdateEmployeeDto, EmployeeQueryDto,
+  UpdateSelfProfileDto, SubmitBankChangeDto, RejectBankChangeDto,
   CreateDepartmentDto, UpdateDepartmentDto,
   CreateDesignationDto, UpdateDesignationDto,
   CreateTeamDto, UpdateTeamDto,
@@ -30,8 +32,26 @@ import {
 export class HrService {
   private readonly logger = new Logger(HrService.name);
 
+  /**
+   * Bug #1 (P0) guard: every org-scoped query MUST run within a verified
+   * organisation. A JWT with `organizationId: null` (new users who have not
+   * created/joined an org yet) otherwise bypasses tenant isolation because
+   * `.find({})` with no org filter returns every employee across every tenant.
+   * Throw `ForbiddenException` — the caller should `setupStage: otp_verified`
+   * route to `/auth/setup-organization` instead of hitting HR endpoints.
+   */
+  private requireOrg(orgId?: string | null): string {
+    if (!orgId || typeof orgId !== 'string' || orgId.trim() === '') {
+      throw new ForbiddenException(
+        'Organization context is required. Complete organization setup before accessing HR resources.',
+      );
+    }
+    return orgId;
+  }
+
   constructor(
     @InjectModel('Employee') private employeeModel: Model<IEmployee>,
+    @InjectModel('EmployeeProfileAudit') private auditModel: Model<IEmployeeProfileAudit>,
     @InjectModel('Department') private departmentModel: Model<IDepartment>,
     @InjectModel('Designation') private designationModel: Model<IDesignation>,
     @InjectModel('Team') private teamModel: Model<ITeam>,
@@ -274,14 +294,23 @@ export class HrService {
       throw new ForbiddenException('Organization context required to list employees');
     }
     const { search, departmentId, designationId, employmentType, status, location, page = 1, limit = 20, sort = '-createdAt' } = query;
+    const managerId = (query as any).managerId as string | undefined;
+    const userId = (query as any).userId as string | undefined;
 
     const filter: any = { isDeleted: false };
-    filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     if (departmentId) filter.departmentId = departmentId;
     if (designationId) filter.designationId = designationId;
     if (employmentType) filter.employmentType = employmentType;
     if (status) filter.status = status;
     if (location) filter.location = { $regex: location, $options: 'i' };
+    // Schema field is `reportingManagerId`, but callers (HR UI, payroll
+    // service) pass `managerId` because that's the semantic column name.
+    // Accept either.
+    if (managerId) filter.reportingManagerId = managerId;
+    // Callers (typically other services) use this to resolve
+    // "the HR employee row for a given auth user" in a single query.
+    if (userId) filter.userId = userId;
     if (search) {
       filter.$or = [
         { firstName: { $regex: search, $options: 'i' } },
@@ -308,15 +337,41 @@ export class HrService {
 
   async getEmployeeById(id: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const employee = await this.employeeModel.findOne(filter);
     if (!employee) throw new NotFoundException('Employee not found');
-    return employee;
+    return this.populateNames(employee, orgId);
+  }
+
+  /**
+   * Attach `departmentName` and `designationName` alongside the raw IDs so
+   * downstream consumers (payslip PDF generator, directory profile page,
+   * Form 16) don't have to issue extra lookups. We tried to put this in
+   * the Mongoose schema as a populate() but `departmentId`/`designationId`
+   * are stored as strings rather than ObjectId refs (historical decision),
+   * so Mongoose populate() doesn't work directly — we do the join here.
+   */
+  private async populateNames(employee: IEmployee, orgId?: string): Promise<IEmployee & { departmentName?: string; designationName?: string }> {
+    const orgFilter = { organizationId: this.requireOrg(orgId), isDeleted: false };
+    const [dept, desig] = await Promise.all([
+      employee.departmentId
+        ? this.departmentModel.findOne({ ...orgFilter, _id: employee.departmentId }).select('name').lean()
+        : null,
+      employee.designationId
+        ? this.designationModel.findOne({ ...orgFilter, _id: employee.designationId }).select('title').lean()
+        : null,
+    ]);
+    // Return a lean plain object with the names merged in, so callers can
+    // access `employee.departmentName` without `.toObject()`-ing.
+    const obj: any = employee.toObject ? employee.toObject() : { ...employee };
+    obj.departmentName = (dept as any)?.name || null;
+    obj.designationName = (desig as any)?.title || null;
+    return obj;
   }
 
   async getEmployeeByUserId(userId: string, orgId?: string) {
     const filter: any = { userId, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const employee = await this.employeeModel.findOne(filter);
     if (!employee) throw new NotFoundException('Employee not found');
     return employee;
@@ -325,33 +380,415 @@ export class HrService {
   async updateEmployee(id: string, dto: UpdateEmployeeDto, updatedBy: string, orgId?: string) {
     await this.assertEmployeeStatusValid(dto.status, orgId);
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
+
+    // If this is a status transition, handle the previousStatus bookkeeping
+    // so Reactivate can restore the pre-termination state later. Previously
+    // Reactivate hardcoded `status: active`, which incorrectly promoted a
+    // user who was terminated while still `invited` to `active` — they
+    // would appear active in the directory without ever having accepted.
+    const patch: any = { ...dto, updatedBy };
+    if (dto.status) {
+      const existing = await this.employeeModel.findOne(filter).select('status previousStatus').lean();
+      if (existing) {
+        if (dto.status === 'exited' && existing.status !== 'exited') {
+          // Going INTO exited — snapshot the prior status unless it's already
+          // a transient state (declined just falls through as-is).
+          patch.previousStatus = existing.status;
+          patch.isActive = false;
+          patch.exitDate = new Date();
+        } else if (dto.status !== 'exited' && existing.status === 'exited') {
+          // Coming OUT of exited — if the client is reactivating without
+          // specifying where to restore, pull from previousStatus. Also
+          // flip `isActive` back to true so the employee reappears in the
+          // org chart + "active" stats (QA finding HR-3 — the directory
+          // was showing the employee as status=active but isActive=false,
+          // which excluded them from org-chart and active count).
+          if (dto.status === 'active' && existing.previousStatus && existing.previousStatus !== 'active') {
+            patch.status = existing.previousStatus;
+          }
+          patch.previousStatus = null;
+          patch.isActive = true;
+          patch.exitDate = null;
+        }
+      }
+    }
+
+    // Snapshot the fields we're about to modify so the audit entry can
+    // record meaningful before/after deltas. Fetching once here keeps
+    // the common path to a single findOneAndUpdate.
+    const before = await this.employeeModel.findOne(filter).lean();
+    if (!before) throw new NotFoundException('Employee not found');
+
     const employee = await this.employeeModel.findOneAndUpdate(
       filter,
-      { ...dto, updatedBy },
+      patch,
       { new: true },
     );
     if (!employee) throw new NotFoundException('Employee not found');
-    this.logger.log(`Employee updated: ${employee.employeeId}`);
+
+    // Write the audit trail. Narrow to the keys actually present on the
+    // DTO (don't log every schema field) so the entry is readable.
+    const changes = this.diffFields(before, employee.toObject ? employee.toObject() : employee, Object.keys(dto));
+    if (changes.length > 0) {
+      await this.writeAudit({
+        organizationId: filter.organizationId,
+        employeeId: String(employee._id),
+        actorUserId: updatedBy,
+        actorType: 'admin',
+        action: 'profile_update',
+        changes,
+      });
+    }
+
+    this.logger.log(`Employee updated: ${employee.employeeId} status=${employee.status}`);
     return employee;
   }
 
-  async deleteEmployee(id: string, deletedBy: string, orgId?: string) {
-    const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+  // ────────────────────────────────────────────────────────────────
+  // Employee self-service
+  // ────────────────────────────────────────────────────────────────
+
+  /**
+   * Resolve the HR employee record for the caller based on their auth
+   * userId. Scoped to the tenant in the JWT. Used by every self-service
+   * endpoint ("fetch my record", "update my profile", "submit my bank
+   * change") — centralising it here keeps the "who am I?" lookup
+   * consistent and makes sure a self-service caller can never touch
+   * someone else's record even if the route is misconfigured.
+   */
+  async getSelfEmployee(userId: string, orgId?: string) {
+    const org = this.requireOrg(orgId);
+    const employee = await this.employeeModel.findOne({
+      userId,
+      organizationId: org,
+      isDeleted: false,
+    });
+    if (!employee) {
+      throw new NotFoundException(
+        'No employee record found for the current user. Contact HR if this is unexpected.',
+      );
+    }
+    return employee;
+  }
+
+  /**
+   * Self-service profile update. The caller passes their own userId
+   * (extracted from the JWT in the controller) — the resolver above
+   * fetches their record, and the patch is applied with the DTO's
+   * whitelist (already narrowed by class-validator). We deliberately
+   * do NOT accept an employee-id param here — the server-side
+   * resolution is the security boundary.
+   */
+  async updateSelfProfile(userId: string, dto: UpdateSelfProfileDto, orgId?: string) {
+    const org = this.requireOrg(orgId);
+    const before = await this.employeeModel
+      .findOne({ userId, organizationId: org, isDeleted: false })
+      .lean();
+    if (!before) throw new NotFoundException('No employee record found for the current user');
+
+    const patch: any = { ...dto, updatedBy: userId };
     const employee = await this.employeeModel.findOneAndUpdate(
-      filter,
-      { isDeleted: true, isActive: false, deletedAt: new Date(), updatedBy: deletedBy },
+      { _id: before._id, isDeleted: false },
+      patch,
       { new: true },
     );
     if (!employee) throw new NotFoundException('Employee not found');
-    this.logger.log(`Employee soft-deleted: ${employee.employeeId}`);
-    return { message: 'Employee deleted successfully' };
+
+    const after = employee.toObject ? employee.toObject() : employee;
+    const changes = this.diffFields(before, after, Object.keys(dto));
+    if (changes.length > 0) {
+      await this.writeAudit({
+        organizationId: org,
+        employeeId: String(employee._id),
+        actorUserId: userId,
+        actorType: 'self',
+        action: 'profile_update',
+        changes,
+      });
+    }
+
+    this.logger.log(`Self-profile update: employee=${employee.employeeId} fields=${changes.map((c) => c.field).join(',')}`);
+    return employee;
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // Bank-details change (maker-checker)
+  // ────────────────────────────────────────────────────────────────
+  //
+  // Bank detail edits are high-risk — a successful session hijack that
+  // swaps the account number sends the next payroll to the attacker.
+  // So employees submit a *pending* change (lands on the employee doc
+  // under `pendingBankChange`), and an admin/HR user separately approves
+  // from the queue to apply it. Approval merges into `bankDetails` and
+  // appends to on-document history for the employee's own visibility.
+  // Rejection drops the pending state with a reason — the reason is
+  // captured in the central audit collection.
+
+  async submitBankChange(userId: string, dto: SubmitBankChangeDto, orgId?: string) {
+    const org = this.requireOrg(orgId);
+    const employee = await this.employeeModel.findOne({
+      userId,
+      organizationId: org,
+      isDeleted: false,
+    });
+    if (!employee) throw new NotFoundException('No employee record found for the current user');
+
+    // Basic completeness: require all four fields for a payable account.
+    // Partial bank data in pendingBankChange is almost always a mistake
+    // that would fail at payout file generation anyway.
+    const b = dto.bankDetails || ({} as any);
+    if (!b.bankName || !b.accountNumber || !b.ifsc || !b.accountHolder) {
+      throw new BadRequestException(
+        'All four bank fields (bankName, accountNumber, ifsc, accountHolder) are required to submit a change.',
+      );
+    }
+
+    employee.pendingBankChange = {
+      bankDetails: {
+        bankName: b.bankName,
+        accountNumber: b.accountNumber,
+        ifsc: b.ifsc,
+        accountHolder: b.accountHolder,
+      },
+      submittedAt: new Date(),
+      submittedBy: userId,
+      reason: dto.reason || null,
+    } as any;
+    await employee.save();
+
+    await this.writeAudit({
+      organizationId: org,
+      employeeId: String(employee._id),
+      actorUserId: userId,
+      actorType: 'self',
+      action: 'bank_change_submit',
+      changes: [{ field: 'pendingBankChange', from: null, to: employee.pendingBankChange }],
+      reason: dto.reason,
+    });
+
+    this.logger.log(`Bank change submitted for approval: employee=${employee.employeeId}`);
+    return employee;
+  }
+
+  /** Employee-initiated withdrawal of their own pending submission. */
+  async withdrawBankChange(userId: string, orgId?: string) {
+    const org = this.requireOrg(orgId);
+    const employee = await this.employeeModel.findOne({
+      userId,
+      organizationId: org,
+      isDeleted: false,
+    });
+    if (!employee) throw new NotFoundException('No employee record found for the current user');
+    if (!employee.pendingBankChange) {
+      throw new BadRequestException('No pending bank change to withdraw');
+    }
+
+    // Deep-clone — see approveBankChange comment.
+    const prior = JSON.parse(JSON.stringify(employee.pendingBankChange));
+    employee.pendingBankChange = null;
+    await employee.save();
+
+    await this.writeAudit({
+      organizationId: org,
+      employeeId: String(employee._id),
+      actorUserId: userId,
+      actorType: 'self',
+      action: 'bank_change_withdraw',
+      changes: [{ field: 'pendingBankChange', from: prior, to: null }],
+    });
+    return { ok: true };
+  }
+
+  /** Admin queue — returns all employees with an open pending change. */
+  async listPendingBankChanges(orgId?: string) {
+    const org = this.requireOrg(orgId);
+    const rows = await this.employeeModel
+      .find({
+        organizationId: org,
+        isDeleted: false,
+        pendingBankChange: { $ne: null },
+      })
+      .select('employeeId firstName lastName email bankDetails pendingBankChange')
+      .lean();
+    return rows;
+  }
+
+  async approveBankChange(employeeMongoId: string, approverUserId: string, orgId?: string) {
+    const org = this.requireOrg(orgId);
+    const employee = await this.employeeModel.findOne({
+      _id: employeeMongoId,
+      organizationId: org,
+      isDeleted: false,
+    });
+    if (!employee) throw new NotFoundException('Employee not found');
+    if (!employee.pendingBankChange) {
+      throw new BadRequestException('No pending bank change to approve');
+    }
+
+    // Deep-clone both snapshots before we mutate the doc — Mongoose
+    // sub-docs share references after assignment, so keeping live
+    // `employee.bankDetails` and `employee.pendingBankChange` around
+    // means the audit ends up recording from:new → to:new. JSON round
+    // trip is sufficient for these small flat objects.
+    const prior = employee.bankDetails ? JSON.parse(JSON.stringify(employee.bankDetails)) : null;
+    const incoming = JSON.parse(JSON.stringify(employee.pendingBankChange.bankDetails));
+    const submittedAt = employee.pendingBankChange.submittedAt;
+    const submittedBy = employee.pendingBankChange.submittedBy;
+
+    // Apply the change to the live bankDetails and archive the approval
+    // on the history (capped via $slice on subsequent pushes; at 20 the
+    // oldest falls off — long-tenure records don't bloat the doc).
+    employee.bankDetails = incoming;
+    employee.pendingBankChange = null;
+    // Using $push with $slice on save isn't a Mongoose path operation,
+    // so we do the cap in memory.
+    const history = Array.isArray(employee.bankChangeHistory) ? employee.bankChangeHistory : [];
+    history.push({
+      bankDetails: incoming,
+      submittedAt,
+      submittedBy,
+      approvedAt: new Date(),
+      approvedBy: approverUserId,
+    });
+    employee.bankChangeHistory = history.slice(-20);
+    await employee.save();
+
+    await this.writeAudit({
+      organizationId: org,
+      employeeId: String(employee._id),
+      actorUserId: approverUserId,
+      actorType: 'admin',
+      action: 'bank_change_approve',
+      changes: [{ field: 'bankDetails', from: prior, to: incoming }],
+    });
+
+    this.logger.log(`Bank change approved: employee=${employee.employeeId} approver=${approverUserId}`);
+    return employee;
+  }
+
+  async rejectBankChange(employeeMongoId: string, rejectorUserId: string, reason: string, orgId?: string) {
+    const org = this.requireOrg(orgId);
+    const employee = await this.employeeModel.findOne({
+      _id: employeeMongoId,
+      organizationId: org,
+      isDeleted: false,
+    });
+    if (!employee) throw new NotFoundException('Employee not found');
+    if (!employee.pendingBankChange) {
+      throw new BadRequestException('No pending bank change to reject');
+    }
+
+    // Deep-clone — see approveBankChange comment. Same Mongoose
+    // sub-doc reference hazard applies to reject/withdraw paths.
+    const prior = JSON.parse(JSON.stringify(employee.pendingBankChange));
+    employee.pendingBankChange = null;
+    await employee.save();
+
+    await this.writeAudit({
+      organizationId: org,
+      employeeId: String(employee._id),
+      actorUserId: rejectorUserId,
+      actorType: 'admin',
+      action: 'bank_change_reject',
+      changes: [{ field: 'pendingBankChange', from: prior, to: null }],
+      reason,
+    });
+
+    this.logger.log(`Bank change rejected: employee=${employee.employeeId} reason=${reason}`);
+    return { ok: true };
+  }
+
+  /** Recent audit entries for one employee — for a timeline UI. */
+  async getEmployeeAudit(employeeMongoId: string, orgId?: string, limit = 50) {
+    const org = this.requireOrg(orgId);
+    return this.auditModel
+      .find({ organizationId: org, employeeId: employeeMongoId })
+      .sort({ createdAt: -1 })
+      .limit(Math.min(limit, 200))
+      .lean();
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // Private helpers
+  // ────────────────────────────────────────────────────────────────
+
+  /**
+   * Compute before/after deltas for the given top-level fields. Returns
+   * only fields whose JSON-stringified representation actually changed —
+   * avoids noisy entries for no-op writes (the UI often re-sends
+   * unchanged fields alongside the one edit).
+   */
+  private diffFields(before: any, after: any, fields: string[]) {
+    const out: Array<{ field: string; from: any; to: any }> = [];
+    for (const f of fields) {
+      const from = before?.[f];
+      const to = after?.[f];
+      if (JSON.stringify(from ?? null) !== JSON.stringify(to ?? null)) {
+        out.push({ field: f, from: from ?? null, to: to ?? null });
+      }
+    }
+    return out;
+  }
+
+  private async writeAudit(entry: {
+    organizationId: string;
+    employeeId: string;
+    actorUserId: string;
+    actorType: 'self' | 'admin';
+    action: string;
+    changes: Array<{ field: string; from: any; to: any }>;
+    reason?: string;
+  }) {
+    try {
+      await this.auditModel.create(entry);
+    } catch (err) {
+      // Never let an audit-write failure fail the primary operation —
+      // the caller has already committed their change. Log and move on;
+      // ops alerting can pick up missing audit entries if needed.
+      this.logger.warn(`Audit write failed for ${entry.action} on ${entry.employeeId}: ${(err as any)?.message || err}`);
+    }
+  }
+
+  async deleteEmployee(id: string, deletedBy: string, orgId?: string) {
+    // Policy: admins can NEVER permanently delete an employee — the action
+    // is converted to a reversible termination so payroll/audit history is
+    // preserved and the admin can reactivate later. Previously this set
+    // `isDeleted: true` which hid the record from every listing endpoint
+    // and effectively destroyed it from the admin's point of view.
+    //
+    // QA finding HR-2: capture `previousStatus` before transitioning to
+    // exited so the Reactivate flow can restore the original state. Without
+    // this, a user terminated while `invited` / `probation` / `on_notice`
+    // would be silently promoted to `active` on reactivate.
+    const filter: any = { _id: id, isDeleted: false };
+    filter.organizationId = this.requireOrg(orgId);
+    const existing = await this.employeeModel.findOne(filter).select('status previousStatus').lean();
+    if (!existing) throw new NotFoundException('Employee not found');
+    const previousStatus = existing.status === 'exited'
+      ? existing.previousStatus // already terminated — keep the original snapshot
+      : existing.status;
+    const employee = await this.employeeModel.findOneAndUpdate(
+      filter,
+      {
+        status: 'exited',
+        isActive: false,
+        previousStatus,
+        updatedBy: deletedBy,
+        exitDate: new Date(),
+      },
+      { new: true },
+    );
+    if (!employee) throw new NotFoundException('Employee not found');
+    this.logger.log(
+      `Employee terminated (soft, reversible): ${employee.employeeId} prev=${previousStatus}`,
+    );
+    return { message: 'Employee terminated. They can be reactivated from the directory.' };
   }
 
   async getOrgChart(departmentId?: string, orgId?: string) {
     const filter: any = { isDeleted: false, isActive: true };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     if (departmentId) filter.departmentId = departmentId;
 
     const employees = await this.employeeModel.find(filter).select('_id firstName lastName email avatar departmentId designationId reportingManagerId employeeId').lean();
@@ -375,9 +812,9 @@ export class HrService {
 
   async getStats(orgId?: string) {
     const baseFilter: any = { isDeleted: false };
-    if (orgId) baseFilter.organizationId = orgId;
+    baseFilter.organizationId = this.requireOrg(orgId);
     const deptFilter: any = { isDeleted: false, isActive: true };
-    if (orgId) deptFilter.organizationId = orgId;
+    deptFilter.organizationId = this.requireOrg(orgId);
 
     const [total, active, onNotice, departments, recentJoiners] = await Promise.all([
       this.employeeModel.countDocuments(baseFilter),
@@ -397,7 +834,7 @@ export class HrService {
 
   async attachPolicy(employeeId: string, policyId: string, orgId?: string) {
     const filter: any = { _id: employeeId, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const emp = await this.employeeModel.findOneAndUpdate(
       filter,
       { $addToSet: { policyIds: policyId } },
@@ -410,7 +847,7 @@ export class HrService {
 
   async detachPolicy(employeeId: string, policyId: string, orgId?: string) {
     const filter: any = { _id: employeeId, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const emp = await this.employeeModel.findOneAndUpdate(
       filter,
       { $pull: { policyIds: policyId } },
@@ -423,7 +860,7 @@ export class HrService {
 
   async getEmployeePolicies(employeeId: string, orgId?: string) {
     const filter: any = { _id: employeeId, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const emp = await this.employeeModel.findOne(filter);
     if (!emp) throw new NotFoundException('Employee not found');
     return emp.policyIds || [];
@@ -433,7 +870,7 @@ export class HrService {
 
   async createDepartment(dto: CreateDepartmentDto, createdBy: string, orgId?: string) {
     const filter: any = { code: dto.code.toUpperCase(), isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const existing = await this.departmentModel.findOne(filter);
     if (existing) throw new ConflictException('Department with this code already exists');
 
@@ -445,13 +882,13 @@ export class HrService {
 
   async getDepartments(orgId?: string) {
     const filter: any = { isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     return this.departmentModel.find(filter).sort({ name: 1 });
   }
 
   async getDepartmentById(id: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const dept = await this.departmentModel.findOne(filter);
     if (!dept) throw new NotFoundException('Department not found');
     return dept;
@@ -459,7 +896,7 @@ export class HrService {
 
   async updateDepartment(id: string, dto: UpdateDepartmentDto, updatedBy: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const dept = await this.departmentModel.findOneAndUpdate(
       filter,
       { ...dto, updatedBy },
@@ -471,12 +908,12 @@ export class HrService {
 
   async deleteDepartment(id: string, orgId?: string) {
     const empFilter: any = { departmentId: id, isDeleted: false };
-    if (orgId) empFilter.organizationId = orgId;
+    empFilter.organizationId = this.requireOrg(orgId);
     const employees = await this.employeeModel.countDocuments(empFilter);
     if (employees > 0) throw new ConflictException(`Cannot delete department with ${employees} active employees`);
 
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const dept = await this.departmentModel.findOneAndUpdate(
       filter,
       { isDeleted: true, isActive: false },
@@ -497,13 +934,13 @@ export class HrService {
 
   async getDesignations(orgId?: string) {
     const filter: any = { isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     return this.designationModel.find(filter).sort({ level: 1, title: 1 });
   }
 
   async updateDesignation(id: string, dto: UpdateDesignationDto, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const designation = await this.designationModel.findOneAndUpdate(filter, dto, { new: true });
     if (!designation) throw new NotFoundException('Designation not found');
     return designation;
@@ -511,7 +948,7 @@ export class HrService {
 
   async deleteDesignation(id: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const designation = await this.designationModel.findOneAndUpdate(filter, { isDeleted: true, isActive: false }, { new: true });
     if (!designation) throw new NotFoundException('Designation not found');
     return { message: 'Designation deleted successfully' };
@@ -528,14 +965,14 @@ export class HrService {
 
   async getTeams(departmentId?: string, orgId?: string) {
     const filter: any = { isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     if (departmentId) filter.departmentId = departmentId;
     return this.teamModel.find(filter).sort({ name: 1 });
   }
 
   async updateTeam(id: string, dto: UpdateTeamDto, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const team = await this.teamModel.findOneAndUpdate(filter, dto, { new: true });
     if (!team) throw new NotFoundException('Team not found');
     return team;
@@ -543,7 +980,7 @@ export class HrService {
 
   async deleteTeam(id: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const team = await this.teamModel.findOneAndUpdate(filter, { isDeleted: true, isActive: false }, { new: true });
     if (!team) throw new NotFoundException('Team not found');
     return { message: 'Team deleted successfully' };
@@ -553,7 +990,7 @@ export class HrService {
 
   async createClient(dto: CreateClientDto, createdBy: string, orgId?: string) {
     const uniqueFilter: any = { companyName: dto.companyName, isDeleted: false };
-    if (orgId) uniqueFilter.organizationId = orgId;
+    uniqueFilter.organizationId = this.requireOrg(orgId);
     const existing = await this.clientModel.findOne(uniqueFilter);
     if (existing) throw new ConflictException('Client with this company name already exists');
 
@@ -567,7 +1004,7 @@ export class HrService {
     const { search, status, industry, showDeleted, page = 1, limit = 20, sort = '-createdAt' } = query;
 
     const filter: any = showDeleted ? { isDeleted: true } : { isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     if (status) filter.status = status;
     if (industry) filter.industry = industry;
     if (search) {
@@ -596,7 +1033,7 @@ export class HrService {
 
   async getClientById(id: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const client = await this.clientModel.findOne(filter);
     if (!client) throw new NotFoundException('Client not found');
     return client;
@@ -604,7 +1041,7 @@ export class HrService {
 
   async updateClient(id: string, dto: UpdateClientDto, updatedBy: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const client = await this.clientModel.findOneAndUpdate(
       filter,
       { ...dto, updatedBy },
@@ -617,7 +1054,7 @@ export class HrService {
 
   async deleteClient(id: string, deletedBy: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const client = await this.clientModel.findOneAndUpdate(
       filter,
       { isDeleted: true, deletedAt: new Date(), updatedBy: deletedBy },
@@ -630,7 +1067,7 @@ export class HrService {
 
   async getClientStats(orgId?: string) {
     const baseFilter: any = { isDeleted: false };
-    if (orgId) baseFilter.organizationId = orgId;
+    baseFilter.organizationId = this.requireOrg(orgId);
 
     const [total, active, inactive, prospects] = await Promise.all([
       this.clientModel.countDocuments(baseFilter),
@@ -680,7 +1117,7 @@ export class HrService {
 
   async linkProjectToClient(clientId: string, projectId: string, orgId?: string) {
     const filter: any = { _id: clientId, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
 
     const client = await this.clientModel.findOne(filter);
     if (!client) throw new NotFoundException('Client not found');
@@ -698,7 +1135,7 @@ export class HrService {
 
   async unlinkProjectFromClient(clientId: string, projectId: string, orgId?: string) {
     const filter: any = { _id: clientId, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
 
     const client = await this.clientModel.findOne(filter);
     if (!client) throw new NotFoundException('Client not found');
@@ -737,7 +1174,7 @@ export class HrService {
 
   async addContactPerson(clientId: string, contact: ClientContactPersonDto, orgId?: string) {
     const filter: any = { _id: clientId, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
 
     const client = await this.clientModel.findOne(filter);
     if (!client) throw new NotFoundException('Client not found');
@@ -766,7 +1203,7 @@ export class HrService {
 
   async removeContactPerson(clientId: string, contactIndex: number, orgId?: string) {
     const filter: any = { _id: clientId, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
 
     const client = await this.clientModel.findOne(filter);
     if (!client) throw new NotFoundException('Client not found');
@@ -804,7 +1241,7 @@ export class HrService {
     const { userId, startDate, endDate, status, type, page = 1, limit = 20 } = query;
 
     const filter: any = { isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     if (status) filter.status = status;
     if (type) filter.type = type;
     if (userId) {
@@ -835,7 +1272,7 @@ export class HrService {
 
   async getCallLogById(id: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const callLog = await this.callLogModel.findOne(filter);
     if (!callLog) throw new NotFoundException('Call log not found');
     return callLog;
@@ -843,7 +1280,7 @@ export class HrService {
 
   async updateCallLog(id: string, dto: UpdateCallLogDto, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
 
     const update: any = {};
     if (dto.status) update.status = dto.status;
@@ -869,7 +1306,7 @@ export class HrService {
 
   async getCallStats(userId?: string, orgId?: string) {
     const filter: any = { isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
 
     // Today's date range
     const todayStart = new Date();
@@ -904,7 +1341,7 @@ export class HrService {
       isDeleted: false,
       $or: [{ callerId: userId }, { receiverId: userId }],
     };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
 
     return this.callLogModel.find(filter).sort({ startTime: -1 }).limit(20).exec();
   }
@@ -942,7 +1379,7 @@ export class HrService {
   private async generateInvoiceNumber(orgId?: string): Promise<string> {
     const year = new Date().getFullYear();
     const filter: any = { invoiceNumber: { $regex: `^INV-${year}-` } };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
 
     const lastInvoice = await this.invoiceModel
       .findOne(filter)
@@ -998,7 +1435,7 @@ export class HrService {
     const { search, status, clientId, projectId, startDate, endDate, page = 1, limit = 20, sort = '-createdAt' } = query;
 
     const filter: any = { isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     if (status) filter.status = status;
     if (clientId) filter.clientId = clientId;
     if (projectId) filter.projectId = projectId;
@@ -1029,7 +1466,7 @@ export class HrService {
 
   async getInvoiceById(id: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const invoice = await this.invoiceModel.findOne(filter);
     if (!invoice) throw new NotFoundException('Invoice not found');
     return invoice;
@@ -1037,7 +1474,7 @@ export class HrService {
 
   async updateInvoice(id: string, dto: UpdateInvoiceDto, userId: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
 
     const existing = await this.invoiceModel.findOne(filter);
     if (!existing) throw new NotFoundException('Invoice not found');
@@ -1066,7 +1503,7 @@ export class HrService {
 
   async deleteInvoice(id: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
 
     const existing = await this.invoiceModel.findOne(filter);
     if (!existing) throw new NotFoundException('Invoice not found');
@@ -1082,7 +1519,7 @@ export class HrService {
 
   async updateInvoiceStatus(id: string, dto: UpdateInvoiceStatusDto, userId: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
 
     const invoice = await this.invoiceModel.findOne(filter);
     if (!invoice) throw new NotFoundException('Invoice not found');
@@ -1101,7 +1538,7 @@ export class HrService {
 
   async sendInvoice(id: string, dto: SendInvoiceDto, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
 
     const invoice = await this.invoiceModel.findOne(filter);
     if (!invoice) throw new NotFoundException('Invoice not found');
@@ -1199,10 +1636,22 @@ export class HrService {
         html,
       });
 
+      // Snapshot the prior status so the reminder-vs-first-send check
+      // below isn't poisoned by the status flip on the next line.
+      const wasFollowUp = ['sent', 'partially_paid', 'overdue'].includes(invoice.status);
       invoice.status = invoice.status === 'draft' ? 'sent' : invoice.status;
       invoice.sentAt = new Date();
       invoice.sentTo = toEmail;
       invoice.emailCount = (invoice.emailCount || 0) + 1;
+      // Reminder bookkeeping. emailCount tracks total sends (incl. the
+      // initial issue); reminderCount specifically counts admin-triggered
+      // nudges to clients about unpaid invoices. The invoice list UI uses
+      // lastReminderSentAt to throttle the "Send Reminder" button so an
+      // admin doesn't double-spam a client when clicking too fast.
+      if (wasFollowUp) {
+        invoice.lastReminderSentAt = new Date();
+        invoice.reminderCount = (invoice.reminderCount || 0) + 1;
+      }
       await invoice.save();
 
       this.logger.log(`Invoice ${invoice.invoiceNumber} sent to ${toEmail}`);
@@ -1216,7 +1665,7 @@ export class HrService {
 
   async markAsPaid(id: string, dto: MarkPaidDto, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
 
     const invoice = await this.invoiceModel.findOne(filter);
     if (!invoice) throw new NotFoundException('Invoice not found');
@@ -1246,7 +1695,7 @@ export class HrService {
 
   async getInvoiceStats(orgId?: string) {
     const baseFilter: any = { isDeleted: false };
-    if (orgId) baseFilter.organizationId = orgId;
+    baseFilter.organizationId = this.requireOrg(orgId);
 
     const [
       totalCount,
@@ -1317,7 +1766,7 @@ export class HrService {
 
   async deleteInvoiceTemplate(id: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const template = await this.invoiceTemplateModel.findOneAndUpdate(
       filter,
       { isDeleted: true },
@@ -1346,7 +1795,7 @@ export class HrService {
       isDeleted: false,
       effectiveTo: null,
     };
-    if (orgId) dupFilter.organizationId = orgId;
+    dupFilter.organizationId = this.requireOrg(orgId);
     if (dto.type === 'role_based') dupFilter.role = dto.role;
     if (dto.type === 'user_specific') dupFilter.userId = dto.userId;
 
@@ -1374,7 +1823,7 @@ export class HrService {
 
   async getBillingRates(query: BillingRateQueryDto, orgId?: string) {
     const filter: any = { isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     if (query.projectId) filter.projectId = query.projectId;
     if (query.type) filter.type = query.type;
     return this.billingRateModel.find(filter).sort({ type: 1, createdAt: -1 });
@@ -1382,7 +1831,7 @@ export class HrService {
 
   async updateBillingRate(id: string, dto: UpdateBillingRateDto, userId: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
 
     const rate = await this.billingRateModel.findOne(filter);
     if (!rate) throw new NotFoundException('Billing rate not found');
@@ -1400,7 +1849,7 @@ export class HrService {
 
   async deleteBillingRate(id: string, orgId?: string) {
     const filter: any = { _id: id, isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = this.requireOrg(orgId);
     const rate = await this.billingRateModel.findOneAndUpdate(filter, { isDeleted: true }, { new: true });
     if (!rate) throw new NotFoundException('Billing rate not found');
     this.logger.log(`Billing rate deleted: ${id}`);
@@ -1417,7 +1866,7 @@ export class HrService {
       effectiveFrom: { $lte: now },
       $or: [{ effectiveTo: null }, { effectiveTo: { $gte: now } }],
     };
-    if (orgId) baseFilter.organizationId = orgId;
+    baseFilter.organizationId = this.requireOrg(orgId);
 
     // Priority 1: user_specific
     const userRate = await this.billingRateModel.findOne({ ...baseFilter, type: 'user_specific', userId }).sort({ effectiveFrom: -1 });
@@ -1480,7 +1929,7 @@ export class HrService {
 
     // Verify client exists
     const clientFilter: any = { _id: clientId, isDeleted: false };
-    if (orgId) clientFilter.organizationId = orgId;
+    clientFilter.organizationId = this.requireOrg(orgId);
     const client = await this.clientModel.findOne(clientFilter);
     if (!client) throw new NotFoundException('Client not found');
 

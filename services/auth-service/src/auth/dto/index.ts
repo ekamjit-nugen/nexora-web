@@ -1,6 +1,28 @@
 import { IsEmail, IsString, IsOptional, MinLength, MaxLength, Matches } from 'class-validator';
 import { Transform } from 'class-transformer';
 
+/**
+ * Bug #2 (P1): Without a DTO here, `POST /auth/send-otp` fell through to the
+ * service with unvalidated input and any malformed body (empty, invalid email,
+ * null, numeric) surfaced as `500 INTERNAL_ERROR`. class-validator + the
+ * globally-registered ValidationPipe now return `400` with a per-field message.
+ */
+export class SendOtpDto {
+  @IsEmail({}, { message: 'A valid email address is required' })
+  @MaxLength(254)
+  email: string;
+}
+
+export class VerifyOtpDto {
+  @IsEmail({}, { message: 'A valid email address is required' })
+  @MaxLength(254)
+  email: string;
+
+  @IsString()
+  @Matches(/^\d{6}$/, { message: 'OTP must be a 6-digit number' })
+  otp: string;
+}
+
 export class LoginDto {
   @IsEmail()
   email: string;

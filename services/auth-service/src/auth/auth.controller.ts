@@ -426,6 +426,10 @@ export class AuthController {
         route: result.route.route,
         routeReason: result.route.reason,
         organizationId: result.route.organizationId,
+        // Per TC-8.1: when route is `/auth/select-organization`, the client
+        // needs the list of orgs to render the picker. The route resolver
+        // computes this in the multi_org case — surface it directly.
+        organizations: (result.route as any).organizations || undefined,
         isNewUser: result.isNewUser,
         isNewDevice,
       },

@@ -19,6 +19,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { attendanceApi, leaveApi } from "../../lib/api";
+import { captureLocation } from "../../lib/location";
 import { COLORS, SPACING, RADIUS, SHADOWS } from "../../lib/theme";
 
 type Tab = "attendance" | "leaves";
@@ -77,14 +78,22 @@ export default function TimeScreen() {
     enabled: activeTab === "leaves",
   });
 
-  // Mutations
+  // Mutations. Both clock-in/out fire `captureLocation()` first so
+  // the server-side record carries lat/lng when the user has granted
+  // permission, and falls back to a no-location record otherwise.
   const checkInMutation = useMutation({
-    mutationFn: () => attendanceApi.checkIn(),
+    mutationFn: async () => {
+      const location = await captureLocation();
+      return attendanceApi.checkIn(location ? { location } : undefined);
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["attendance"] }),
   });
 
   const checkOutMutation = useMutation({
-    mutationFn: () => attendanceApi.checkOut(),
+    mutationFn: async () => {
+      const location = await captureLocation();
+      return attendanceApi.checkOut(location ? { location } : undefined);
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["attendance"] }),
   });
 

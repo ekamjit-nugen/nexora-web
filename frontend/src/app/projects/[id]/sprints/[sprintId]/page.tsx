@@ -708,7 +708,7 @@ export default function SprintDetailPage() {
     return (
       <div className="min-h-screen bg-[#F8FAFC]">
         <Sidebar user={user} onLogout={logout} />
-        <main className="ml-[260px] p-8">
+        <main className="md:ml-[260px] p-8">
           <div className="text-center py-20">
             <h2 className="text-lg font-semibold text-gray-900">Sprint not found</h2>
             <Button className="mt-4" onClick={() => router.push(`/projects/${projectId}`)}>Back to Project</Button>
@@ -764,7 +764,7 @@ export default function SprintDetailPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC] overflow-hidden">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] p-6 overflow-y-auto overflow-x-hidden" style={{ maxHeight: "100vh" }}>
+      <main className="flex-1 min-w-0 md:ml-[260px] p-6 overflow-y-auto overflow-x-hidden" style={{ maxHeight: "100vh" }}>
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">

@@ -68,7 +68,8 @@ function InviteFlow() {
         await authApi.sendOtp(email);
         // Single toast — drop the stale "DEV: OTP is 000000" hint. The OTP
         // is real (random 6-digit) and lands in MailHog; the dev hint was
-        // misleading users into typing 000000 forever.
+        // misleading users into typing 000000 forever. Login page dropped
+        // this back when; keep register/invite in sync.
         toast.success("Verification code sent to your email");
         setPhase("otp");
         setResendCooldown(60);

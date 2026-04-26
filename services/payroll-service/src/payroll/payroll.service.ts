@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -37,6 +38,10 @@ import { ICounter } from './schemas/counter.schema';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { ExternalServicesService } from './external-services.service';
 import { AttritionPredictorService } from './attrition-predictor.service';
+import { PayslipPdfService } from './payslip-pdf.service';
+import { Form16PdfService } from './form16-pdf.service';
+import { OffboardingLetterPdfService, LetterKind } from './offboarding-letter-pdf.service';
+import { StatutoryExportService } from './statutory-export.service';
 import {
   CreateSalaryStructureDto,
   UpdateSalaryStructureDto,
@@ -150,6 +155,10 @@ export class PayrollService {
     private calculationService: PayrollCalculationService,
     private externalServices: ExternalServicesService,
     private attritionPredictorService: AttritionPredictorService,
+    private payslipPdfService: PayslipPdfService,
+    private form16PdfService: Form16PdfService,
+    private offboardingLetterPdfService: OffboardingLetterPdfService,
+    private statutoryExportService: StatutoryExportService,
   ) {}
 
   // ===========================================================================
@@ -251,8 +260,19 @@ export class PayrollService {
     employeeId: string,
     userId: string,
     orgId: string,
+    authCtx?: { roles?: string[]; orgRole?: string | null; email?: string; token?: string },
   ): Promise<ISalaryStructure> {
     if (!orgId) throw new ForbiddenException('Organization context required');
+
+    // P2.3 — HRBP scoping. The controller-level @Roles gate allows
+    // `manager` through, but a manager should only see salaries of
+    // their reports (direct + indirect), not peers or skip-level
+    // employees. Privileged roles (admin/hr/owner/super_admin) skip
+    // this check; managers have their report chain verified against
+    // the target employee's `reportingManagerId` chain. Self-view is
+    // always allowed regardless of role.
+    await this.assertSalaryAccess(employeeId, userId, orgId, authCtx);
+
     const filter: any = { employeeId, status: 'active', isDeleted: false };
     filter.organizationId = orgId;
 
@@ -266,6 +286,122 @@ export class PayrollService {
     return structure;
   }
 
+  /**
+   * Enforce that the caller is allowed to see the target employee's
+   * salary. Used by getSalaryStructure + getSalaryHistory so both
+   * entry points gate identically.
+   */
+  private async assertSalaryAccess(
+    targetEmployeeId: string,
+    callerUserId: string,
+    orgId: string,
+    authCtx?: { roles?: string[]; orgRole?: string | null; email?: string; token?: string },
+  ): Promise<void> {
+    const PRIVILEGED = new Set(['admin', 'hr', 'super_admin', 'owner']);
+    const orgRole = authCtx?.orgRole || null;
+    const roles = Array.isArray(authCtx?.roles) ? authCtx!.roles! : [];
+    const isPrivileged =
+      (orgRole && PRIVILEGED.has(orgRole)) ||
+      roles.some((r) => PRIVILEGED.has(r));
+    if (isPrivileged) return;
+
+    // Resolve caller's HR row to check self-view + reports chain.
+    const hr = await this.externalServices.getEmployeeByUserIdentity(
+      { userId: callerUserId, email: authCtx?.email },
+      authCtx?.token,
+      orgId,
+    );
+    const callerHrId = hr ? String(hr._id || hr.id) : null;
+    if (!callerHrId) {
+      throw new ForbiddenException('Your HR record could not be resolved — contact HR.');
+    }
+    if (callerHrId === String(targetEmployeeId)) return; // self
+
+    // Manager: target must be in the caller's report chain.
+    const isManager = roles.includes('manager') || orgRole === 'manager';
+    if (!isManager) {
+      throw new ForbiddenException(
+        'You are not authorised to view this salary structure.',
+      );
+    }
+    const isReport = await this.externalServices.isReportOfCaller(
+      callerHrId,
+      String(targetEmployeeId),
+      orgId,
+      authCtx?.token,
+    );
+    if (!isReport) {
+      throw new ForbiddenException(
+        'Managers can only view salary structures for their direct or indirect reports.',
+      );
+    }
+  }
+
+  // ===========================================================================
+  // 2a. getMySalaryStructure — self-service lookup for employees.
+  //
+  // The `/:employeeId` endpoint is gated by @Roles('admin','hr', …), which
+  // means regular employees could never read their own structure. This method
+  // resolves the caller's HR employee row (by auth userId) and returns their
+  // active structure. Returns null if the employee has no structure yet, so
+  // the UI can show an "awaiting setup" empty state instead of an error.
+  // ===========================================================================
+  async getMySalaryStructure(
+    userId: string,
+    orgId: string,
+    token?: string,
+    status: 'active' | 'pending_approval' | 'draft' = 'active',
+    email?: string,
+  ): Promise<ISalaryStructure | null> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const hrEmployee = await this.externalServices.getEmployeeByUserIdentity(
+      { userId, email },
+      token,
+      orgId,
+    );
+    if (!hrEmployee) return null;
+    const employeeId: string = hrEmployee._id || hrEmployee.id;
+    if (!employeeId) return null;
+
+    const structure = await this.salaryStructureModel
+      .findOne({ employeeId, status, isDeleted: false, organizationId: orgId })
+      .sort({ effectiveFrom: -1 });
+    return structure || null;
+  }
+
+  // ===========================================================================
+  // 2b. listSalaryStructures — org-level list for admin UI (P-6)
+  // ===========================================================================
+  async listSalaryStructures(
+    query: { status?: string; employeeId?: string; page?: number; limit?: number; search?: string },
+    orgId: string,
+  ): Promise<{ data: ISalaryStructure[]; pagination: { page: number; limit: number; total: number; totalPages: number } }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const page = Math.max(1, Number(query?.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query?.limit) || 50));
+    const skip = (page - 1) * limit;
+
+    const filter: any = { isDeleted: false, organizationId: orgId };
+    if (query?.status) filter.status = query.status;
+    if (query?.employeeId) filter.employeeId = query.employeeId;
+    if (query?.search) {
+      filter.$or = [
+        { structureName: { $regex: query.search, $options: 'i' } },
+        { employeeId: { $regex: query.search, $options: 'i' } },
+      ];
+    }
+
+    const [data, total] = await Promise.all([
+      this.salaryStructureModel.find(filter).sort({ effectiveFrom: -1, createdAt: -1 }).skip(skip).limit(limit).lean(),
+      this.salaryStructureModel.countDocuments(filter),
+    ]);
+
+    return {
+      data: data as ISalaryStructure[],
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) || 1 },
+    };
+  }
+
   // ===========================================================================
   // 3. getSalaryHistory
   // ===========================================================================
@@ -273,8 +409,14 @@ export class PayrollService {
     employeeId: string,
     userId: string,
     orgId: string,
+    authCtx?: { roles?: string[]; orgRole?: string | null; email?: string; token?: string },
   ): Promise<ISalaryStructure[]> {
     if (!orgId) throw new ForbiddenException('Organization context required');
+
+    // P2.3 — same HRBP scoping as getSalaryStructure. Managers see
+    // only reports' history; privileged roles + self bypass.
+    await this.assertSalaryAccess(employeeId, userId, orgId, authCtx);
+
     const filter: any = { employeeId, isDeleted: false };
     filter.organizationId = orgId;
 
@@ -426,6 +568,7 @@ export class PayrollService {
     id: string,
     userId: string,
     orgId: string,
+    orgRole?: string | null,
   ): Promise<ISalaryStructure> {
     if (!orgId) throw new ForbiddenException('Organization context required');
     const filter: any = { _id: id, isDeleted: false };
@@ -436,7 +579,12 @@ export class PayrollService {
       throw new NotFoundException('Salary structure not found');
     }
 
-    if (structure.createdBy === userId) {
+    // Maker-checker: creator cannot approve their own submission. Owners,
+    // however, can self-approve — single-admin orgs otherwise deadlock because
+    // there is no second administrator available to approve. The audit trail
+    // still records the owner as both `createdBy` and the approver, so the
+    // segregation is traceable even though not enforced structurally.
+    if (structure.createdBy === userId && orgRole !== 'owner') {
       throw new ForbiddenException('Cannot approve your own salary structure. A different administrator must approve.');
     }
 
@@ -608,6 +756,21 @@ export class PayrollService {
       `Initiating payroll run for ${dto.month}/${dto.year} by user ${userId}`,
     );
 
+    // Pre-flight: don't let an admin initiate a run when the org has zero
+    // active salary structures. Previously the run was happily created in
+    // `draft` status and then silently processed 0 employees — nothing in
+    // the UI explained why. Fail loudly now with a clear message.
+    const activeStructures = await this.salaryStructureModel.countDocuments({
+      organizationId: orgId,
+      status: 'active',
+      isDeleted: false,
+    });
+    if (activeStructures === 0) {
+      throw new BadRequestException(
+        'No active salary structures in this organisation. Create and approve at least one salary structure before initiating payroll.',
+      );
+    }
+
     // Generate runNumber: PR-YYYY-MM-001 (increment if duplicates)
     const monthStr = String(dto.month).padStart(2, '0');
     const baseRunNumber = `PR-${dto.year}-${monthStr}`;
@@ -767,8 +930,14 @@ export class PayrollService {
       );
     }
 
-    // Set status to processing
+    // Set status to processing and capture the processor (who ran the
+    // compute). Processor and preparer can be the same person — both
+    // count as "maker" steps — but downstream transitions (approve /
+    // finalize / pay) enforce strict separation against the actors of
+    // earlier steps. See updatePayrollRunStatus for the SoD checks.
     run.status = 'processing';
+    run.processedBy = userId;
+    run.processedAt = new Date();
     run.auditTrail.push({
       action: 'processing_started',
       performedBy: userId,
@@ -819,13 +988,37 @@ export class PayrollService {
       },
       overtime: {
         applicable: false,
-        rate: 2,
+        rate: 2,                      // weekday multiplier per Factories Act
+        weekendRate: 2,                // same as weekday by default; can be bumped to 2.5 via policy
+        holidayRate: 2,                // same; orgs honouring full Factories Act should set 2.5x
+        nightShiftMultiplier: 2,       // night-shift premium; orgs set 2.5x via policy for compliance
+        hoursPerDay: 8,                // standard shift
+        maxOvertimeHoursPerMonth: 0,   // 0 = no cap; Factories Act §64 sets 50/quarter
+        includeDA: true,               // DA folds into OT hourly rate by default
+      },
+      // Default LOP policy — absents count 1:1, half-days count 0.5.
+      // Matches the legacy behaviour the engine had before it was made
+      // policy-driven (absents were always LOP; half-days were ignored),
+      // except half-days now contribute as partial LOP out of the box
+      // because that's the right default for Indian payroll.
+      lopConfig: {
+        includeAbsentInLop: true,
+        includeHalfDayInLop: true,
+        halfDayLopFactor: 0.5,
       },
     };
 
+    // ARCH-1 (policy binding) fix: previous merge checked `orgConfig?.payroll`
+    // but the `/settings/payroll` endpoint returns `{pfConfig, esiConfig, ...}`
+    // at the root of its `data` field (already unwrapped by `fetchJSON`).
+    // That meant the `if (orgConfig?.payroll)` branch was always false and
+    // the engine silently fell through to hardcoded PF 12% / ESI / PT
+    // Maharashtra for every org, regardless of what they saved in Settings.
+    // Accept either shape so older callers don't regress.
     const orgConfig = await this.externalServices.getPayrollConfig(orgId);
-    if (orgConfig?.payroll) {
-      const pc = orgConfig.payroll;
+    const pc: any = orgConfig?.payroll ?? orgConfig ?? null;
+    const hasPolicy = pc && (pc.pfConfig || pc.esiConfig || pc.ptConfig || pc.tdsConfig);
+    if (hasPolicy) {
       payrollConfig = {
         pfConfig: {
           applicable: pc.pfConfig?.applicable ?? true,
@@ -843,7 +1036,7 @@ export class PayrollService {
         },
         tdsConfig: {
           applicable: pc.tdsConfig?.applicable ?? true,
-          regime: (pc.tdsConfig?.regime || 'new') as 'old' | 'new',
+          regime: (pc.tdsConfig?.defaultTaxRegime || pc.tdsConfig?.regime || 'new') as 'old' | 'new',
         },
         ptConfig: {
           applicable: pc.ptConfig?.applicable ?? true,
@@ -854,13 +1047,32 @@ export class PayrollService {
           state: pc.lwfConfig?.state || 'maharashtra',
         },
         overtime: {
-          applicable: false,
-          rate: 2,
+          applicable: pc.overtime?.applicable ?? false,
+          rate: pc.overtime?.rate ?? 2,
+          weekendRate: pc.overtime?.weekendRate ?? pc.overtime?.rate ?? 2,
+          holidayRate: pc.overtime?.holidayRate ?? pc.overtime?.weekendRate ?? pc.overtime?.rate ?? 2,
+          nightShiftMultiplier: pc.overtime?.nightShiftMultiplier ?? pc.overtime?.rate ?? 2,
+          hoursPerDay: pc.overtime?.hoursPerDay ?? 8,
+          maxOvertimeHoursPerMonth: pc.overtime?.maxOvertimeHoursPerMonth ?? 0,
+          includeDA: pc.overtime?.includeDA ?? true,
+        },
+        // Honour org-saved LOP policy when present; otherwise fall back
+        // to the defaults (absents 1:1, half-days 0.5). Each field keeps
+        // its default if the org only saved a partial lopConfig.
+        lopConfig: {
+          includeAbsentInLop: pc.lopConfig?.includeAbsentInLop ?? true,
+          includeHalfDayInLop: pc.lopConfig?.includeHalfDayInLop ?? true,
+          halfDayLopFactor:
+            typeof pc.lopConfig?.halfDayLopFactor === 'number'
+              ? pc.lopConfig.halfDayLopFactor
+              : 0.5,
         },
       };
-      this.logger.log(`Loaded org payroll config for ${orgId}`);
+      this.logger.log(
+        `Loaded org payroll config for ${orgId} — PF ${(payrollConfig.pfConfig.employeeRate*100).toFixed(2)}%, ESI emp ${(payrollConfig.esiConfig.employeeRate*100).toFixed(2)}%, PT ${payrollConfig.ptConfig.state}`,
+      );
     } else {
-      this.logger.warn(`Could not load org payroll config for ${orgId}, using defaults`);
+      this.logger.warn(`No payroll settings saved for org ${orgId}; falling back to statutory defaults (PF 12%, ESI 7.5% combined, PT Maharashtra). Ask an admin to save /settings/payroll.`);
     }
 
     const payPeriod = {
@@ -869,6 +1081,21 @@ export class PayrollService {
       startDate: run.payPeriod.startDate,
       endDate: run.payPeriod.endDate,
     };
+
+    // Declared holidays for this pay-period's year. Used below in the
+    // per-employee attendance bucketing to reclassify absent-on-holiday
+    // records as `holidays` so they don't count as LOP. Keeping a Set
+    // of YYYY-MM-DD strings makes the per-record check O(1).
+    // Fetched once per run (not per employee) since the calendar is
+    // org-wide.
+    const holidayDateSet = new Set<string>(
+      await this.externalServices.getHolidayDates(orgId, payPeriod.year),
+    );
+    if (holidayDateSet.size > 0) {
+      this.logger.log(
+        `Loaded ${holidayDateSet.size} declared holidays for ${payPeriod.year} — absent-on-holiday records will not count toward LOP`,
+      );
+    }
 
     const entryIds: string[] = [];
     let processedCount = 0;
@@ -900,7 +1127,7 @@ export class PayrollService {
     for (const structure of salaryStructures) {
       try {
         // Try to fetch real attendance from attendance-service
-        let attendance = {
+        let attendance: any = {
           totalWorkingDays: 22,
           presentDays: 22,
           absentDays: 0,
@@ -910,23 +1137,77 @@ export class PayrollService {
           holidays: 0,
           weekoffs: 0,
           overtimeHours: 0,
+          weekdayOvertimeHours: 0,
+          weekendOvertimeHours: 0,
+          holidayOvertimeHours: 0,
+          nightShiftOvertimeHours: 0,
         };
 
         const attendanceData = await this.externalServices.getMonthlyAttendance(
           structure.employeeId,
           payPeriod.month,
           payPeriod.year,
+          undefined, // no user token in background processing
+          orgId,     // mint a service token scoped to this tenant
         );
 
         if (attendanceData && Array.isArray(attendanceData)) {
           const records = attendanceData;
-          const present = records.filter((r: any) => ['present', 'late', 'wfh'].includes(r.status)).length;
-          const absent = records.filter((r: any) => r.status === 'absent').length;
-          const halfDays = records.filter((r: any) => r.status === 'half_day').length;
-          const holidays = records.filter((r: any) => r.status === 'holiday').length;
-          const weekoffs = records.filter((r: any) => r.status === 'weekoff').length;
-          const leaves = records.filter((r: any) => r.status === 'leave').length;
-          const totalOT = records.reduce((sum: number, r: any) => sum + (r.overtimeHours || 0), 0);
+
+          // Reclassify records against the declared holiday calendar.
+          // A record with `status='absent'` on a declared holiday is
+          // really a holiday (the employee wasn't expected to work) —
+          // counting it as LOP would dock their pay for a day the
+          // company declared off. Also bumps OT on those records
+          // into the holiday bucket for the premium multiplier.
+          // Applied as a lookup so we don't mutate the attendance doc.
+          const effectiveStatusOf = (r: any): string => {
+            if (holidayDateSet.size === 0) return r.status;
+            if (r.status === 'holiday' || r.status === 'leave' || r.status === 'weekoff') {
+              return r.status; // already better than "holiday" in some cases
+            }
+            const iso = r.date ? new Date(r.date).toISOString().slice(0, 10) : null;
+            if (iso && holidayDateSet.has(iso)) return 'holiday';
+            return r.status;
+          };
+
+          const effectiveStatuses = records.map(effectiveStatusOf);
+          const present = records.filter(
+            (_: any, i: number) => ['present', 'late', 'wfh'].includes(effectiveStatuses[i]),
+          ).length;
+          const absent = records.filter(
+            (_: any, i: number) => effectiveStatuses[i] === 'absent',
+          ).length;
+          const halfDays = records.filter(
+            (_: any, i: number) => effectiveStatuses[i] === 'half_day',
+          ).length;
+          const holidays = records.filter(
+            (_: any, i: number) => effectiveStatuses[i] === 'holiday',
+          ).length;
+          const weekoffs = records.filter(
+            (_: any, i: number) => effectiveStatuses[i] === 'weekoff',
+          ).length;
+          const leaves = records.filter(
+            (_: any, i: number) => effectiveStatuses[i] === 'leave',
+          ).length;
+
+          // OT bucketing — uses effective status so OT on a declared
+          // holiday (even if the employee clock-in recorded it as
+          // 'present') still routes to the holiday multiplier.
+          let weekdayOT = 0;
+          let weekendOT = 0;
+          let holidayOT = 0;
+          let nightShiftOT = 0;
+          for (let i = 0; i < records.length; i++) {
+            const r = records[i];
+            const h = Number(r.overtimeHours) || 0;
+            if (h <= 0) continue;
+            if (r.isNightShift === true) nightShiftOT += h;
+            else if (effectiveStatuses[i] === 'holiday') holidayOT += h;
+            else if (effectiveStatuses[i] === 'weekoff') weekendOT += h;
+            else weekdayOT += h;
+          }
+          const totalOT = weekdayOT + weekendOT + holidayOT + nightShiftOT;
 
           attendance = {
             totalWorkingDays: present + absent + halfDays + leaves,
@@ -938,17 +1219,110 @@ export class PayrollService {
             holidays,
             weekoffs,
             overtimeHours: totalOT,
-          };
+            weekdayOvertimeHours: weekdayOT,
+            weekendOvertimeHours: weekendOT,
+            holidayOvertimeHours: holidayOT,
+            nightShiftOvertimeHours: nightShiftOT,
+          } as any;
         } else {
           this.logger.warn(`No attendance data for employee ${structure.employeeId}, using defaults`);
         }
+
+        // Per-employee policy overrides (Option B phase 2).
+        //
+        // `employee.policyIds[]` may point at one or more policies in
+        // policy-service with category `payroll_override`. When found,
+        // their `payrollOverrides.{pfConfig, esiConfig, ptConfig, overtime}`
+        // layer on top of the org-level payrollConfig for THIS employee
+        // only. Everyone without an attached override keeps the org
+        // defaults. Effective-dated and active filters applied here so
+        // a scheduled policy change (e.g. "PF goes to 10% from May")
+        // kicks in automatically on the right run without manual edits.
+        let effectiveConfig = payrollConfig;
+        const empData = await this.externalServices.getEmployee(structure.employeeId, undefined, orgId);
+        const policyIds: string[] = Array.isArray(empData?.policyIds) ? empData.policyIds : [];
+        if (policyIds.length > 0) {
+          const policies = await this.externalServices.getPoliciesByIds(policyIds, undefined, orgId);
+          const runStart = payPeriod.startDate instanceof Date ? payPeriod.startDate : new Date(payPeriod.startDate as any);
+          const runEnd = payPeriod.endDate instanceof Date ? payPeriod.endDate : new Date(payPeriod.endDate as any);
+          const applicable = policies.filter((p: any) => {
+            if (!p || p.category !== 'payroll_override') return false;
+            if (p.isActive === false || p.isDeleted === true) return false;
+            if (p.effectiveFrom && new Date(p.effectiveFrom) > runEnd) return false;
+            if (p.effectiveTo && new Date(p.effectiveTo) < runStart) return false;
+            return !!p.payrollOverrides;
+          });
+          if (applicable.length > 0) {
+            // Deterministic priority: most recent `effectiveFrom` wins if
+            // multiple policies override the same field. Sort ascending
+            // then apply in order so the last merge wins.
+            applicable.sort((a: any, b: any) => {
+              const ta = a.effectiveFrom ? new Date(a.effectiveFrom).getTime() : 0;
+              const tb = b.effectiveFrom ? new Date(b.effectiveFrom).getTime() : 0;
+              return ta - tb;
+            });
+            // Deep-merge only the keys that are actually set on the
+            // override so an undefined field doesn't null out an org
+            // default. Clone the base so we don't mutate the run-wide
+            // config and leak overrides across employees.
+            effectiveConfig = {
+              ...payrollConfig,
+              pfConfig: { ...payrollConfig.pfConfig },
+              esiConfig: { ...payrollConfig.esiConfig },
+              tdsConfig: { ...payrollConfig.tdsConfig },
+              ptConfig: { ...payrollConfig.ptConfig },
+              lwfConfig: { ...payrollConfig.lwfConfig },
+              overtime: { ...payrollConfig.overtime },
+              lopConfig: { ...payrollConfig.lopConfig },
+            };
+            for (const p of applicable) {
+              const ov = p.payrollOverrides || {};
+              if (ov.pfConfig) Object.entries(ov.pfConfig).forEach(([k, v]) => { if (v !== undefined && v !== null) (effectiveConfig.pfConfig as any)[k] = v; });
+              if (ov.esiConfig) Object.entries(ov.esiConfig).forEach(([k, v]) => { if (v !== undefined && v !== null) (effectiveConfig.esiConfig as any)[k] = v; });
+              if (ov.ptConfig) Object.entries(ov.ptConfig).forEach(([k, v]) => { if (v !== undefined && v !== null) (effectiveConfig.ptConfig as any)[k] = v; });
+              if (ov.overtime) Object.entries(ov.overtime).forEach(([k, v]) => { if (v !== undefined && v !== null) (effectiveConfig.overtime as any)[k] = v; });
+              if (ov.lopConfig) Object.entries(ov.lopConfig).forEach(([k, v]) => { if (v !== undefined && v !== null) (effectiveConfig.lopConfig as any)[k] = v; });
+            }
+            this.logger.log(
+              `Employee ${structure.employeeId}: applied ${applicable.length} policy override(s) → PF ${(effectiveConfig.pfConfig.employeeRate * 100).toFixed(2)}%, ESI emp ${(effectiveConfig.esiConfig.employeeRate * 100).toFixed(2)}%, PT ${effectiveConfig.ptConfig.state}, LOP half-day×${effectiveConfig.lopConfig.halfDayLopFactor}, OT wk${effectiveConfig.overtime.rate}x/we${effectiveConfig.overtime.weekendRate ?? effectiveConfig.overtime.rate}x/hd${effectiveConfig.overtime.holidayRate ?? effectiveConfig.overtime.rate}x/night${effectiveConfig.overtime.nightShiftMultiplier ?? effectiveConfig.overtime.rate}x (cap ${effectiveConfig.overtime.maxOvertimeHoursPerMonth ?? 0}h)`,
+            );
+          }
+        }
+
+        // ── Loan EMI deductions for this pay period ──
+        // Walks the employee's active loans and, for each, picks the
+        // installment whose dueMonth/dueYear matches the run. Returns
+        // a flat list of {loanId, emiAmount, remainingBalance} that
+        // computeEmployeePayroll() folds into totalDeductions and
+        // surfaces on the payslip. Side-effect-free read; the write-back
+        // (mark installment 'deducted', decrement outstandingBalance,
+        // close loan if final) happens AFTER the entry saves so a
+        // calculation failure can't leave the loan ledger inconsistent
+        // with the payroll entry.
+        //
+        // Loans are keyed by `auth userId` (req.user.userId at apply
+        // time), while `structure.employeeId` is the HR `_id`. Resolve
+        // via empData.userId — already fetched above for policy
+        // overrides, so no extra round-trip.
+        const loanLookupId = empData?.userId || structure.employeeId;
+        const loanDeductions = await this.findLoanDeductionsForPayrollPeriod(
+          loanLookupId,
+          orgId,
+          payPeriod.month,
+          payPeriod.year,
+        );
 
         // Compute employee payroll
         const result = this.calculationService.computeEmployeePayroll({
           salaryStructure: structure,
           attendance,
-          payrollConfig,
+          payrollConfig: effectiveConfig,
           payPeriod,
+          loanDeductions: loanDeductions.map((l) => ({
+            loanId: l.loanId,
+            emiAmount: l.emiAmount,
+            remainingBalance: l.remainingBalance,
+          })),
         });
 
         // Create PayrollEntry document
@@ -964,6 +1338,7 @@ export class PayrollService {
           reimbursements: [],
           bonuses: result.bonuses,
           loanDeductions: result.loanDeductions,
+          overtime: result.overtime ?? null,
           totals: result.totals,
           paymentDetails: {},
           status: 'computed',
@@ -976,6 +1351,22 @@ export class PayrollService {
         const entry = new this.payrollEntryModel(entryData);
         const savedEntry = await entry.save();
         entryIds.push(savedEntry._id.toString());
+
+        // ── Loan write-back ──
+        // Now that the payroll entry is durable, persist the deduction
+        // against each loan: mark the matching installment 'deducted',
+        // record the run id + timestamp for audit, decrement
+        // outstandingBalance by the principal portion (interest never
+        // reduces principal), and close the loan when its balance
+        // hits zero. Failures here log a warning but don't bubble —
+        // payroll has already been recorded; reconciliation is a
+        // follow-up concern, not a payroll-blocker.
+        if (loanDeductions.length > 0) {
+          await this.applyLoanDeductionsAfterPayroll(
+            loanDeductions,
+            String(run._id),
+          );
+        }
 
         // Accumulate summary
         summary.totalGross += result.totals.grossEarnings;
@@ -1032,13 +1423,31 @@ export class PayrollService {
   }
 
   // ===========================================================================
-  // 13. updatePayrollRunStatus
+  // 13. updatePayrollRunStatus — with maker-checker (#11)
   // ===========================================================================
+  //
+  // Segregation of duties (SoD) for payroll runs. The run touches real
+  // money at `finalized` (GL commitment) and `paid` (actual disbursement),
+  // so a single compromised admin account must not be able to drive the
+  // whole lifecycle. Rules enforced here:
+  //
+  //   • Approver  ≠ Preparer (createdBy) AND ≠ Processor (processedBy)
+  //   • Finalizer ≠ Approver
+  //   • Disburser (paid)  ≠ Finalizer
+  //
+  // Owner exception: users with `orgRole === 'owner'` can bypass all SoD
+  // checks. Single-admin orgs (common for early-stage customers) would
+  // deadlock otherwise. The audit trail flags bypass events explicitly
+  // so an external auditor can still see "this org has weak SoD because
+  // the owner is doing everything" without digging through users.
+  //
+  // Mirrors the maker-checker pattern already in approveSalaryStructure.
   async updatePayrollRunStatus(
     id: string,
     dto: UpdatePayrollStatusDto,
     userId: string,
     orgId: string,
+    orgRole?: string | null,
   ): Promise<IPayrollRun> {
     if (!orgId) throw new ForbiddenException('Organization context required');
     const filter: any = { _id: id, isDeleted: false };
@@ -1064,6 +1473,41 @@ export class PayrollService {
       );
     }
 
+    // Maker-checker enforcement. Owners bypass (and get flagged in audit).
+    const isOwner = orgRole === 'owner';
+    let bypassNote: string | null = null;
+    if (dto.status === 'approved') {
+      const conflicts: string[] = [];
+      if (run.createdBy === userId) conflicts.push('prepared');
+      if (run.processedBy && run.processedBy === userId) conflicts.push('processed');
+      if (conflicts.length && !isOwner) {
+        throw new ForbiddenException(
+          `Maker-checker: you cannot approve a run you ${conflicts.join(' and ')}. A different administrator must approve.`,
+        );
+      }
+      if (conflicts.length && isOwner) {
+        bypassNote = `Owner bypass: self-approved despite having ${conflicts.join(' and ')} this run`;
+      }
+    } else if (dto.status === 'finalized') {
+      if (run.approvedBy && run.approvedBy === userId && !isOwner) {
+        throw new ForbiddenException(
+          'Maker-checker: you cannot finalize a run you approved. A different administrator must finalize.',
+        );
+      }
+      if (run.approvedBy === userId && isOwner) {
+        bypassNote = 'Owner bypass: self-finalized despite being the approver';
+      }
+    } else if (dto.status === 'paid') {
+      if (run.finalizedBy && run.finalizedBy === userId && !isOwner) {
+        throw new ForbiddenException(
+          'Maker-checker: you cannot mark a run paid when you finalized it. A different administrator must release payment.',
+        );
+      }
+      if (run.finalizedBy === userId && isOwner) {
+        bypassNote = 'Owner bypass: self-disbursed despite being the finalizer';
+      }
+    }
+
     const previousStatus = run.status;
     run.status = dto.status;
 
@@ -1075,23 +1519,124 @@ export class PayrollService {
       run.finalizedBy = userId;
       run.finalizedAt = new Date();
     } else if (dto.status === 'paid') {
+      run.paidBy = userId;
       run.paidAt = new Date();
       if (dto.paymentReference) {
         run.paymentReference = dto.paymentReference;
       }
     }
 
+    // Audit note: concat user notes + any bypass flag so both surface
+    // in the trail without requiring a second push.
+    const combinedNotes = [dto.notes || '', bypassNote || '']
+      .filter(Boolean)
+      .join(' | ') || undefined;
     run.auditTrail.push({
       action: `status_changed_to_${dto.status}`,
       performedBy: userId,
       performedAt: new Date(),
       previousStatus,
       newStatus: dto.status,
-      notes: dto.notes || undefined,
+      notes: combinedNotes,
     });
 
     this.logger.log(
-      `Payroll run ${run.runNumber} status changed from '${previousStatus}' to '${dto.status}' by user ${userId}`,
+      `Payroll run ${run.runNumber} status changed from '${previousStatus}' to '${dto.status}' by user ${userId}${bypassNote ? ` (${bypassNote})` : ''}`,
+    );
+
+    return run.save();
+  }
+
+  // ===========================================================================
+  // 13b. reopenPayrollRun — correct-after-finalize (P1.5)
+  // ===========================================================================
+  //
+  // The state machine allows `review ↔ approved ↔ finalized → paid`, but
+  // no backward path from `finalized` once GL has been committed. In
+  // practice HR discovers errors between finalize and disbursement all
+  // the time — someone's reimbursement was missed, an arrear shouldn't
+  // have been included, a bonus entry was attached to the wrong run.
+  // The old workaround was "cancel + create a whole new run", which
+  // loses the audit trail and breaks the unique-run-per-month index.
+  //
+  // This endpoint is a controlled rewind: **finalized → review**, with:
+  //   - A mandatory reason (persisted on audit trail)
+  //   - Maker-checker: reopener cannot be the finalizer (unless owner)
+  //   - Owner bypass, same pattern as status transitions
+  //   - Approval + finalization fields reset so next actor has to
+  //     re-sign (otherwise the existing `approvedBy/finalizedBy`
+  //     stamps would stay stale and mislead auditors).
+  //   - `paid` runs are NOT reopenable — GL + bank reversal is a
+  //     separate workflow with its own safeguards. We reject loudly
+  //     and point the admin at the supplementary-run path.
+  async reopenPayrollRun(
+    id: string,
+    dto: { reason: string },
+    userId: string,
+    orgId: string,
+    orgRole?: string | null,
+  ): Promise<IPayrollRun> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    if (!dto.reason || !dto.reason.trim()) {
+      throw new BadRequestException('Reason is required when reopening a finalized run');
+    }
+
+    const run = await this.payrollRunModel.findOne({ _id: id, organizationId: orgId, isDeleted: false });
+    if (!run) throw new NotFoundException('Payroll run not found');
+
+    if (run.status === 'paid') {
+      throw new BadRequestException(
+        'This run has already been disbursed (status=paid). To correct a paid run, create a supplementary run with the delta entries — paid runs cannot be reopened without a GL + bank reversal workflow.',
+      );
+    }
+    if (run.status !== 'finalized') {
+      throw new BadRequestException(
+        `Only 'finalized' runs can be reopened. Current status: '${run.status}'. To change a draft/review/approved run, use the status-update endpoint.`,
+      );
+    }
+
+    const isOwner = orgRole === 'owner';
+    if (run.finalizedBy && run.finalizedBy === userId && !isOwner) {
+      throw new ForbiddenException(
+        'Maker-checker: you cannot reopen a run you finalized. A different administrator must reopen.',
+      );
+    }
+
+    const previousStatus = run.status;
+    const staleFinalizedBy = run.finalizedBy;
+    const staleApprovedBy = run.approvedBy;
+
+    run.status = 'review';
+    // Clear the stale actor stamps — once reopened, the next cycle of
+    // approve → finalize has to be re-signed. This keeps the audit
+    // trail honest (a finalizer's signature shouldn't survive a
+    // reopen they didn't re-issue after the edit).
+    run.approvedBy = null;
+    run.approvedAt = null;
+    run.finalizedBy = null;
+    run.finalizedAt = null;
+
+    const ownerBypassNote =
+      isOwner && staleFinalizedBy === userId
+        ? 'Owner bypass: self-reopened run they finalized'
+        : null;
+
+    run.auditTrail.push({
+      action: 'reopened_from_finalized',
+      performedBy: userId,
+      performedAt: new Date(),
+      previousStatus,
+      newStatus: 'review',
+      notes: [
+        dto.reason.trim(),
+        staleApprovedBy ? `cleared stale approvedBy=${staleApprovedBy}` : null,
+        staleFinalizedBy ? `cleared stale finalizedBy=${staleFinalizedBy}` : null,
+        ownerBypassNote,
+      ].filter(Boolean).join(' | '),
+    });
+
+    this.logger.log(
+      `Payroll run ${run.runNumber} reopened (finalized → review) by ${userId}: ${dto.reason.trim()}${ownerBypassNote ? ` (${ownerBypassNote})` : ''}`,
     );
 
     return run.save();
@@ -1142,8 +1687,26 @@ export class PayrollService {
     employeeId: string,
     userId: string,
     orgId: string,
+    authCtx?: { callerEmail?: string; callerToken?: string; isPrivileged?: boolean },
   ): Promise<IPayrollEntry> {
     if (!orgId) throw new ForbiddenException('Organization context required');
+
+    // QA finding Payroll-4: non-privileged users can only read their own
+    // entry. Resolve the caller's HR employee row and compare to
+    // the requested `:employeeId`. Privileged roles (admin/hr/manager) skip
+    // the ownership check — they need to see every employee's entry.
+    if (authCtx && !authCtx.isPrivileged) {
+      const hrEmployee = await this.externalServices.getEmployeeByUserIdentity(
+        { userId, email: authCtx.callerEmail },
+        authCtx.callerToken,
+        orgId,
+      );
+      const callerHrId = hrEmployee ? (hrEmployee._id?.toString() || hrEmployee.id) : null;
+      if (!callerHrId || callerHrId !== String(employeeId)) {
+        throw new ForbiddenException('You can only view your own payroll entry');
+      }
+    }
+
     const filter: any = { payrollRunId: runId, employeeId, isDeleted: false };
     filter.organizationId = orgId;
 
@@ -1213,6 +1776,40 @@ export class PayrollService {
       }
     }
 
+    // P2.2 Arrears — retroactive pay for a prior period, attached to an
+    // existing component so the payslip and 24Q report classify it as
+    // "back-pay" rather than a fresh earning. The calculator models
+    // arrears via per-earning `arrearAmount`; here the override path
+    // merges into the same field. A mismatched code (employee doesn't
+    // have that component on this run's structure) falls back to a
+    // synthesized earning line with the full amount as arrear — better
+    // than silently dropping it, easy for finance to reconcile later.
+    if (dto.arrears && dto.arrears.length > 0) {
+      for (const arr of dto.arrears) {
+        const code = String(arr.componentCode).trim();
+        if (!code || !(arr.amount > 0)) continue;
+        const existing = entry.earnings.find(
+          (e) => e.code === code || e.code.toLowerCase() === code.toLowerCase(),
+        );
+        if (existing) {
+          existing.arrearAmount = (existing.arrearAmount || 0) + arr.amount;
+          existing.actualAmount = (existing.actualAmount || 0) + arr.amount;
+        } else {
+          // Component not on this run's structure — emit a dedicated
+          // arrears line using the raw code as both code+name. HR can
+          // rename via a follow-up override if they want prettier display.
+          entry.earnings.push({
+            code,
+            name: code,
+            fullAmount: 0,
+            actualAmount: arr.amount,
+            arrearAmount: arr.amount,
+            isTaxable: true,
+          });
+        }
+      }
+    }
+
     // Recalculate totals
     const grossEarnings = entry.earnings.reduce(
       (sum, e) => sum + e.actualAmount,
@@ -1227,6 +1824,12 @@ export class PayrollService {
     entry.totals.grossEarnings = grossEarnings;
     entry.totals.totalDeductions = totalDeductionAmount;
     entry.totals.netPayable = netPayable;
+    // Arrears total is the sum of all earnings' arrearAmount fields —
+    // reruns the calc-service convention. Used by payslip + 24Q.
+    entry.totals.totalArrears = entry.earnings.reduce(
+      (sum, e) => sum + (e.arrearAmount || 0),
+      0,
+    );
 
     if (dto.notes) {
       entry.notes = dto.notes;
@@ -1234,8 +1837,21 @@ export class PayrollService {
 
     entry.status = 'reviewed';
 
+    // Audit note — specifically list arrear details because they're the
+    // ones auditors ask about ("which prior period did this ₹20k back-pay
+    // cover?"). Plain additionalEarnings/Deductions roll up silently.
+    const arrearSummary = (dto.arrears || [])
+      .filter((a) => a?.amount > 0)
+      .map((a) => {
+        const period = a.pertainsToMonth && a.pertainsToYear
+          ? ` for ${String(a.pertainsToMonth).padStart(2, '0')}/${a.pertainsToYear}`
+          : '';
+        const reason = a.reason ? ` — ${a.reason}` : '';
+        return `${a.componentCode} +₹${a.amount.toLocaleString('en-IN')}${period}${reason}`;
+      })
+      .join('; ');
     this.logger.log(
-      `Payroll entry for employee ${employeeId} in run ${runId} overridden by user ${userId}`,
+      `Payroll entry for employee ${employeeId} in run ${runId} overridden by user ${userId}${arrearSummary ? ` [arrears: ${arrearSummary}]` : ''}`,
     );
 
     return entry.save();
@@ -1362,12 +1978,61 @@ export class PayrollService {
     }
 
     for (const entry of entries) {
-      // Build earnings line items for payslip
+      // Build earnings line items for payslip. Each component's
+      // `actualAmount` already includes any arrears rolled into it
+      // (see overridePayrollEntry), so the gross total stays correct.
+      // When `arrearAmount > 0`, append a parenthetical so the
+      // employee can see "here's ₹X of this row is back-pay from a
+      // prior month" without having to decode a separate line.
       const payslipEarnings = entry.earnings.map((e) => ({
         code: e.code,
-        name: e.name,
+        name: e.arrearAmount > 0
+          ? `${e.name} (incl. ₹${e.arrearAmount.toLocaleString('en-IN')} arrears)`
+          : e.name,
         amount: e.actualAmount,
       }));
+
+      // Synthesise OT line items from the persisted breakdown so the
+      // employee sees "Overtime (Weekend) ₹X @ 2.5x / 4h" etc instead of
+      // a single opaque `totals.overtimePay`. Only add rows with non-zero
+      // hours — keeps the payslip clean for folks who worked no OT that
+      // bucket. Net payable math is unchanged (still
+      // `gross + totals.overtimePay + bonuses − deductions`), these are
+      // purely display-side rows.
+      const ot: any = entry.overtime;
+      if (
+        ot &&
+        (ot.weekdayPay || ot.weekendPay || ot.holidayPay || ot.nightShiftPay)
+      ) {
+        if (ot.weekdayPay > 0) {
+          payslipEarnings.push({
+            code: 'OT_WEEKDAY',
+            name: `Overtime (Weekday, ${ot.weekdayHours}h)`,
+            amount: ot.weekdayPay,
+          });
+        }
+        if (ot.weekendPay > 0) {
+          payslipEarnings.push({
+            code: 'OT_WEEKEND',
+            name: `Overtime (Weekend, ${ot.weekendHours}h)`,
+            amount: ot.weekendPay,
+          });
+        }
+        if (ot.holidayPay > 0) {
+          payslipEarnings.push({
+            code: 'OT_HOLIDAY',
+            name: `Overtime (Holiday, ${ot.holidayHours}h)`,
+            amount: ot.holidayPay,
+          });
+        }
+        if (ot.nightShiftPay > 0) {
+          payslipEarnings.push({
+            code: 'OT_NIGHT',
+            name: `Overtime (Night Shift, ${ot.nightShiftHours}h)`,
+            amount: ot.nightShiftPay,
+          });
+        }
+      }
 
       // Build deductions line items for payslip
       const payslipDeductions = entry.deductions.map((d) => ({
@@ -1419,21 +2084,32 @@ export class PayrollService {
       let employeePan = 'XXXXX';
       let employeeUan = '';
       let employeeEsiNumber = '';
+      // Business-visible id (NXR-0002); defaults to raw ObjectId so the
+      // PDF still has *something* identifying if the HR lookup fails.
+      let employeeBusinessId = entry.employeeId;
 
-      const empData = await this.externalServices.getEmployee(entry.employeeId);
+      // Pass orgId so a scoped service token is minted (P-10 fix); no user
+      // token is available in this background generation path.
+      const empData = await this.externalServices.getEmployee(entry.employeeId, undefined, orgId);
       if (empData) {
         employeeName = `${empData.firstName || ''} ${empData.lastName || ''}`.trim() || 'Employee';
-        employeeDesignation = empData.designation || empData.designationName || 'N/A';
-        employeeDepartment = empData.department || empData.departmentName || 'N/A';
+        // HR's getEmployeeById now joins the department + designation
+        // names (field: `departmentName`, `designationName`). Fall back
+        // to the legacy flat fields if an older response shape is in play.
+        employeeDesignation = empData.designationName || empData.designation || 'N/A';
+        employeeDepartment = empData.departmentName || empData.department || 'N/A';
         if (empData.bankDetails?.accountNumber) {
-          const acct = empData.bankDetails.accountNumber;
+          const acct = String(empData.bankDetails.accountNumber);
           employeeBankAccount = 'XXXX' + acct.slice(-4);
         }
         if (empData.pan) {
-          employeePan = empData.pan.slice(0, 5) + '****' + empData.pan.slice(-1);
+          // Mask middle of PAN: ABCDE****F (first 5 + last 1 visible).
+          const pan = String(empData.pan).toUpperCase();
+          employeePan = pan.slice(0, 5) + '****' + pan.slice(-1);
         }
         employeeUan = empData.uan || '';
         employeeEsiNumber = empData.esiNumber || '';
+        if (empData.employeeId) employeeBusinessId = empData.employeeId;
       }
 
       // Calculate YTD totals from previous payslips in the same financial year (PAY-014)
@@ -1466,7 +2142,10 @@ export class PayrollService {
           label: periodLabel,
         },
         employeeSnapshot: {
-          employeeId: entry.employeeId,
+          // Store the business-visible id (NXR-0002) for display on the
+          // payslip; the HR ObjectId is preserved on the parent record's
+          // `employeeId` field so joins/filters still work.
+          employeeId: employeeBusinessId,
           name: employeeName,
           designation: employeeDesignation,
           department: employeeDepartment,
@@ -1486,7 +2165,12 @@ export class PayrollService {
         deductions: payslipDeductions,
         employerContributions,
         totals: {
-          grossEarnings: entry.totals.grossEarnings,
+          // Payslip-level gross includes OT so the displayed "Earnings"
+          // column sums to the "Gross Earnings" total. The PayrollEntry
+          // keeps gross and overtimePay separate (cleaner for reports,
+          // statutory calc, and historical invariants); the payslip is
+          // a display artifact that merges them purely for the reader.
+          grossEarnings: entry.totals.grossEarnings + (entry.totals.overtimePay || 0),
           totalDeductions: entry.totals.totalDeductions,
           netPayable: entry.totals.netPayable,
           netPayableWords,
@@ -1523,10 +2207,26 @@ export class PayrollService {
     query: PayslipQueryDto,
     userId: string,
     orgId: string,
+    token?: string,
+    email?: string,
   ): Promise<{ data: IPayslip[]; pagination: { page: number; limit: number; total: number; totalPages: number } }> {
     if (!orgId) throw new ForbiddenException('Organization context required');
-    const filter: any = { employeeId: userId, isDeleted: false };
-    filter.organizationId = orgId;
+    // QA finding Payroll-3: payslips store `employeeId = HR employee _id`,
+    // but historically this filter used the auth user `_id` (JWT sub),
+    // which never matched — so employees saw an empty list. Resolve the HR
+    // employee for the caller (by email, with userId fallback) and filter
+    // by the HR `_id`.
+    const hrEmployee = await this.externalServices.getEmployeeByUserIdentity(
+      { userId, email },
+      token,
+      orgId,
+    );
+    const hrEmployeeId: string | null = hrEmployee ? (hrEmployee._id || hrEmployee.id) : null;
+    const filter: any = {
+      employeeId: hrEmployeeId || userId, // fallback to userId keeps old behaviour if HR lookup fails
+      isDeleted: false,
+      organizationId: orgId,
+    };
     if (query.year) filter['payPeriod.year'] = query.year;
     if (query.month) filter['payPeriod.month'] = query.month;
 
@@ -1571,6 +2271,50 @@ export class PayrollService {
       throw new NotFoundException('Payslip not found');
     }
     return payslip;
+  }
+
+  // ===========================================================================
+  // 21b. generatePayslipPdf
+  //
+  // Renders a PDF buffer for the given payslip with authorization:
+  // - Any privileged caller (admin / hr / owner / super_admin) can
+  //   download anyone's payslip in their org.
+  // - Non-privileged users can only download their OWN payslip — we
+  //   resolve the caller's HR employee row (by email first, userId
+  //   fallback, matching the pattern used for /salary-structures/me and
+  //   /payslips/my) and compare its `_id` to the payslip's `employeeId`.
+  //
+  // The PDF is regenerated from the stored Payslip document on every
+  // request — no file storage, no stale cache. That's correct because
+  // payroll is immutable after finalize, so two renders produce the
+  // same output.
+  // ===========================================================================
+  async generatePayslipPdf(
+    id: string,
+    userId: string,
+    orgId: string,
+    authCtx?: { email?: string; token?: string; isPrivileged?: boolean },
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const filter: any = { _id: id, isDeleted: false, organizationId: orgId };
+    const payslip = await this.payslipModel.findOne(filter);
+    if (!payslip) throw new NotFoundException('Payslip not found');
+
+    if (!authCtx?.isPrivileged) {
+      const hrEmployee = await this.externalServices.getEmployeeByUserIdentity(
+        { userId, email: authCtx?.email },
+        authCtx?.token,
+        orgId,
+      );
+      const callerHrId = hrEmployee ? String(hrEmployee._id || hrEmployee.id) : null;
+      if (!callerHrId || callerHrId !== String(payslip.employeeId)) {
+        throw new ForbiddenException('You can only download your own payslip.');
+      }
+    }
+
+    const buffer = await this.payslipPdfService.render(payslip);
+    const filename = this.payslipPdfService.filename(payslip);
+    return { buffer, filename };
   }
 
   // ===========================================================================
@@ -1668,6 +2412,26 @@ export class PayrollService {
       .sort({ financialYear: -1 });
   }
 
+  /**
+   * Admin-only list of all investment declarations in the org, used by
+   * the verify UI (#15). Supports filtering by `status` (submitted,
+   * verified, rejected) and `financialYear` so HR can focus on the
+   * queue for the current cycle.
+   */
+  async getAllDeclarations(
+    orgId: string,
+    filters: { status?: string; financialYear?: string } = {},
+  ): Promise<IInvestmentDeclaration[]> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const filter: any = { organizationId: orgId, isDeleted: false };
+    if (filters.status) filter.status = filters.status;
+    if (filters.financialYear) filter.financialYear = filters.financialYear;
+    return this.investmentDeclarationModel
+      .find(filter)
+      .sort({ submittedAt: -1, createdAt: -1 })
+      .limit(500);
+  }
+
   // ===========================================================================
   // 24. getDeclaration
   // ===========================================================================
@@ -1747,7 +2511,11 @@ export class PayrollService {
   // ===========================================================================
   async verifyDeclaration(
     id: string,
-    body: { verified: boolean; remarks?: string },
+    body: {
+      verified: boolean;
+      remarks?: string;
+      items?: Array<{ section: string; itemIndex: number; verifiedAmount: number }>;
+    },
     userId: string,
     orgId: string,
   ): Promise<IInvestmentDeclaration> {
@@ -1761,21 +2529,42 @@ export class PayrollService {
     }
 
     if (body.verified) {
+      // Apply per-item edits first (the admin UI typically adjusts amounts
+      // down to what the proofs actually support). Old code ignored these
+      // — the UI input fields were decorative. Cap at declaredAmount so
+      // HR can't accidentally verify more than the employee claimed,
+      // which would tip the TDS projection negative.
+      if (Array.isArray(body.items) && body.items.length > 0) {
+        for (const edit of body.items) {
+          const section = declaration.sections.find((s) => s.section === edit.section);
+          if (!section) continue;
+          const item = section.items[edit.itemIndex];
+          if (!item) continue;
+          const clamped = Math.max(0, Math.min(edit.verifiedAmount, item.declaredAmount));
+          item.verifiedAmount = clamped;
+        }
+        declaration.markModified('sections');
+      }
+
       declaration.status = 'verified';
       declaration.verifiedAt = new Date();
       declaration.verifiedBy = userId;
 
-      // Calculate totalVerified from all items
+      // Recompute totalVerified from the (now-updated) items. Falls
+      // back to declaredAmount only for items the admin didn't edit
+      // AND where no verifiedAmount exists — matches the legacy
+      // "accept as declared" default.
       let totalVerified = 0;
       for (const section of declaration.sections) {
         for (const item of section.items) {
-          totalVerified += item.verifiedAmount || item.declaredAmount;
+          totalVerified +=
+            item.verifiedAmount > 0 ? item.verifiedAmount : item.declaredAmount;
         }
       }
       declaration.totalVerified = totalVerified;
 
       this.logger.log(
-        `Investment declaration ${id} verified by user ${userId}. Total verified: ${totalVerified}`,
+        `Investment declaration ${id} verified by user ${userId}. Total verified: ₹${totalVerified.toLocaleString('en-IN')}${body.items?.length ? ` (${body.items.length} per-item edits applied)` : ''}`,
       );
     } else {
       declaration.status = 'rejected';
@@ -2677,8 +3466,12 @@ export class PayrollService {
     if (!orgId) throw new ForbiddenException('Organization context required');
     const offboarding = await this.getOffboarding(employeeId, userId, orgId);
 
-    // Fetch salary structure to get monthly salary
-    const salaryFilter: any = { employeeId, isActive: true, isDeleted: false };
+    // Fetch salary structure to get monthly salary + component breakdown.
+    // Filter by `status:'active'` (what processPayrollRun and the CRUD
+    // flow actually set) — an earlier implementation here used
+    // `isActive:true` which is a stale field name not populated on
+    // seeded/imported structures, so F&F silently ran with gross=0.
+    const salaryFilter: any = { employeeId, status: 'active', isDeleted: false };
     salaryFilter.organizationId = orgId;
     const salaryStructure = await this.salaryStructureModel.findOne(salaryFilter).sort({ effectiveFrom: -1 });
 
@@ -2691,14 +3484,54 @@ export class PayrollService {
     const daysWorked = lastWorkingDate.getDate();
     const basicDue = Math.round((monthlySalary * daysWorked) / daysInMonth);
 
-    // Leave encashment (mock: assume 15 days leave balance)
-    const leaveBalance = 15;
-    const leaveEncashment = dailySalary * leaveBalance;
+    // Shared payroll primitives for both leave encashment (#13) and
+    // gratuity (#12). Gratuity and encashment both key off basic+DA
+    // rather than gross — HRA/allowances don't encash and aren't in
+    // the gratuity formula. Fetch the HR employee doc once here for
+    // its `userId` (auth id, needed to call leave-service) and
+    // `joiningDate` (needed for gratuity tenure).
+    const components = salaryStructure?.components || [];
+    const basicMonthly = this.componentMonthly(components, ['BASIC', 'basic']);
+    const daMonthly = this.componentMonthly(components, ['DA', 'da']);
+    const employee = await this.externalServices.getEmployee(
+      employeeId,
+      undefined,
+      orgId,
+    );
+    const joiningDate = employee?.joiningDate
+      ? new Date(employee.joiningDate)
+      : null;
 
-    // Gratuity: if >5 years service (mock: assume eligible, 5 years)
-    // Gratuity = (last drawn salary x 15 x years of service) / 26
-    const yearsOfService = 5; // Mock value
-    const gratuity = yearsOfService >= 5 ? Math.round((monthlySalary * 15 * yearsOfService) / 26) : 0;
+    // Leave encashment (#13) — real unused-balance encashment pulled
+    // from leave-service, filtered to leave types flagged `encashable`
+    // on the current leave policy. Uses (basic+DA)/30 as the per-day
+    // rate (Indian convention; gross/30 would over-pay by including
+    // HRA/allowances, which most orgs don't encash). Falls back to
+    // zero with a persisted note if leave-service is unreachable or
+    // the employee has no balance record — safer than the old
+    // hardcoded 15 days that fired for literally every F&F.
+    const leaveEncashmentDetail = await this.computeLeaveEncashmentDetail(
+      employee,
+      basicMonthly,
+      daMonthly,
+      lastWorkingDate,
+      orgId,
+    );
+    const leaveEncashment = leaveEncashmentDetail.totalAmount;
+
+    // Gratuity (#12) — Payment of Gratuity Act 1972, auto-computed from
+    // real tenure + last-drawn basic+DA with statutory ₹20 lakh cap.
+    // Was previously hardcoded `yearsOfService = 5; // Mock value` so
+    // every F&F got the same number regardless of actual service length
+    // or basic wage.
+    const gratuityDetail = this.computeGratuityDetail(
+      basicMonthly,
+      daMonthly,
+      joiningDate,
+      lastWorkingDate,
+      offboarding.type,
+    );
+    const gratuity = gratuityDetail.amount;
 
     // Notice recovery
     const noticeRecovery = offboarding.noticePeriodShortfall > 0
@@ -2714,8 +3547,10 @@ export class PayrollService {
     offboarding.fnfSettlement = {
       basicDue,
       leaveEncashment,
+      leaveEncashmentDetail,
       bonusDue,
       gratuity,
+      gratuityDetail,
       pendingReimbursements,
       noticeRecovery,
       otherDeductions,
@@ -2732,14 +3567,278 @@ export class PayrollService {
       offboarding.status = 'fnf_processing';
     }
 
+    const gratuityNote = gratuityDetail.eligible
+      ? `gratuity ₹${gratuity.toLocaleString('en-IN')} for ${gratuityDetail.yearsOfService} yr (${gratuityDetail.eligibleReason})${gratuityDetail.capped ? ', capped at ₹20L' : ''}`
+      : `gratuity ₹0 (${gratuityDetail.ineligibleReason})`;
+    const encashmentNote =
+      `leave encashment ₹${leaveEncashment.toLocaleString('en-IN')} ` +
+      `(${leaveEncashmentDetail.totalEncashableDays}d × ₹${leaveEncashmentDetail.perDayRate}/d, source=${leaveEncashmentDetail.source}${leaveEncashmentDetail.note ? `: ${leaveEncashmentDetail.note}` : ''})`;
     offboarding.auditTrail.push({
       action: 'fnf_calculated',
       performedBy: userId,
       performedAt: new Date(),
-      notes: `F&F calculated: total payable = ${Math.max(0, totalPayable)}`,
+      notes: `F&F calculated: total payable = ₹${Math.max(0, totalPayable).toLocaleString('en-IN')}, ${encashmentNote}, ${gratuityNote}`,
     });
 
     return offboarding.save();
+  }
+
+  // ===========================================================================
+  // Leave encashment helpers (#13)
+  // ===========================================================================
+
+  /**
+   * Compute per-bucket leave encashment for F&F.
+   *
+   * Formula per bucket: `available × (basic + DA) / 30`
+   * Only buckets flagged `encashable: true` on the current leave policy
+   * contribute. Non-encashable types appear in the breakdown with
+   * `includedDays: 0` so HR can see them and explain to the employee
+   * "your casual leave balance exists but your policy says it isn't
+   * encashable at exit."
+   *
+   * Per-day rate denominator is 30 (calendar days, standard Indian
+   * convention for leave encashment). Gratuity uses /26 (working days).
+   * Not a typo — these two statutory calcs use different denominators
+   * per Payment of Wages / Gratuity Act conventions.
+   *
+   * Fallback: if leave-service is unreachable OR the employee has no
+   * balance record OR the user's HR row lacks an auth `userId` join,
+   * returns an empty breakdown with `source: 'fallback'` and a
+   * human-readable `note` so HR knows to enter the number manually
+   * rather than trusting a silent zero.
+   */
+  async computeLeaveEncashmentDetail(
+    employee: any,
+    basicMonthly: number,
+    daMonthly: number,
+    lastWorkingDate: Date,
+    orgId: string,
+  ): Promise<{
+    source: 'leave_service' | 'fallback';
+    perDayRate: number;
+    monthlyWage: number;
+    totalEncashableDays: number;
+    totalAmount: number;
+    buckets: Array<{
+      leaveType: string;
+      availableDays: number;
+      encashable: boolean;
+      includedDays: number;
+      amount: number;
+    }>;
+    note?: string;
+  }> {
+    const monthlyWage = (basicMonthly || 0) + (daMonthly || 0);
+    const perDayRate = monthlyWage > 0 ? Math.round(monthlyWage / 30) : 0;
+
+    // Auth user id — LeaveBalance is keyed by this, not by HR _id.
+    const authUserId = employee?.userId;
+    if (!authUserId) {
+      return {
+        source: 'fallback',
+        perDayRate,
+        monthlyWage,
+        totalEncashableDays: 0,
+        totalAmount: 0,
+        buckets: [],
+        note: 'No auth userId on HR record — cannot look up leave balance',
+      };
+    }
+
+    const year = lastWorkingDate.getFullYear();
+    const raw = await this.externalServices.getLeaveBalanceForEncashment(
+      authUserId,
+      year,
+      undefined,
+      orgId,
+    );
+
+    if (!raw || !Array.isArray(raw.balances)) {
+      return {
+        source: 'fallback',
+        perDayRate,
+        monthlyWage,
+        totalEncashableDays: 0,
+        totalAmount: 0,
+        buckets: [],
+        note: 'Leave-service returned no balance — F&F encashment set to zero, HR should verify manually',
+      };
+    }
+
+    const buckets = raw.balances.map((b: any) => {
+      const availableDays = Number(b.available) || 0;
+      const encashable = !!b.encashable;
+      const includedDays = encashable ? availableDays : 0;
+      const amount = Math.round(includedDays * perDayRate);
+      return {
+        leaveType: String(b.leaveType),
+        availableDays,
+        encashable,
+        includedDays,
+        amount,
+      };
+    });
+
+    const totalEncashableDays = buckets.reduce(
+      (sum: number, b: any) => sum + b.includedDays,
+      0,
+    );
+    const totalAmount = buckets.reduce(
+      (sum: number, b: any) => sum + b.amount,
+      0,
+    );
+
+    return {
+      source: 'leave_service',
+      perDayRate,
+      monthlyWage,
+      totalEncashableDays,
+      totalAmount,
+      buckets,
+    };
+  }
+
+  // ===========================================================================
+  // Gratuity (Payment of Gratuity Act 1972) helpers
+  // ===========================================================================
+
+  /**
+   * Pull a monthly component amount by code match. Used to extract
+   * BASIC and DA out of the salary structure components for the
+   * gratuity formula (basic + DA, per Act §2(s) "wages").
+   */
+  private componentMonthly(components: any[], codes: string[]): number {
+    const match = components.find((c) => codes.includes(c.code));
+    return match?.monthlyAmount || 0;
+  }
+
+  /**
+   * Compute gratuity per Payment of Gratuity Act 1972 §4.
+   *
+   * Formula: (basic + DA) × 15 / 26 × completedYears
+   *
+   * Rules encoded here:
+   *   - Minimum 5 years of continuous service required, EXCEPT on
+   *     death, disability, or retirement where the threshold is waived
+   *     (§4(1) proviso). We honour death/disability/retirement/contract_end
+   *     as statutory exceptions; resignation/termination/mutual need
+   *     the 5-year floor.
+   *   - "Completed years": raw months ÷ 12, with a partial year ≥ 6
+   *     months rounding up (consistent common-law interpretation).
+   *   - ₹20 lakh cap per 2018 amendment. Capped amount is flagged so
+   *     the employee can see that the formula ran but the statutory
+   *     ceiling clipped the result.
+   *   - `basic + DA` — NOT gross. The old engine used `grossSalary`
+   *     which inflates the number by ~2-3×.
+   *
+   * Returns a full breakdown block that's persisted on the F&F doc so
+   * HR, the employee, and an auditor can all see why the number is
+   * what it is.
+   */
+  computeGratuityDetail(
+    basicMonthly: number,
+    daMonthly: number,
+    joiningDate: Date | null,
+    lastWorkingDate: Date,
+    offboardingType: string,
+  ): {
+    eligible: boolean;
+    eligibleReason?: string;
+    ineligibleReason?: string;
+    yearsOfService: number;
+    rawMonthsOfService: number;
+    monthlyWage: number;
+    computed: number;
+    amount: number;
+    capped: boolean;
+    cap: number;
+  } {
+    const CAP = 2_000_000; // ₹20 lakh (2018 amendment)
+    const monthlyWage = (basicMonthly || 0) + (daMonthly || 0);
+
+    if (!joiningDate) {
+      return {
+        eligible: false,
+        ineligibleReason: 'Joining date unavailable — HR record incomplete',
+        yearsOfService: 0,
+        rawMonthsOfService: 0,
+        monthlyWage,
+        computed: 0,
+        amount: 0,
+        capped: false,
+        cap: CAP,
+      };
+    }
+
+    // Raw months of service. `lastWorkingDate` is the employee's
+    // effective end; we count from joining through (and including) it.
+    const rawMonths =
+      (lastWorkingDate.getFullYear() - joiningDate.getFullYear()) * 12 +
+      (lastWorkingDate.getMonth() - joiningDate.getMonth()) +
+      (lastWorkingDate.getDate() >= joiningDate.getDate() ? 0 : -1);
+
+    // Completed years with ≥6-month rounding.
+    const wholeYears = Math.floor(rawMonths / 12);
+    const residualMonths = rawMonths - wholeYears * 12;
+    const yearsOfService =
+      residualMonths >= 6 ? wholeYears + 1 : wholeYears;
+
+    // Eligibility. Death/disability/retirement waive the 5-year floor
+    // per §4(1) proviso. `contract_end` also gets the waiver because
+    // fixed-term workers who complete the contract are treated as
+    // qualifying separations. `resignation`, `termination`,
+    // `mutual_separation` → full 5-year floor applies.
+    const waiverTypes = new Set(['death', 'disability', 'retirement', 'contract_end']);
+    const isWaiver = waiverTypes.has(offboardingType);
+    const meetsThreshold = yearsOfService >= 5;
+
+    if (!meetsThreshold && !isWaiver) {
+      return {
+        eligible: false,
+        ineligibleReason: `Tenure ${yearsOfService} yr < 5 yr minimum (Payment of Gratuity Act §4(1))`,
+        yearsOfService,
+        rawMonthsOfService: rawMonths,
+        monthlyWage,
+        computed: 0,
+        amount: 0,
+        capped: false,
+        cap: CAP,
+      };
+    }
+
+    if (monthlyWage <= 0) {
+      return {
+        eligible: false,
+        ineligibleReason: 'No basic/DA on salary structure — cannot compute wage',
+        yearsOfService,
+        rawMonthsOfService: rawMonths,
+        monthlyWage,
+        computed: 0,
+        amount: 0,
+        capped: false,
+        cap: CAP,
+      };
+    }
+
+    // Formula
+    const computed = Math.round((monthlyWage * 15 * yearsOfService) / 26);
+    const capped = computed > CAP;
+    const amount = Math.min(computed, CAP);
+
+    return {
+      eligible: true,
+      eligibleReason: isWaiver && !meetsThreshold
+        ? `${offboardingType} — 5-year threshold waived per §4(1) proviso`
+        : `${yearsOfService} yr of continuous service`,
+      yearsOfService,
+      rawMonthsOfService: rawMonths,
+      monthlyWage,
+      computed,
+      amount,
+      capped,
+      cap: CAP,
+    };
   }
 
   async approveFnF(
@@ -2778,19 +3877,98 @@ export class PayrollService {
     if (!orgId) throw new ForbiddenException('Organization context required');
     const offboarding = await this.getOffboarding(employeeId, userId, orgId);
 
-    // Placeholder URLs — in production these would be generated PDFs
+    // The actual PDFs are rendered on-demand by the download endpoints
+    // (same pattern as payslips). We store the stable relative URL that
+    // the frontend can call — no file storage, no stale artefacts if the
+    // employee's department or the org's name is updated later.
     offboarding.experienceLetterGenerated = true;
-    offboarding.experienceLetterUrl = `/documents/experience-letter/${employeeId}-${Date.now()}.pdf`;
-    offboarding.relievingLetterUrl = `/documents/relieving-letter/${employeeId}-${Date.now()}.pdf`;
+    offboarding.experienceLetterUrl = `/api/v1/offboarding/${employeeId}/letters/experience`;
+    offboarding.relievingLetterUrl = `/api/v1/offboarding/${employeeId}/letters/relieving`;
 
     offboarding.auditTrail.push({
       action: 'letters_generated',
       performedBy: userId,
       performedAt: new Date(),
-      notes: 'Experience letter and relieving letter generated',
+      notes: 'Experience + relieving letter endpoints enabled',
     });
 
     return offboarding.save();
+  }
+
+  // ===========================================================================
+  // generateOffboardingLetterPdf
+  //
+  // Renders Experience or Relieving letter on-demand. No file storage —
+  // every download regenerates from current DB state so any correction
+  // (typo in name, fixed last-working-day) is reflected immediately.
+  //
+  // Authorization:
+  //   - admin / hr / owner / super_admin → always allowed
+  //   - the ex-employee themselves → allowed (resolved via HR row)
+  //   - anyone else → 403
+  // ===========================================================================
+  async generateOffboardingLetterPdf(
+    employeeId: string,
+    kind: LetterKind,
+    userId: string,
+    orgId: string,
+    authCtx?: { email?: string; token?: string; isPrivileged?: boolean },
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+
+    const offboarding = await this.getOffboarding(employeeId, userId, orgId);
+    if (!offboarding) throw new NotFoundException('Offboarding record not found');
+
+    // Fetch employee details. `offboarding.employeeId` is the business id
+    // (e.g. "NXR-0003"). `externalServices.getEmployee` now transparently
+    // resolves either an ObjectId or a business id so we don't have to
+    // care here.
+    const empData = await this.externalServices.getEmployee(employeeId, authCtx?.token, orgId);
+    const empHrId = empData ? String(empData._id || empData.id) : null;
+
+    if (!authCtx?.isPrivileged) {
+      const caller = await this.externalServices.getEmployeeByUserIdentity(
+        { userId, email: authCtx?.email },
+        authCtx?.token,
+        orgId,
+      );
+      const callerHrId = caller ? String(caller._id || caller.id) : null;
+      if (!callerHrId || !empHrId || callerHrId !== empHrId) {
+        throw new ForbiddenException('You can only download your own offboarding letters');
+      }
+    }
+
+    const orgDetails = await this.externalServices.getOrgDetails(orgId, authCtx?.token);
+    const organization = orgDetails
+      ? {
+          name: orgDetails.companyName || orgDetails.name,
+          address: orgDetails.registeredAddress || orgDetails.address,
+          pan: orgDetails.pan,
+          tan: orgDetails.tan,
+          logo: orgDetails.logo,
+        }
+      : null;
+
+    const employeeForLetter = empData
+      ? {
+          firstName: empData.firstName,
+          lastName: empData.lastName,
+          employeeId: empData.employeeId,
+          designationName: empData.designationName || empData.designation || null,
+          departmentName: empData.departmentName || empData.department || null,
+          joiningDate: empData.joiningDate,
+        }
+      : null;
+
+    const ctx = {
+      offboarding,
+      employee: employeeForLetter,
+      organization,
+      issuer: null, // future: pull authorised signatory from org settings
+    };
+    const buffer = await this.offboardingLetterPdfService.render(kind, ctx);
+    const filename = this.offboardingLetterPdfService.filename(kind, ctx);
+    return { buffer, filename };
   }
 
   async updateOffboardingStatus(
@@ -2822,6 +4000,147 @@ export class PayrollService {
   // EMPLOYEE LOANS
   // ===========================================================================
 
+  /**
+   * Internal — list the loan deductions due for an employee on a given
+   * pay period. Returns one row per active loan with a pending
+   * installment whose `dueMonth` + `dueYear` match the run. The
+   * `principal` field is denormalised here so the post-save write-back
+   * can decrement outstandingBalance correctly without re-reading the
+   * loan.
+   *
+   * Read-only: callers must invoke `applyLoanDeductionsAfterPayroll`
+   * after the payroll entry saves to actually mark the installments
+   * deducted and update balances. Splitting read from write means a
+   * compute failure (rare but possible — bad shift policy, etc.)
+   * doesn't leave the loan ledger drifted.
+   */
+  private async findLoanDeductionsForPayrollPeriod(
+    employeeId: string,
+    orgId: string,
+    month: number,
+    year: number,
+  ): Promise<Array<{
+    loanId: string;
+    loanNumber: string;
+    emiAmount: number;
+    principal: number;
+    remainingBalance: number;
+    installmentNumber: number;
+    isFinalInstallment: boolean;
+  }>> {
+    // Both 'disbursed' and 'active' have running EMIs. The legacy
+    // disbursement path flips status straight to 'active' but we
+    // accept both to be defensive against partially-migrated data.
+    const loans = await this.employeeLoanModel.find({
+      organizationId: orgId,
+      employeeId,
+      status: { $in: ['active', 'disbursed'] },
+      isDeleted: false,
+    }).lean();
+
+    const out: Array<{
+      loanId: string;
+      loanNumber: string;
+      emiAmount: number;
+      principal: number;
+      remainingBalance: number;
+      installmentNumber: number;
+      isFinalInstallment: boolean;
+    }> = [];
+    for (const loan of loans) {
+      const inst = (loan.schedule || []).find(
+        (s) => s.dueMonth === month && s.dueYear === year && s.status === 'pending',
+      );
+      if (!inst) continue;
+      // Don't deduct more than the outstanding balance — guards
+      // against rounding drift on the final installment of an
+      // interest-bearing loan where the EMI was rounded but the
+      // schedule's final principal absorbed the remainder.
+      const cappedEmi = Math.min(inst.emiAmount, loan.outstandingBalance);
+      out.push({
+        loanId: String(loan._id),
+        loanNumber: loan.loanNumber,
+        emiAmount: cappedEmi,
+        principal: Math.min(inst.principal, loan.outstandingBalance),
+        remainingBalance: loan.outstandingBalance,
+        installmentNumber: inst.installmentNumber,
+        isFinalInstallment: inst.installmentNumber >= loan.tenure,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Internal — write-back companion to findLoanDeductionsForPayrollPeriod.
+   * For each deduction:
+   *   • flip the matching installment to status='deducted', stamping
+   *     the payroll run id + deductedAt timestamp;
+   *   • decrement outstandingBalance by the installment's principal
+   *     (interest never reduces principal);
+   *   • close the loan when the balance hits zero or the final
+   *     installment was just deducted.
+   *
+   * Failures inside this helper are logged but never rethrown — at
+   * this point the payroll entry is already saved. A failure here
+   * results in the loan ledger being temporarily out of sync with
+   * what the payslip shows; ops can reconcile via the audit trail.
+   */
+  private async applyLoanDeductionsAfterPayroll(
+    deductions: Array<{
+      loanId: string;
+      loanNumber: string;
+      emiAmount: number;
+      principal: number;
+      installmentNumber: number;
+      isFinalInstallment: boolean;
+    }>,
+    payrollRunId: string,
+  ): Promise<void> {
+    for (const d of deductions) {
+      try {
+        const loan = await this.employeeLoanModel.findById(d.loanId);
+        if (!loan) continue;
+        const inst = (loan.schedule || []).find(
+          (s) => s.installmentNumber === d.installmentNumber && s.status === 'pending',
+        );
+        if (!inst) {
+          // Race: another concurrent payroll run took this installment.
+          // Logging here lets ops catch double-deduction risks early.
+          this.logger.warn(
+            `Loan ${loan.loanNumber} installment ${d.installmentNumber} no longer pending — skipping write-back`,
+          );
+          continue;
+        }
+        inst.status = 'deducted';
+        inst.payrollRunId = payrollRunId;
+        inst.deductedAt = new Date();
+        loan.outstandingBalance = Math.max(0, loan.outstandingBalance - d.principal);
+        // Auto-close: either the balance ran out or this was the last
+        // installment. Either signal is enough to flip status →
+        // 'closed' so the loan stops appearing in active queries.
+        if (loan.outstandingBalance <= 0 || d.isFinalInstallment) {
+          loan.status = 'closed';
+          loan.closedAt = new Date();
+          // Mark any still-pending future installments as 'skipped' so
+          // downstream reports don't suggest they're outstanding. Edge
+          // case: a closed-before-final-installment scenario (large
+          // prepayment) — skipping the rest is the right semantic.
+          for (const s of loan.schedule) {
+            if (s.status === 'pending') s.status = 'skipped';
+          }
+          this.logger.log(
+            `Loan ${loan.loanNumber} closed after payroll run ${payrollRunId} (final installment or full repayment)`,
+          );
+        }
+        await loan.save();
+      } catch (err) {
+        this.logger.warn(
+          `Loan write-back failed for ${d.loanNumber}: ${(err as any)?.message || err}`,
+        );
+      }
+    }
+  }
+
   async applyLoan(
     dto: ApplyLoanDto,
     userId: string,
@@ -2841,6 +4160,56 @@ export class PayrollService {
       throw new ConflictException(
         `You already have an active ${dto.type.replace(/_/g, ' ')} (${existingLoan.loanNumber}). Please close it before applying for a new one.`,
       );
+    }
+
+    // ── Eligibility: cap loan against the employee's gross monthly
+    // salary. The default cap of 12× monthly gross matches a typical
+    // RBI-aligned employer-loan ceiling (1× annual gross). Without
+    // this guard, the system would happily approve a ₹50L loan for
+    // someone earning ₹30K/month, then deduct ridiculous EMIs that
+    // bottom the paycheck. Salary advances are stricter — capped at
+    // 1× monthly gross since they're meant for cash-flow gaps, not
+    // long-term borrowing. Falls back to ctc/12 when the structure
+    // doesn't have grossSalary computed (older seeded data).
+    //
+    // Salary structures are keyed by HR `_id`, but `userId` here is
+    // the auth user id — different IDs (canonical-ID-resolver pattern).
+    // We resolve the HR record first, then look up the structure by
+    // its `_id`. If the user has no HR record (rare, e.g. orphaned
+    // login), we skip the cap silently — better to allow the loan
+    // application than block legitimate cases on a directory glitch.
+    let hrRecord: any = null;
+    try {
+      hrRecord = await this.externalServices.getEmployeeByUserIdentity(
+        { userId },
+        undefined,
+        orgId,
+      );
+    } catch {
+      hrRecord = null;
+    }
+    const hrEmployeeId = hrRecord?._id ? String(hrRecord._id) : null;
+    if (hrEmployeeId) {
+      const activeStructure = await this.salaryStructureModel
+        .findOne({
+          employeeId: hrEmployeeId,
+          organizationId: orgId,
+          status: 'active',
+          isDeleted: false,
+        })
+        .sort({ effectiveFrom: -1 })
+        .lean();
+      if (activeStructure) {
+        const ss = activeStructure as any;
+        const monthlyGross = ss.grossSalary || (ss.ctc ? ss.ctc / 12 : 0);
+        const cap = dto.type === 'salary_advance' ? monthlyGross : monthlyGross * 12;
+        if (cap > 0 && dto.amount > cap) {
+          const capLabel = dto.type === 'salary_advance' ? '1× monthly gross' : '12× monthly gross';
+          throw new ConflictException(
+            `Loan amount ₹${dto.amount.toLocaleString('en-IN')} exceeds the ${capLabel} cap of ₹${Math.round(cap).toLocaleString('en-IN')} for this loan type. Apply for a lower amount or contact HR.`,
+          );
+        }
+      }
     }
 
     // Generate loan number: LOAN-YYYY-NNN (with atomic retry on duplicate)
@@ -3153,6 +4522,13 @@ export class PayrollService {
     });
 
     return {
+      // Field names aligned with the analytics page (#18): frontend
+      // expected `totalEmployees` / `monthlyPayrollCost` and fell back
+      // to 0 when the backend returned `headcount` / `payrollCost`,
+      // leaving the dashboard cards blank. Kept the legacy keys too
+      // so any consumer that migrated on its own doesn't break.
+      totalEmployees,
+      monthlyPayrollCost: totalPayrollCost,
       headcount: totalEmployees,
       payrollCost: totalPayrollCost,
       attritionRate,
@@ -3361,7 +4737,16 @@ export class PayrollService {
         status: 'active',
         isDeleted: false,
       });
-      return { current, forecast: [] };
+      // Same field-aliases as the normal return path — empty-org response
+      // should still carry the new shape so the frontend cards don't flip
+      // to 0 on first load before snapshots exist.
+      return {
+        currentHeadcount: current,
+        upcomingExits: 0,
+        projections: [],
+        current,
+        forecast: [],
+      };
     }
 
     const ordered = [...snapshots].reverse();
@@ -3396,7 +4781,18 @@ export class PayrollService {
       });
     }
 
-    return { current, forecast };
+    // Field names aligned with the analytics page (#18). Frontend
+    // expected `currentHeadcount` / `upcomingExits` / `projections`;
+    // old response leaked `current` / `forecast` (and omitted the
+    // computed `knownExits` entirely), so forecast cards read 0.
+    // Emit both shapes so older consumers don't regress.
+    return {
+      currentHeadcount: current,
+      upcomingExits: knownExits,
+      projections: forecast,
+      current,
+      forecast,
+    };
   }
 
   // ===========================================================================
@@ -3857,7 +5253,13 @@ export class PayrollService {
 
     const parsed = await this.externalServices.parseResume(dto.resumeText);
     if (!parsed) {
-      throw new BadRequestException('Failed to parse resume. AI service may be unavailable.');
+      // 503 (not 400) so the frontend can tell "try again" from
+      // "your input is bad". Retry is the right UX on a cold model
+      // load (~20s) or transient infra blip; the caller shouldn't
+      // be asked to "fix their resume".
+      throw new ServiceUnavailableException(
+        'AI resume parser is temporarily unavailable. Please retry in a moment, or add the candidate manually.',
+      );
     }
 
     // If jobPostingId provided, compute match score
@@ -3939,9 +5341,14 @@ export class PayrollService {
   ): Promise<any> {
     if (!orgId) throw new ForbiddenException('Organization context required');
 
-    // Parse resume
+    // Parse resume — 503 on AI outage so the caller can retry; old
+    // 400 made it look like a validation error on the resume text.
     const parsed = await this.externalServices.parseResume(dto.resumeText);
-    if (!parsed) throw new BadRequestException('Failed to parse resume');
+    if (!parsed) {
+      throw new ServiceUnavailableException(
+        'AI resume parser is temporarily unavailable. Please retry in a moment, or add the candidate manually.',
+      );
+    }
 
     // Compute match score
     const job = await this.jobPostingModel.findOne({
@@ -4120,8 +5527,53 @@ export class PayrollService {
       throw new BadRequestException('Offer must be accepted before converting to employee. Current offer status: ' + (candidate.offer?.status || 'none'));
     }
 
-    // Generate a placeholder employee ID (in production, would call HR service)
-    const employeeId = `EMP-${Date.now()}`;
+    // #17 — create a real hr-service Employee instead of a
+    // `EMP-${Date.now()}` placeholder. Without this, the onboarding
+    // flow couldn't find the new hire (its EmployeePicker reads from
+    // hr-service) and payroll had no structure to run against. Split
+    // the candidate's name into first/last at the last whitespace —
+    // a reasonable default for the common "First M. Last" pattern;
+    // HR admin can edit later. Falls back to the placeholder id only
+    // if hr-service is unreachable, so the conversion state doesn't
+    // deadlock on an infra outage.
+    const fullName = (candidate.name || 'New Hire').trim();
+    const lastSpace = fullName.lastIndexOf(' ');
+    const firstName = lastSpace > 0 ? fullName.slice(0, lastSpace) : fullName;
+    const lastName = lastSpace > 0 ? fullName.slice(lastSpace + 1) : '';
+
+    const joiningDate =
+      candidate.offer.joiningDate instanceof Date
+        ? candidate.offer.joiningDate.toISOString()
+        : new Date(candidate.offer.joiningDate as any).toISOString();
+
+    const hrEmployee = await this.externalServices.createHrEmployee(
+      {
+        firstName,
+        lastName,
+        email: candidate.email,
+        phone: candidate.phone,
+        joiningDate,
+        // Offer carries the target designation as free-text; HR service
+        // also accepts a designationId if the org has a designations
+        // catalog. Passing neither is valid — HR admin fills it in
+        // during onboarding.
+      },
+      undefined,
+      orgId,
+    );
+
+    let employeeId: string;
+    if (hrEmployee?._id || hrEmployee?.id) {
+      employeeId = String(hrEmployee._id || hrEmployee.id);
+      this.logger.log(
+        `Candidate ${id} converted to HR employee ${employeeId} (bizId=${hrEmployee.employeeId || 'pending'})`,
+      );
+    } else {
+      employeeId = `EMP-${Date.now()}`;
+      this.logger.warn(
+        `Candidate ${id} converted but hr-service was unreachable — stored placeholder ${employeeId}; HR must reconcile manually`,
+      );
+    }
     candidate.convertedToEmployeeId = employeeId;
     candidate.status = 'hired';
 
@@ -4490,8 +5942,24 @@ export class PayrollService {
         isDeleted: false,
       });
 
-      const uan = slip?.employeeSnapshot?.uan || null;
-      const name = slip?.employeeSnapshot?.name || null;
+      // Prefer payslip snapshot; fall back to hr-service when no
+      // payslip exists yet so the ECR isn't silently empty for orgs
+      // that haven't run the "generate payslips" step. UAN is the
+      // mandatory key for EPFO — any row without one is dropped by
+      // the exporter and logged.
+      let uan = slip?.employeeSnapshot?.uan || null;
+      let name = slip?.employeeSnapshot?.name || null;
+      if (!uan || !name) {
+        const emp = await this.externalServices.getEmployee(
+          entry.employeeId,
+          undefined,
+          orgId,
+        );
+        if (emp) {
+          uan = uan || emp.uan || null;
+          name = name || `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || null;
+        }
+      }
 
       // EPFO split: 8.33% to EPS (capped at ceiling), rest to EPF
       const pfEmployer = entry.statutory?.pfEmployer || 0;
@@ -4620,9 +6088,29 @@ export class PayrollService {
         isDeleted: false,
       });
 
+      // Payslip snapshot first, hr-service fallback — same reason as
+      // PF ECR: the ESI return is useless if the IP number / name
+      // columns are blank, and payslips are an optional post-step.
+      let ipNumber = slip?.employeeSnapshot?.esiNumber || null;
+      let memberName = slip?.employeeSnapshot?.name || null;
+      if (!ipNumber || !memberName) {
+        const emp = await this.externalServices.getEmployee(
+          entry.employeeId,
+          undefined,
+          orgId,
+        );
+        if (emp) {
+          ipNumber = ipNumber || emp.esiNumber || null;
+          memberName =
+            memberName ||
+            `${emp.firstName || ''} ${emp.lastName || ''}`.trim() ||
+            null;
+        }
+      }
+
       rows.push({
-        ipNumber: slip?.employeeSnapshot?.esiNumber || null,
-        memberName: slip?.employeeSnapshot?.name || null,
+        ipNumber,
+        memberName,
         employeeId: entry.employeeId,
         numberOfDays:
           (entry.attendance?.presentDays || 0) +
@@ -4749,15 +6237,34 @@ export class PayrollService {
     for (const entry of entries) {
       let agg = perEmployee.get(entry.employeeId);
       if (!agg) {
+        // Prefer payslip snapshot (fast, already-joined), fall back to
+        // hr-service when no payslip has been generated yet — otherwise
+        // the 24Q export renders with blank PAN/Name columns because
+        // payslips are an optional downstream of the run.
         const slip = await this.payslipModel.findOne({
           organizationId: orgId,
           employeeId: entry.employeeId,
           isDeleted: false,
         }).sort({ 'payPeriod.year': -1, 'payPeriod.month': -1 });
+        let name = slip?.employeeSnapshot?.name || null;
+        let pan = slip?.employeeSnapshot?.pan || null;
+        if (!name || !pan) {
+          const emp = await this.externalServices.getEmployee(
+            entry.employeeId,
+            undefined,
+            orgId,
+          );
+          if (emp) {
+            name = name || `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || null;
+            // Unmask PAN (payslip-side mask "ABCDE****F" would fail NSDL
+            // validation). HR record holds the real PAN.
+            pan = pan && !pan.includes('****') ? pan : (emp.pan || null);
+          }
+        }
         agg = {
           employeeId: entry.employeeId,
-          name: slip?.employeeSnapshot?.name || null,
-          pan: slip?.employeeSnapshot?.pan || null,
+          name,
+          pan,
           totalSalary: 0,
           totalTDS: 0,
           monthlyBreakup: [],
@@ -4875,6 +6382,84 @@ export class PayrollService {
     });
     if (!report) throw new NotFoundException('Statutory report not found');
     return report;
+  }
+
+  // ===========================================================================
+  // generateStatutoryReportPdf
+  //
+  // Renders the appropriate PDF for a given StatutoryReport, routed by
+  // reportType. Form 16 is employee-specific (the employee themselves
+  // and any admin can download); PF ECR / ESI / TDS 24Q are org-wide
+  // admin-only documents.
+  //
+  // Authorization:
+  //   - PF ECR / ESI / TDS 24Q: controller-level @Roles gates it to
+  //     admin/hr/owner (these are filings for the whole org).
+  //   - Form 16: the owner of the report (employee themself) can also
+  //     download — we resolve their HR row and match report.employeeId.
+  // ===========================================================================
+  async generateStatutoryReportPdf(
+    id: string,
+    userId: string,
+    orgId: string,
+    authCtx?: { email?: string; token?: string; isPrivileged?: boolean },
+  ): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    const report = await this.statutoryReportModel.findOne({
+      _id: id,
+      organizationId: orgId,
+      isDeleted: false,
+    });
+    if (!report) throw new NotFoundException('Statutory report not found');
+
+    // Form 16 self-service check. Non-privileged callers may only download
+    // THEIR OWN Form 16 — resolve their HR row and match against the
+    // report's employeeId. For org-wide reports (PF ECR / ESI / TDS 24Q)
+    // the controller's @Roles decorator already blocked non-admins, so
+    // any non-privileged call that lands here is invalid.
+    if (!authCtx?.isPrivileged) {
+      if (report.reportType !== 'form_16') {
+        throw new ForbiddenException('Only admins / HR can download org-wide statutory reports');
+      }
+      const hrEmployee = await this.externalServices.getEmployeeByUserIdentity(
+        { userId, email: authCtx?.email },
+        authCtx?.token,
+        orgId,
+      );
+      const callerHrId = hrEmployee ? String(hrEmployee._id || hrEmployee.id) : null;
+      if (!callerHrId || callerHrId !== String(report.employeeId)) {
+        throw new ForbiddenException('You can only download your own Form 16');
+      }
+    }
+
+    // Dispatch by report type. Form 16 is a PDF (employee-facing);
+    // org-wide statutory returns (24Q, PF ECR, ESI) are machine-
+    // readable files the admin uploads to the government portal.
+    // contentType + extension are returned so the controller sends
+    // the right headers and browser saves with the right suffix.
+    if (report.reportType === 'form_16') {
+      const buffer = await this.form16PdfService.render(report);
+      return {
+        buffer,
+        filename: this.form16PdfService.filename(report),
+        contentType: 'application/pdf',
+      };
+    }
+
+    // Form 24Q / PF ECR / ESI return — text-file exports for NSDL /
+    // EPFO / ESIC portals. Routed through the dedicated exporter
+    // service so each format's schema lives in one place.
+    if (
+      report.reportType === 'tds_quarterly' ||
+      report.reportType === 'pf_ecr' ||
+      report.reportType === 'esi_return'
+    ) {
+      return this.statutoryExportService.buildFile(report);
+    }
+
+    throw new BadRequestException(
+      `Download not yet implemented for report type "${report.reportType}".`,
+    );
   }
 
   // ===========================================================================

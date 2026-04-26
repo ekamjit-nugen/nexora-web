@@ -57,7 +57,7 @@ export default function PageHistoryPage() {
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="ml-[260px] p-8">
+      <main className="md:ml-[260px] p-8">
         <button onClick={() => router.push(`/wiki/${spaceId}/${pageId}`)}
           className="text-xs text-[#64748B] hover:text-[#2E86C1] mb-4 flex items-center gap-1">
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>

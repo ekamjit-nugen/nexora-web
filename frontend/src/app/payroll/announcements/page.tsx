@@ -58,12 +58,31 @@ interface Announcement {
   expiresAt?: string;
   authorId?: string;
   authorName?: string;
+  // Backend returns `createdBy` (userId string); the author's name is
+  // not joined server-side. Surfaced here so the author-resolution
+  // helper below can look it up client-side against the directory.
+  createdBy?: string;
   targetAudience?: string;
   targetDepartmentId?: string;
   targetEmployeeIds?: string[];
   reactions?: Reaction[];
-  readBy?: string[];
+  // Backend stores `readBy` as `{ userId, readAt }[]` — old frontend
+  // modelled it as `string[]`. The `readByEntry` helper below handles
+  // both legacy string arrays and the current object shape.
+  readBy?: Array<string | { userId?: string; readAt?: string }>;
 }
+
+const readByEntry = (
+  entry: string | { userId?: string; readAt?: string } | undefined,
+): string | undefined => {
+  if (!entry) return undefined;
+  return typeof entry === "string" ? entry : entry.userId;
+};
+
+const hasReadAnnouncement = (a: Announcement, userId?: string): boolean => {
+  if (!userId) return false;
+  return (a.readBy || []).some((e) => readByEntry(e) === userId);
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -133,12 +152,24 @@ export default function AnnouncementsPage() {
   // -------------------------------------------------------------------------
   // Data fetching
   // -------------------------------------------------------------------------
+  // Backend list endpoint returns `{ items, total, page, limit }` inside
+  // `data`; pinned returns a bare array. Old `.announcements` alias never
+  // existed — the fallback `[]` hid the bug so the page silently rendered
+  // empty. Accept all historical shapes.
+  const unwrapList = (res: any): Announcement[] => {
+    const d = res?.data;
+    if (Array.isArray(d)) return d as Announcement[];
+    if (Array.isArray(d?.items)) return d.items as Announcement[];
+    if (Array.isArray(d?.records)) return d.records as Announcement[];
+    if (Array.isArray(d?.announcements)) return d.announcements as Announcement[];
+    return [];
+  };
+
   const fetchAnnouncements = useCallback(async () => {
     if (!user) return;
     try {
       const res = await payrollApi.listAnnouncements({ status: "published" });
-      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.announcements ?? [];
-      setAnnouncements(data as Announcement[]);
+      setAnnouncements(unwrapList(res));
     } catch (err: any) {
       toast.error(err.message || "Failed to load announcements");
     }
@@ -148,8 +179,7 @@ export default function AnnouncementsPage() {
     if (!user) return;
     try {
       const res = await payrollApi.getPinnedAnnouncements();
-      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.announcements ?? [];
-      setPinned(data as Announcement[]);
+      setPinned(unwrapList(res));
     } catch {
       // pinned is optional, ignore errors
     }
@@ -168,6 +198,18 @@ export default function AnnouncementsPage() {
       // ignore
     }
   }, [isManager]);
+
+  // Lookup keyed by auth user _id so `renderCard` can resolve an
+  // announcement's `createdBy`/`authorId` to a first/last name without
+  // an extra request per row.
+  const directoryById = useMemo(() => {
+    const map: Record<string, { firstName?: string; lastName?: string }> = {};
+    for (const u of users) {
+      const id = (u as any)?._id;
+      if (id) map[id] = u as any;
+    }
+    return map;
+  }, [users]);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -286,17 +328,21 @@ export default function AnnouncementsPage() {
   const handleMarkRead = async (id: string) => {
     try {
       await payrollApi.markAnnouncementRead(id);
+      // Optimistic update: push a `{userId, readAt}` entry matching the
+      // backend schema instead of a raw string (which would corrupt the
+      // local cache and flash the "unread" dot back up on refresh).
+      const readEntry = { userId: user?._id || "", readAt: new Date().toISOString() };
       setAnnouncements((prev) =>
         prev.map((a) =>
           a._id === id
-            ? { ...a, readBy: [...(a.readBy || []), user?._id || ""] }
+            ? { ...a, readBy: [...(a.readBy || []), readEntry] }
             : a,
         ),
       );
       setPinned((prev) =>
         prev.map((a) =>
           a._id === id
-            ? { ...a, readBy: [...(a.readBy || []), user?._id || ""] }
+            ? { ...a, readBy: [...(a.readBy || []), readEntry] }
             : a,
         ),
       );
@@ -362,7 +408,7 @@ export default function AnnouncementsPage() {
     const cat = categoryConfig[announcement.category] || categoryConfig.general;
     const pri = priorityConfig[announcement.priority] || priorityConfig.normal;
     const isExpanded = expandedIds.has(announcement._id);
-    const isRead = !!user && (announcement.readBy || []).includes(user._id);
+    const isRead = hasReadAnnouncement(announcement, user?._id);
     const isDraft = announcement.status === "draft";
 
     return (
@@ -454,12 +500,28 @@ export default function AnnouncementsPage() {
 
           <div className="flex items-center gap-3 mt-4 text-[11px] text-[#94A3B8]">
             <span>{formatRelative(announcement.publishedAt || announcement.createdAt)}</span>
-            {announcement.authorName && (
-              <>
-                <span>·</span>
-                <span>by {announcement.authorName}</span>
-              </>
-            )}
+            {(() => {
+              // Backend only returns `createdBy` (userId). The author
+              // name isn't joined server-side, so we resolve via the
+              // directory lookup if it's loaded. Falls back silently
+              // (no "by undefined") when the lookup misses.
+              const explicit = announcement.authorName;
+              const viaLookup = (announcement.authorId || announcement.createdBy)
+                ? directoryById[announcement.authorId || announcement.createdBy || ""]
+                : undefined;
+              const label =
+                explicit ||
+                (viaLookup
+                  ? `${viaLookup.firstName || ""} ${viaLookup.lastName || ""}`.trim()
+                  : undefined);
+              if (!label) return null;
+              return (
+                <>
+                  <span>·</span>
+                  <span>by {label}</span>
+                </>
+              );
+            })()}
             {announcement.expiresAt && (
               <>
                 <span>·</span>
@@ -508,7 +570,7 @@ export default function AnnouncementsPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] flex flex-col min-h-screen">
+      <main className="flex-1 min-w-0 md:ml-[260px] flex flex-col min-h-screen">
         {/* Header */}
         <div className="bg-white border-b border-[#E2E8F0] px-8 py-5 flex items-center justify-between sticky top-0 z-20">
           <div>

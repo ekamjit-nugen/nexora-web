@@ -46,8 +46,8 @@ export default function AssetDetailPage() {
   }, [authLoading, user, assetId]);
 
   if (authLoading || !user) return null;
-  if (loading) return <div className="min-h-screen bg-[#F8FAFC]"><Sidebar user={user} onLogout={logout} /><main className="ml-[260px] p-8"><div className="text-center py-20 text-[#94A3B8]">Loading...</div></main></div>;
-  if (!asset) return <div className="min-h-screen bg-[#F8FAFC]"><Sidebar user={user} onLogout={logout} /><main className="ml-[260px] p-8"><div className="text-center py-20 text-[#94A3B8]">Asset not found</div></main></div>;
+  if (loading) return <div className="min-h-screen bg-[#F8FAFC]"><Sidebar user={user} onLogout={logout} /><main className="md:ml-[260px] p-8"><div className="text-center py-20 text-[#94A3B8]">Loading...</div></main></div>;
+  if (!asset) return <div className="min-h-screen bg-[#F8FAFC]"><Sidebar user={user} onLogout={logout} /><main className="md:ml-[260px] p-8"><div className="text-center py-20 text-[#94A3B8]">Asset not found</div></main></div>;
 
   const handleAssign = async () => {
     if (!assigneeId) { toast.error("Enter an employee ID"); return; }
@@ -78,7 +78,7 @@ export default function AssetDetailPage() {
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="ml-[260px] p-8">
+      <main className="md:ml-[260px] p-8">
         {/* Header */}
         <div className="flex items-start justify-between mb-6">
           <div>

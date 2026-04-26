@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { Sidebar } from "@/components/sidebar";
 import { invoiceApi, clientApi } from "@/lib/api";
-import type { Invoice, InvoiceItem, InvoiceTemplate, InvoiceStats, Client } from "@/lib/api";
+import type { Invoice, InvoiceItem, InvoiceTemplate, InvoiceStats, InvoiceLifecycleStats, InvoiceNotification, Client } from "@/lib/api";
 import { toast } from "sonner";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { RouteGuard } from "@/components/route-guard";
@@ -26,6 +26,28 @@ const STATUS_LABELS: Record<string, string> = {
   overdue: "Overdue",
   cancelled: "Cancelled",
 };
+
+// Visual styling for the cron-driven lifecycleState. Mirrors the buckets
+// in InvoiceLifecycleService: upcoming → calm blue, due_soon → amber,
+// due_today → orange (action expected), overdue → red, paid → green.
+const LIFECYCLE_CHIP: Record<string, { label: string; cls: string; emoji: string }> = {
+  upcoming:  { label: "Upcoming",  cls: "bg-blue-50 text-blue-700 border-blue-200",     emoji: "🕒" },
+  due_soon:  { label: "Due soon",  cls: "bg-amber-50 text-amber-700 border-amber-200",  emoji: "⏰" },
+  due_today: { label: "Due today", cls: "bg-orange-50 text-orange-700 border-orange-200", emoji: "📌" },
+  overdue:   { label: "Overdue",   cls: "bg-red-50 text-red-700 border-red-200",        emoji: "🔥" },
+  paid:      { label: "Paid",      cls: "bg-emerald-50 text-emerald-700 border-emerald-200", emoji: "✅" },
+};
+
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const min = Math.round(diff / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.round(hr / 24);
+  return `${day}d ago`;
+}
 
 const LAYOUT_PREVIEWS: Record<string, { label: string; accent: string; desc: string }> = {
   standard: { label: "Standard", accent: "#2E86C1", desc: "Clean layout with logo and tax details" },
@@ -49,6 +71,10 @@ export default function InvoicesPage() {
   const { user, logout } = useAuth();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [stats, setStats] = useState<InvoiceStats | null>(null);
+  const [lifecycleStats, setLifecycleStats] = useState<InvoiceLifecycleStats | null>(null);
+  const [notifications, setNotifications] = useState<InvoiceNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showNotifications, setShowNotifications] = useState(false);
   const [templates, setTemplates] = useState<InvoiceTemplate[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
@@ -140,6 +166,45 @@ export default function InvoicesPage() {
     } catch {}
   }, []);
 
+  // Lifecycle stats — counts + total value per bucket. Cheap query;
+  // we re-fetch on every list-refresh so the cards stay in sync after
+  // a status edit, mark-paid, or fresh cron run.
+  const fetchLifecycleStats = useCallback(async () => {
+    try {
+      const res = await invoiceApi.getLifecycleStats();
+      setLifecycleStats((res.data as InvoiceLifecycleStats) || null);
+    } catch {}
+  }, []);
+
+  // Notifications dropdown (top-right of the page, bell icon). The API
+  // returns the list AND unread count in one trip — we cache both.
+  // Polling happens via a separate useEffect with a 60s interval.
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const res = await invoiceApi.getNotifications(false);
+      setNotifications((res.data as InvoiceNotification[]) || []);
+      setUnreadCount(res.unreadCount || 0);
+    } catch {}
+  }, []);
+
+  const handleMarkNotificationRead = async (id: string) => {
+    try {
+      await invoiceApi.markNotificationRead(id);
+      // Optimistically update — the server already enforced the read
+      // state, so we don't need to wait for the next poll to refresh.
+      setNotifications((prev) => prev.map(n => n._id === id ? { ...n, read: true, readAt: new Date().toISOString() } : n));
+      setUnreadCount((c) => Math.max(0, c - 1));
+    } catch {}
+  };
+
+  const handleMarkAllRead = async () => {
+    try {
+      await invoiceApi.markAllNotificationsRead();
+      setNotifications((prev) => prev.map(n => ({ ...n, read: true, readAt: n.readAt || new Date().toISOString() })));
+      setUnreadCount(0);
+    } catch {}
+  };
+
   const fetchTemplates = useCallback(async () => {
     try {
       const res = await invoiceApi.getTemplates();
@@ -162,10 +227,27 @@ export default function InvoicesPage() {
   }, []);
 
   useEffect(() => {
-    Promise.all([fetchInvoices(), fetchStats(), fetchTemplates(), fetchClients(), fetchProjects()]).finally(() =>
-      setLoading(false)
-    );
+    Promise.all([
+      fetchInvoices(),
+      fetchStats(),
+      fetchLifecycleStats(),
+      fetchNotifications(),
+      fetchTemplates(),
+      fetchClients(),
+      fetchProjects(),
+    ]).finally(() => setLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll notifications every 60s. The cron only runs once a day so this
+  // is mostly idle, but the Nugen admin's UI feels live without F5
+  // when the cron does fire (or when another admin marks-all-read).
+  useEffect(() => {
+    const id = setInterval(() => {
+      fetchNotifications();
+      fetchLifecycleStats();
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [fetchNotifications, fetchLifecycleStats]);
 
   useEffect(() => {
     fetchInvoices();
@@ -492,7 +574,7 @@ export default function InvoicesPage() {
     <div className="flex h-screen bg-gray-50">
       <Sidebar user={user} onLogout={logout} />
 
-      <main className="ml-[260px] flex-1 overflow-auto">
+      <main className="md:ml-[260px] flex-1 overflow-auto">
         <div className="p-6 max-w-[1400px] mx-auto">
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
@@ -507,6 +589,75 @@ export default function InvoicesPage() {
                   <span className="text-xs font-medium text-blue-700">{invoices.filter(i => i.isRecurring).length} recurring</span>
                 </div>
               )}
+
+              {/* Notifications bell — popover with the user's recent
+                  invoice lifecycle alerts (upcoming/due/overdue).
+                  Persistent (Mongo-backed); cron writes daily, plus
+                  any backfill runs from POST /lifecycle/run.
+                  Closes on outside click via the backdrop layer. */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowNotifications((s) => !s)}
+                  className="relative p-2.5 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                  title={`${unreadCount} unread invoice notification${unreadCount === 1 ? '' : 's'}`}
+                  aria-label="Invoice notifications"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                  </svg>
+                  {unreadCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  )}
+                </button>
+                {showNotifications && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowNotifications(false)} />
+                    <div className="absolute right-0 top-12 z-50 w-[380px] bg-white rounded-xl shadow-xl border border-gray-200 overflow-hidden">
+                      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                        <div>
+                          <div className="text-sm font-semibold text-gray-900">Invoice notifications</div>
+                          <div className="text-[11px] text-gray-500">{unreadCount} unread · {notifications.length} total</div>
+                        </div>
+                        {unreadCount > 0 && (
+                          <button onClick={handleMarkAllRead} className="text-[11px] font-medium text-[#2E86C1] hover:underline">Mark all read</button>
+                        )}
+                      </div>
+                      <div className="max-h-[400px] overflow-y-auto">
+                        {notifications.length === 0 ? (
+                          <div className="px-4 py-10 text-center text-[12px] text-gray-400">
+                            No invoice alerts yet. The daily scan runs at 9am IST.
+                          </div>
+                        ) : notifications.map((n) => (
+                          <button
+                            key={n._id}
+                            onClick={() => {
+                              if (!n.read) handleMarkNotificationRead(n._id);
+                              setShowNotifications(false);
+                              // Find the invoice and open its detail modal — keeps
+                              // the user inside the same page rather than navigating.
+                              const inv = invoices.find(i => i._id === n.invoiceId);
+                              if (inv) { setSelectedInvoice(inv); setShowDetailModal(true); }
+                            }}
+                            className={`w-full text-left px-4 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors ${n.read ? '' : 'bg-blue-50/30'}`}
+                          >
+                            <div className="flex items-start gap-2">
+                              {!n.read && <span className="w-2 h-2 mt-1.5 rounded-full bg-blue-500 shrink-0" />}
+                              <div className="flex-1 min-w-0">
+                                <div className={`text-[13px] ${n.read ? 'text-gray-700' : 'text-gray-900 font-semibold'}`}>{n.title}</div>
+                                <div className="text-[11px] text-gray-500 mt-0.5 line-clamp-2">{n.message}</div>
+                                <div className="text-[10px] text-gray-400 mt-1">{relativeTime(n.createdAt)}</div>
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
               <button
                 onClick={() => {
                   resetForm();
@@ -521,6 +672,30 @@ export default function InvoicesPage() {
               </button>
             </div>
           </div>
+
+          {/* Lifecycle row — populated by the InvoiceLifecycleService
+              daily cron (with a manual /lifecycle/run trigger for fresh
+              imports). Five buckets, one card each, tap to filter the
+              list. Hidden when no data has been computed yet (e.g.
+              fresh org with no invoices). */}
+          {lifecycleStats && (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
+              {(['upcoming', 'due_soon', 'due_today', 'overdue', 'paid'] as const).map((bucket) => {
+                const v = lifecycleStats[bucket];
+                const chip = LIFECYCLE_CHIP[bucket];
+                return (
+                  <div key={bucket} className={`rounded-xl border p-4 ${chip.cls}`}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold uppercase tracking-wider opacity-80">{chip.label}</span>
+                      <span className="text-base">{chip.emoji}</span>
+                    </div>
+                    <div className="text-2xl font-bold mt-1.5">{v.count}</div>
+                    <div className="text-[11px] opacity-70 mt-0.5">{formatCurrency(v.totalValue)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Stats Cards — Enhanced */}
           {stats && (
@@ -670,6 +845,7 @@ export default function InvoicesPage() {
                     <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Client</th>
                     <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Amount</th>
                     <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
+                    <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Lifecycle</th>
                     <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Due Date</th>
                     <th className="text-right px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Actions</th>
                   </tr>
@@ -718,6 +894,27 @@ export default function InvoicesPage() {
                           )}
                         </div>
                       </td>
+                      <td className="px-5 py-4">
+                        {inv.lifecycleState && LIFECYCLE_CHIP[inv.lifecycleState] ? (
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border ${LIFECYCLE_CHIP[inv.lifecycleState].cls}`}
+                            title={
+                              inv.lifecycleState === 'overdue' && inv.overdueDays
+                                ? `${inv.overdueDays} day${inv.overdueDays === 1 ? '' : 's'} overdue`
+                                : (typeof inv.daysUntilDue === 'number'
+                                    ? `${inv.daysUntilDue} day${inv.daysUntilDue === 1 ? '' : 's'} until due`
+                                    : LIFECYCLE_CHIP[inv.lifecycleState].label)
+                            }
+                          >
+                            {LIFECYCLE_CHIP[inv.lifecycleState].emoji}
+                            {inv.lifecycleState === 'overdue' && inv.overdueDays
+                              ? `${inv.overdueDays}d overdue`
+                              : LIFECYCLE_CHIP[inv.lifecycleState].label}
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-gray-300">—</span>
+                        )}
+                      </td>
                       <td className="px-5 py-4 text-sm text-gray-600">{formatDate(inv.dueDate)}</td>
                       <td className="px-5 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1">
@@ -732,18 +929,32 @@ export default function InvoicesPage() {
                               </svg>
                             </button>
                           )}
-                          {["draft", "sent", "partially_paid"].includes(inv.status) && (
+                          {["draft", "sent", "partially_paid", "overdue"].includes(inv.status) && (
                             <button
                               onClick={() => {
                                 setSelectedInvoice(inv);
                                 const client = clients.find((c) => c._id === inv.clientId);
                                 setSendEmail(client?.contactPerson?.email || inv.sentTo || "");
-                                setSendSubject(`Invoice ${inv.invoiceNumber}`);
-                                setSendMessage("");
+                                // Pre-fill a reminder-style subject + body when
+                                // the invoice is overdue. The admin can still
+                                // edit before sending — this just saves them
+                                // typing the most common nudge.
+                                if (inv.status === 'overdue' || inv.lifecycleState === 'overdue') {
+                                  const days = inv.overdueDays || 0;
+                                  setSendSubject(`Reminder: Invoice ${inv.invoiceNumber}${days > 0 ? ` is ${days} day${days === 1 ? '' : 's'} overdue` : ' is overdue'}`);
+                                  setSendMessage(`Hi,\n\nThis is a friendly reminder that invoice ${inv.invoiceNumber} for ${formatCurrency(inv.balanceDue || inv.total, inv.currency)} ${days > 0 ? `is now ${days} day${days === 1 ? '' : 's'} overdue` : 'has passed its due date'}. We'd appreciate it if you could process the payment at your earliest convenience.\n\nIf the payment has already been made, please disregard this message.\n\nThanks,`);
+                                } else {
+                                  setSendSubject(`Invoice ${inv.invoiceNumber}`);
+                                  setSendMessage("");
+                                }
                                 setShowSendModal(true);
                               }}
-                              className="p-1.5 text-gray-400 hover:text-blue-600 rounded-md hover:bg-blue-50 transition-colors"
-                              title="Send"
+                              className={`p-1.5 rounded-md transition-colors ${
+                                inv.lifecycleState === 'overdue'
+                                  ? 'text-red-500 hover:text-red-700 hover:bg-red-50'
+                                  : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
+                              }`}
+                              title={inv.lifecycleState === 'overdue' ? 'Send reminder to client' : 'Send to client'}
                             >
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />

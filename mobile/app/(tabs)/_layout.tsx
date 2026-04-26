@@ -9,8 +9,19 @@ import { COLORS, SHADOWS } from "../../lib/theme";
 import { notificationApi } from "../../lib/api";
 
 export default function TabsLayout() {
-  const { user, loading } = useAuth();
+  const { user, loading, isFeatureEnabled } = useAuth();
   const router = useRouter();
+
+  // Per-tenant gating. Each tab maps to a feature; setting `href: null`
+  // on the screen options hides the tab from the bar without
+  // unmounting the route, which keeps deep-linking from a notification
+  // intact (e.g. a stale "Tasks" notification deep-links cleanly even
+  // if Tasks is later disabled — the screen still loads, it just
+  // doesn't appear in the bottom bar). Time tab covers both
+  // attendance + leaves; show it if either is enabled.
+  const showTime = isFeatureEnabled("attendance") || isFeatureEnabled("leaves");
+  const showWork = isFeatureEnabled("tasks");
+  const showChat = isFeatureEnabled("chat");
 
   const { data: unreadData } = useQuery({
     queryKey: ["notifications", "unread-count"],
@@ -82,6 +93,7 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="clock-outline" size={24} color={color} />
           ),
+          href: showTime ? "/time" : null,
         }}
       />
       <Tabs.Screen
@@ -92,6 +104,7 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="briefcase-outline" size={24} color={color} />
           ),
+          href: showWork ? "/work" : null,
         }}
       />
       <Tabs.Screen
@@ -102,6 +115,7 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="chat-outline" size={24} color={color} />
           ),
+          href: showChat ? "/chat" : null,
         }}
       />
       <Tabs.Screen

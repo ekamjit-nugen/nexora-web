@@ -38,7 +38,7 @@ const navSections: NavSection[] = [
     defaultOpen: true,
     items: [
       { label: "Dashboard", href: "/dashboard", icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" },
-      { label: "My Work", href: "/my-work", icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" },
+      { label: "My Work", href: "/my-work", feature: "tasks", icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" },
       { label: "Manager", href: "/manager", minRole: "manager", icon: "M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
       { label: "Calendar", href: "/calendar", icon: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" },
     ],
@@ -50,8 +50,8 @@ const navSections: NavSection[] = [
       { label: "Team Chat", href: "/messages", feature: "chat", icon: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" },
       { label: "Calls", href: "/calls", minRole: "member", feature: "calls", icon: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" },
       { label: "Meetings", href: "/meetings", minRole: "member", feature: "calls", icon: "M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" },
-      { label: "Standups", href: "/standups", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" },
-      { label: "Announcements", href: "/payroll/announcements", icon: "M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" },
+      { label: "Standups", href: "/standups", feature: "chat", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" },
+      { label: "Announcements", href: "/payroll/announcements", feature: "chat", icon: "M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" },
       { label: "Chat Analytics", href: "/messages/analytics", minRole: "manager", feature: "chat", icon: "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" },
     ],
   },
@@ -88,6 +88,7 @@ const navSections: NavSection[] = [
   },
   {
     title: "PAYROLL & HR",
+    feature: "payroll",
     items: [
       { label: "Payroll Runs", href: "/payroll", minRole: "manager", icon: "M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" },
       { label: "My Payslips", href: "/payroll/payslips", icon: "M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" },
@@ -104,6 +105,7 @@ const navSections: NavSection[] = [
   },
   {
     title: "PERFORMANCE",
+    feature: "performance",
     items: [
       { label: "Goals & OKRs", href: "/payroll/goals", icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" },
       { label: "OKR Alignment", href: "/okr-alignment", minRole: "manager", icon: "M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm0 8a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zm10 0a1 1 0 011-1h4a1 1 0 011 1v6a1 1 0 01-1 1h-4a1 1 0 01-1-1v-6z" },
@@ -116,6 +118,7 @@ const navSections: NavSection[] = [
   },
   {
     title: "HELPDESK",
+    feature: "helpdesk",
     items: [
       { label: "My Tickets", href: "/helpdesk", icon: "M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" },
       { label: "All Tickets", href: "/helpdesk/all", minRole: "manager", icon: "M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" },
@@ -126,6 +129,7 @@ const navSections: NavSection[] = [
   {
     title: "IT ASSETS",
     minRole: "member",
+    feature: "assetManagement",
     items: [
       { label: "All Assets", href: "/assets", icon: "M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" },
       { label: "My Assets", href: "/assets/my", icon: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" },
@@ -135,6 +139,7 @@ const navSections: NavSection[] = [
   },
   {
     title: "KNOWLEDGE",
+    feature: "knowledge",
     items: [
       { label: "Wiki", href: "/wiki", icon: "M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" },
       { label: "Bookmarks", href: "/wiki/bookmarks", icon: "M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" },
@@ -189,6 +194,21 @@ export function Sidebar({ user, onLogout }: SidebarProps) {
     nav.addEventListener("scroll", onScroll, { passive: true });
     return () => nav.removeEventListener("scroll", onScroll);
   }, []);
+
+  // Mobile off-canvas state. Closed by default; opens via the hamburger
+  // button. Auto-closes when the route changes so navigating from a sidebar
+  // link doesn't leave the panel covering the page you just went to.
+  const [mobileOpen, setMobileOpen] = useState(false);
+  useEffect(() => { setMobileOpen(false); }, [pathname]);
+  // Lock page scroll behind the off-canvas drawer while it's open on mobile.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (mobileOpen) {
+      const prev = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => { document.body.style.overflow = prev; };
+    }
+  }, [mobileOpen]);
 
   // Search
   const [search, setSearch] = useState("");
@@ -260,7 +280,33 @@ export function Sidebar({ user, onLogout }: SidebarProps) {
   const isSearching = search.length > 0;
 
   return (
-    <aside className="sidebar-themed fixed left-0 top-0 bottom-0 w-[260px] bg-[var(--sidebar-bg,#FFFFFF)] border-r border-[var(--sidebar-border,#E2E8F0)] flex flex-col z-50">
+    <>
+      {/* Mobile drawer toggle — panel-collapsed icon is clearer than the
+          generic 3-line hamburger: it depicts a rectangular workspace with
+          a filled sidebar column on the left, signalling "reveal panel". */}
+      <button
+        type="button"
+        aria-label="Open navigation"
+        onClick={() => setMobileOpen(true)}
+        className={`md:hidden fixed top-3 left-3 z-40 inline-flex items-center justify-center w-10 h-10 rounded-lg bg-white border border-[#E2E8F0] shadow-sm text-[#334155] hover:bg-[#F8FAFC] transition-colors ${mobileOpen ? 'invisible pointer-events-none' : ''}`}
+      >
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+          {/* Outer rectangle */}
+          <rect x="3" y="4" width="18" height="16" rx="2" />
+          {/* Sidebar divider — filled rail on the left to hint "panel" */}
+          <line x1="9" y1="4" x2="9" y2="20" />
+          <path d="M5 8h2M5 12h2M5 16h2" strokeLinecap="round" />
+        </svg>
+      </button>
+
+      {/* Backdrop — taps on the dim layer close the drawer */}
+      <div
+        className={`md:hidden fixed inset-0 bg-[#0F172A]/40 z-40 transition-opacity duration-200 ${mobileOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+        onClick={() => setMobileOpen(false)}
+        aria-hidden="true"
+      />
+
+      <aside className={`sidebar-themed fixed left-0 top-0 bottom-0 w-[260px] bg-[var(--sidebar-bg,#FFFFFF)] border-r border-[var(--sidebar-border,#E2E8F0)] flex flex-col z-50 transition-transform duration-200 md:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
       {/* Logo */}
       <div className="h-14 flex items-center gap-2.5 px-5 border-b border-[var(--sidebar-border,#E2E8F0)]">
         <div className="w-8 h-8 rounded-lg bg-[var(--primary-hex,#2E86C1)] flex items-center justify-center text-white font-bold text-base">
@@ -459,5 +505,6 @@ export function Sidebar({ user, onLogout }: SidebarProps) {
         </div>
       </div>
     </aside>
+    </>
   );
 }

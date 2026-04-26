@@ -68,18 +68,32 @@ export class PlatformAdminService {
       this.organizationModel.countDocuments(query),
     ]);
 
-    // Get member counts for each org
+    // Per-org membership breakdown (active vs inactive). The platform
+    // dashboard surfaces both — "active seats" drives billing, but the
+    // total is needed to spot orgs with abnormal exited-employee
+    // ratios (a sign of mass turnover or migration drift).
     const orgIds = organizations.map((o) => o._id.toString());
-    const memberCounts = await this.orgMembershipModel.aggregate([
-      { $match: { organizationId: { $in: orgIds }, status: 'active' } },
-      { $group: { _id: '$organizationId', count: { $sum: 1 } } },
+    const memberAgg = await this.orgMembershipModel.aggregate([
+      { $match: { organizationId: { $in: orgIds } } },
+      { $group: { _id: { organizationId: '$organizationId', status: '$status' }, count: { $sum: 1 } } },
     ]);
-    const countMap = memberCounts.reduce((acc, m) => ({ ...acc, [m._id]: m.count }), {});
+    const memberMap: Record<string, { active: number; inactive: number; total: number }> = {};
+    for (const m of memberAgg) {
+      const id = m._id.organizationId;
+      memberMap[id] = memberMap[id] || { active: 0, inactive: 0, total: 0 };
+      if (m._id.status === 'active') memberMap[id].active = m.count;
+      else memberMap[id].inactive = m.count;
+      memberMap[id].total += m.count;
+    }
 
-    const items = organizations.map((org) => ({
-      ...org.toObject(),
-      memberCount: countMap[org._id.toString()] || 0,
-    }));
+    const items = organizations.map((org) => {
+      const breakdown = memberMap[org._id.toString()] || { active: 0, inactive: 0, total: 0 };
+      return {
+        ...org.toObject(),
+        memberCount: breakdown.active,
+        members: breakdown,
+      };
+    });
 
     return {
       items,
@@ -88,7 +102,20 @@ export class PlatformAdminService {
   }
 
   /**
-   * Get organization detail
+   * Get organization detail with comprehensive cross-tenant stats.
+   *
+   * Pulls counts from every tenant-scoped database (HR, attendance,
+   * task) so the platform admin gets a single-pane view of what's
+   * happening inside the org. Cross-DB queries reuse the existing
+   * Mongoose connection's `useDb()` cache — no separate connection
+   * pool, no HTTP round trips to other services.
+   *
+   * Each cross-DB call is wrapped so a missing collection (e.g. a
+   * fresh org with no attendance yet, or a partially-deployed
+   * environment) returns zeroes rather than failing the whole detail
+   * load. Failure of any one cross-tenant query gets logged but
+   * doesn't bubble up — the platform admin still sees the org
+   * record + whatever stats DID succeed.
    */
   async getOrganizationDetail(orgId: string) {
     const org = await this.organizationModel.findById(orgId);
@@ -96,14 +123,167 @@ export class PlatformAdminService {
       throw new HttpException('Organization not found', HttpStatus.NOT_FOUND);
     }
 
-    const memberCount = await this.orgMembershipModel.countDocuments({
-      organizationId: orgId,
-      status: 'active',
+    // ── Membership breakdown (auth DB) ──
+    const [membersActive, membersInactive] = await Promise.all([
+      this.orgMembershipModel.countDocuments({ organizationId: orgId, status: 'active' }),
+      this.orgMembershipModel.countDocuments({ organizationId: orgId, status: 'inactive' }),
+    ]);
+
+    // Full member roster (capped). The Overview tab shows the entire
+    // list — active first, then inactive — so platform admins can
+    // search/filter without round-tripping for a dedicated members
+    // page. Cap at 200 to keep payloads sane for very large tenants;
+    // anything above that should pivot to a paginated /members route.
+    const allMemberships = await this.orgMembershipModel
+      .find({ organizationId: orgId })
+      .sort({ status: 1, joinedAt: -1 }) // 'active' < 'inactive' alphabetically, so this puts active first
+      .limit(200)
+      .lean();
+    const allUserIds = Array.from(new Set(allMemberships.map((m) => m.userId)));
+    const allUsers = await this.userModel
+      .find({ _id: { $in: allUserIds } })
+      .select('email firstName lastName avatar lastLogin isActive')
+      .lean();
+    const userById: Record<string, any> = {};
+    for (const u of allUsers) userById[String(u._id)] = u;
+
+    const members = allMemberships.map((m) => {
+      const u = userById[m.userId];
+      return {
+        userId: m.userId,
+        role: m.role,
+        status: m.status,
+        joinedAt: m.joinedAt,
+        email: u?.email || null,
+        firstName: u?.firstName || null,
+        lastName: u?.lastName || null,
+        avatar: u?.avatar || null,
+        lastLogin: u?.lastLogin || null,
+      };
     });
+
+    // Admin/owner subset — drives the dedicated Admins panel that
+    // appears next to People. Derived from the full roster so we
+    // don't issue a second query.
+    const admins = members
+      .filter((m) => ['owner', 'admin', 'hr'].includes(m.role) && m.status === 'active')
+      .sort((a, b) => {
+        // owner first, then admin, then hr — keeps the most-privileged
+        // contact at the top of the panel.
+        const order = { owner: 0, admin: 1, hr: 2 } as Record<string, number>;
+      return (order[a.role] ?? 9) - (order[b.role] ?? 9);
+    });
+
+    // ── Cross-DB stats (HR + attendance + task) ──
+    // We piggy-back on the auth-service's existing Mongoose connection
+    // and hop databases via useDb(). The collections are read raw —
+    // no Mongoose schema needed since we only need counts/groupings.
+    const conn = this.userModel.db;
+    const stats = {
+      employees: { total: 0, active: 0, exited: 0, onLeave: 0, probation: 0, onNotice: 0 },
+      designations: 0,
+      departments: 0,
+      clients: 0,
+      invoices: { total: 0, draft: 0, sent: 0, paid: 0, overdue: 0, outstanding: 0 },
+      attendance: { total: 0, last30Days: 0 },
+      holidays: 0,
+      tasks: { total: 0, todo: 0, inProgress: 0, done: 0, blocked: 0 },
+    };
+
+    try {
+      const hrDb = conn.useDb('nexora_hr', { useCache: true });
+      const empAgg = await hrDb.collection('employees').aggregate([
+        { $match: { organizationId: orgId, isDeleted: { $ne: true } } },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]).toArray();
+      for (const r of empAgg) {
+        stats.employees.total += r.count;
+        if (r._id === 'active') stats.employees.active = r.count;
+        else if (r._id === 'exited') stats.employees.exited = r.count;
+        else if (r._id === 'on_leave') stats.employees.onLeave = r.count;
+        else if (r._id === 'probation') stats.employees.probation = r.count;
+        else if (r._id === 'on_notice') stats.employees.onNotice = r.count;
+      }
+      stats.designations = await hrDb.collection('designations').countDocuments({
+        organizationId: orgId, isDeleted: { $ne: true },
+      });
+      stats.departments = await hrDb.collection('departments').countDocuments({
+        organizationId: orgId, isDeleted: { $ne: true },
+      });
+      stats.clients = await hrDb.collection('clients').countDocuments({
+        organizationId: orgId, isDeleted: { $ne: true },
+      });
+
+      // Invoice stats — count + status breakdown + outstanding amount.
+      // outstanding = sum(balanceDue) on non-paid, non-cancelled invoices.
+      const invAgg = await hrDb.collection('invoices').aggregate([
+        { $match: { organizationId: orgId, isDeleted: { $ne: true } } },
+        { $group: { _id: '$status', count: { $sum: 1 }, balance: { $sum: '$balanceDue' } } },
+      ]).toArray();
+      for (const r of invAgg) {
+        stats.invoices.total += r.count;
+        if (r._id === 'draft') stats.invoices.draft = r.count;
+        else if (r._id === 'sent') stats.invoices.sent = r.count;
+        else if (r._id === 'paid') stats.invoices.paid = r.count;
+        else if (r._id === 'overdue') stats.invoices.overdue = r.count;
+        if (r._id !== 'paid' && r._id !== 'cancelled') {
+          stats.invoices.outstanding += (r.balance || 0);
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`HR stats lookup failed for org ${orgId}: ${(err as any)?.message || err}`);
+    }
+
+    try {
+      const attDb = conn.useDb('nexora_attendance', { useCache: true });
+      stats.attendance.total = await attDb.collection('attendances').countDocuments({
+        organizationId: orgId, isDeleted: { $ne: true },
+      });
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000);
+      stats.attendance.last30Days = await attDb.collection('attendances').countDocuments({
+        organizationId: orgId, isDeleted: { $ne: true },
+        date: { $gte: thirtyDaysAgo },
+      });
+      stats.holidays = await attDb.collection('holidays').countDocuments({
+        organizationId: orgId, isDeleted: { $ne: true },
+      });
+    } catch (err) {
+      this.logger.warn(`Attendance stats lookup failed for org ${orgId}: ${(err as any)?.message || err}`);
+    }
+
+    try {
+      const taskDb = conn.useDb('nexora_task', { useCache: true });
+      const taskAgg = await taskDb.collection('tasks').aggregate([
+        { $match: { organizationId: orgId, isDeleted: { $ne: true } } },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]).toArray();
+      for (const r of taskAgg) {
+        stats.tasks.total += r.count;
+        if (r._id === 'todo') stats.tasks.todo = r.count;
+        else if (r._id === 'in_progress') stats.tasks.inProgress = r.count;
+        else if (r._id === 'done') stats.tasks.done = r.count;
+        else if (r._id === 'blocked') stats.tasks.blocked = r.count;
+      }
+    } catch (err) {
+      this.logger.warn(`Task stats lookup failed for org ${orgId}: ${(err as any)?.message || err}`);
+    }
 
     return {
       ...org.toObject(),
-      memberCount,
+      memberCount: membersActive,
+      members: {
+        active: membersActive,
+        inactive: membersInactive,
+        total: membersActive + membersInactive,
+      },
+      // Full hydrated member roster (capped at 200, active first).
+      // The Overview page shows this in a searchable / filterable list
+      // alongside the Admins panel. Property name kept distinct from
+      // the `members` count breakdown above so the existing frontend
+      // typing (members: {active, inactive, total}) keeps working.
+      memberList: members,
+      admins,
+      stats,
     };
   }
 

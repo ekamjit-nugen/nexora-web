@@ -154,10 +154,15 @@ export class InviteService {
   async resendInvite(orgId: string, memberEmail: string, performedBy: string): Promise<IOrgMembership> {
     this.logger.debug(`Resending invite to ${memberEmail} for org: ${orgId}`);
 
-    // First try finding by email on the membership
+    // Admins must be able to revive a previously-DECLINED invite (user may
+    // have declined by mistake). So we accept `pending`, `invited`, AND
+    // `removed` — the decline flow sets the membership to `removed`.
+    const REVIVABLE_STATUSES = ['pending', 'invited', 'removed'];
+
+    // First try finding by email on the membership (email-only invite path)
     let membership = await this.orgMembershipModel.findOne({
       organizationId: orgId,
-      status: { $in: ['pending', 'invited'] },
+      status: { $in: REVIVABLE_STATUSES },
       email: memberEmail,
     });
 
@@ -167,27 +172,46 @@ export class InviteService {
       if (user) {
         membership = await this.orgMembershipModel.findOne({
           organizationId: orgId,
-          status: { $in: ['pending', 'invited'] },
+          status: { $in: REVIVABLE_STATUSES },
           userId: user._id.toString(),
         });
       }
     }
 
     if (!membership) {
-      throw new HttpException('No pending invitation found for this email', HttpStatus.NOT_FOUND);
+      throw new HttpException('No invitation found for this email in this organization', HttpStatus.NOT_FOUND);
     }
 
-    // Generate new invite token with fresh expiry
+    const wasDeclined = membership.status === 'removed';
+
+    // Generate new invite token with fresh expiry and revive the membership
     const newToken = uuidv4();
     membership.inviteToken = newToken;
     membership.inviteExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     membership.invitedAt = new Date();
+    membership.status = 'pending';
     await membership.save();
 
     // Get org for email
     const organization = await this.organizationModel.findById(orgId);
     if (organization) {
       await this.sendInvitationEmail(memberEmail, organization, orgId, newToken);
+    }
+
+    // If the invite was previously declined, roll the HR employee status
+    // back from `declined` to `invited` so the directory reflects the new
+    // pending state instead of the old rejection.
+    if (wasDeclined) {
+      try {
+        await this.hrSyncService.syncEmployeeStatus(
+          memberEmail,
+          'invited',
+          orgId,
+          membership.userId || performedBy,
+        );
+      } catch (err: any) {
+        this.logger.warn(`Failed to revert HR status to 'invited' on re-invite: ${err?.message}`);
+      }
     }
 
     this.logger.log(`[DEV] Resend invite link for ${memberEmail}: ${this.frontendUrl}/auth/accept-invite?token=${newToken}`);
@@ -199,7 +223,7 @@ export class InviteService {
       resource: 'membership',
       resourceId: membership._id.toString(),
       organizationId: orgId,
-      details: { email: memberEmail },
+      details: { email: memberEmail, wasDeclined },
     });
 
     return membership;
@@ -335,29 +359,51 @@ export class InviteService {
       organizationId: membership.organizationId,
     });
 
-    // Sync HR employee record: update existing to 'active', or provision a fresh one
-    // if none exists for this org. The "existing user joins a new org" path (e.g. a multi-org
-    // user accepting a second invite) otherwise leaves them out of the target-org directory.
+    // Sync HR employee record.
+    //
+    // Previously this block only UPDATED an existing employee — which was
+    // fine for net-new invites (where `InviteService.inviteMember` had already
+    // called `hrSyncService.provisionEmployee`), but it silently did nothing
+    // when an existing user (already complete in org A) accepted an invite to
+    // org B: no HR employee doc existed in org B, so the directory was missing
+    // the user. Combined with the missing Authorization header on this fetch,
+    // the flow was doubly broken. (Bug #3)
+    //
+    // Now: look up by userId+org via a temp JWT (so the HR guard accepts the
+    // call), flip status→active if found, otherwise provision a fresh record.
+    // (`hrRecordFound` retained for downstream callers; `updated` drives the
+    // create-if-missing branch below.)
     let hrRecordFound = false;
+    const inviteeUser = user; // loaded above
+    const inviteeFirstName = inviteeUser?.firstName || acceptingUser.firstName || inviteeUser?.email?.split('@')[0] || 'Member';
+    const inviteeLastName = inviteeUser?.lastName || acceptingUser.lastName || '';
+    const inviteeEmail = inviteeUser?.email || acceptingUser.email;
     try {
-      const tempToken = this.jwtService.sign({
-        sub: actualUserId,
-        email: user?.email,
-        roles: ['admin'],
-        organizationId: membership.organizationId,
-      }, { expiresIn: '1m' });
-
       const hrServiceUrl = process.env.HR_SERVICE_URL || 'http://hr-service:3010';
+      const tempToken = this.jwtService.sign(
+        {
+          sub: actualUserId,
+          email: inviteeEmail,
+          firstName: inviteeFirstName,
+          lastName: inviteeLastName,
+          roles: ['admin'],
+          organizationId: membership.organizationId,
+        },
+        { expiresIn: '1m' },
+      );
+
       const hrRes = await fetch(
-        `${hrServiceUrl}/api/v1/employees?userId=${actualUserId}`,
+        `${hrServiceUrl}/api/v1/employees?search=${encodeURIComponent(inviteeEmail)}&limit=10`,
         {
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${tempToken}`,
+            Authorization: `Bearer ${tempToken}`,
           },
           signal: AbortSignal.timeout(5000),
         },
       );
+
+      let updated = false;
       if (hrRes.ok) {
         const hrData: any = await hrRes.json();
         const employees = Array.isArray(hrData?.data) ? hrData.data : (hrData?.data ? [hrData.data] : []);
@@ -365,12 +411,18 @@ export class InviteService {
         // to the target org. Any match = existing record → update status instead of create.
         hrRecordFound = employees.length > 0;
         for (const emp of employees) {
-          if (emp._id && (emp.status === 'invited' || emp.status === 'pending')) {
+          if (!emp?._id) continue;
+          // Only touch records within the org we just joined — the search
+          // endpoint may return employees from other orgs for the same email
+          // (cross-org users).
+          if (String(emp.organizationId) !== String(membership.organizationId)) continue;
+          updated = true;
+          if (emp.status === 'invited' || emp.status === 'pending') {
             await fetch(`${hrServiceUrl}/api/v1/employees/${emp._id}`, {
               method: 'PUT',
               headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${tempToken}`,
+                Authorization: `Bearer ${tempToken}`,
               },
               body: JSON.stringify({ status: 'active', userId: actualUserId }),
               signal: AbortSignal.timeout(5000),
@@ -378,8 +430,21 @@ export class InviteService {
           }
         }
       }
+
+      if (!updated) {
+        // Cross-org accept (or missing doc) — create it now so the user shows
+        // up in the target org's directory immediately.
+        await this.hrSyncService.provisionEmployee(
+          inviteeEmail,
+          inviteeFirstName,
+          inviteeLastName,
+          membership.organizationId,
+          actualUserId,
+          'active',
+        );
+      }
     } catch (err: any) {
-      this.logger.warn(`Failed to update HR employee status: ${err?.message}`);
+      this.logger.warn(`Failed to sync HR employee on accept-invite: ${err?.message}`);
     }
 
     // Provision path for the existing-user → new-org case: the HR list came back empty,
@@ -433,6 +498,24 @@ export class InviteService {
       resourceId: membership._id.toString(),
       organizationId: membership.organizationId,
     });
+
+    // Sync HR employee status → 'declined' so the admin directory reflects
+    // the rejection. Previously the decline flow only touched auth; HR kept
+    // showing 'invited' + a useless "Resend" button. Best-effort sync —
+    // failure here doesn't invalidate the decline (auth is already updated).
+    try {
+      const invitee = await this.userModel.findById(userId);
+      const email = invitee?.email || membership.email;
+      if (!email) return;
+      await this.hrSyncService.syncEmployeeStatus(
+        email,
+        'declined',
+        membership.organizationId,
+        userId,
+      );
+    } catch (err: any) {
+      this.logger.warn(`Failed to sync HR status on decline for ${membership.email || userId}: ${err?.message}`);
+    }
   }
 
   /**

@@ -101,7 +101,7 @@ export default function StandupDetailPage() {
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="ml-[260px] p-8">
+      <main className="md:ml-[260px] p-8">
         <div className="max-w-3xl mx-auto">
           {/* Back */}
           <button onClick={() => router.push("/standups")} className="text-xs text-[#64748B] hover:text-[#2E86C1] mb-4 flex items-center gap-1">

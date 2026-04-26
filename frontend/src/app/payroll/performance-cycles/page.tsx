@@ -48,8 +48,18 @@ interface ReviewCycle {
   peerReviewDeadline?: string;
   managerReviewDeadline?: string;
   applicableTo?: string;
+  // Kept for forward-compat if the backend ever projects them flat, but
+  // backend schema stores them under `stats`. `cycleEmployeeCount()` /
+  // `cycleCompletedCount()` below read both shapes.
   employeeCount?: number;
   completedCount?: number;
+  stats?: {
+    totalEmployees?: number;
+    selfReviewCompleted?: number;
+    managerReviewCompleted?: number;
+    peerReviewCompleted?: number;
+    finalized?: number;
+  };
   config?: {
     enableSelfReview?: boolean;
     enablePeerReview?: boolean;
@@ -63,6 +73,14 @@ interface ReviewCycle {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+// Backend stores per-cycle progress under `cycle.stats.{totalEmployees,
+// finalized}`. Old frontend read `cycle.{employeeCount, completedCount}`
+// (never populated) so every progress bar sat at 0%.
+const cycleEmployeeCount = (c: { employeeCount?: number; stats?: { totalEmployees?: number } }): number =>
+  c.employeeCount ?? c.stats?.totalEmployees ?? 0;
+
+const cycleCompletedCount = (c: { completedCount?: number; stats?: { finalized?: number } }): number =>
+  c.completedCount ?? c.stats?.finalized ?? 0;
 const formatDate = (dateStr?: string) => {
   if (!dateStr) return "\u2014";
   return new Date(dateStr).toLocaleDateString("en-IN", {
@@ -135,7 +153,12 @@ export default function PerformanceCyclesPage() {
     setLoading(true);
     try {
       const res = await payrollApi.listReviewCycles();
-      const data = Array.isArray(res.data) ? res.data : (res.data as any)?.cycles ?? [];
+      // Backend list envelope: `{ records, total, page, limit, totalPages }`.
+      // Old `.cycles` alias never existed — fallback silently rendered
+      // an empty tab.
+      const data = Array.isArray(res.data)
+        ? res.data
+        : ((res.data as any)?.records ?? (res.data as any)?.cycles ?? []);
       setCycles(data);
     } catch (err: any) {
       toast.error(err.message || "Failed to load review cycles");
@@ -288,7 +311,7 @@ export default function PerformanceCyclesPage() {
   return (
     <div className="min-h-screen flex bg-[#F8FAFC]">
       <Sidebar user={user} onLogout={logout} />
-      <main className="flex-1 ml-[260px] flex flex-col min-h-screen">
+      <main className="flex-1 min-w-0 md:ml-[260px] flex flex-col min-h-screen">
         {/* Header */}
         <div className="bg-white border-b border-[#E2E8F0] px-8 py-5 flex items-center justify-between sticky top-0 z-20">
           <div>
@@ -349,8 +372,8 @@ export default function PerformanceCyclesPage() {
                   <tbody className="divide-y divide-[#E2E8F0]">
                     {cycles.map((cycle) => {
                       const progress =
-                        cycle.employeeCount && cycle.employeeCount > 0
-                          ? Math.round(((cycle.completedCount || 0) / cycle.employeeCount) * 100)
+                        cycleEmployeeCount(cycle) > 0
+                          ? Math.round((cycleCompletedCount(cycle) / cycleEmployeeCount(cycle)) * 100)
                           : 0;
                       const isActive = !["draft", "completed", "cancelled"].includes(cycle.status);
 
@@ -369,7 +392,7 @@ export default function PerformanceCyclesPage() {
                             <p className="text-[11px] text-[#64748B]">to {formatDate(cycle.endDate)}</p>
                           </td>
                           <td className="px-5 py-4">
-                            <span className="text-[13px] font-semibold text-[#0F172A]">{cycle.employeeCount || 0}</span>
+                            <span className="text-[13px] font-semibold text-[#0F172A]">{cycleEmployeeCount(cycle)}</span>
                           </td>
                           <td className="px-5 py-4">
                             <div className="flex items-center gap-2 w-36">
@@ -653,11 +676,11 @@ export default function PerformanceCyclesPage() {
                 </div>
                 <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-3">
                   <p className="text-[11px] text-[#64748B] uppercase tracking-wider font-semibold">Total Employees</p>
-                  <p className="text-[14px] font-semibold text-[#0F172A] mt-1">{selectedCycle.employeeCount || 0}</p>
+                  <p className="text-[14px] font-semibold text-[#0F172A] mt-1">{cycleEmployeeCount(selectedCycle)}</p>
                 </div>
                 <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-3">
                   <p className="text-[11px] text-[#64748B] uppercase tracking-wider font-semibold">Completed</p>
-                  <p className="text-[14px] font-semibold text-[#0F172A] mt-1">{selectedCycle.completedCount || 0}</p>
+                  <p className="text-[14px] font-semibold text-[#0F172A] mt-1">{cycleCompletedCount(selectedCycle)}</p>
                 </div>
               </div>
 

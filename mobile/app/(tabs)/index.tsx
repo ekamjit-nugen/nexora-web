@@ -20,6 +20,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../lib/auth-context";
 import { attendanceApi, notificationApi, projectApi, taskApi, leaveApi } from "../../lib/api";
+import { captureLocation } from "../../lib/location";
 import { COLORS, SPACING, RADIUS, SHADOWS } from "../../lib/theme";
 
 const { width } = Dimensions.get("window");
@@ -32,7 +33,14 @@ const QUICK_ACTIONS = [
 ];
 
 export default function HomeScreen() {
-  const { user, currentOrg } = useAuth();
+  const { user, currentOrg, orgRole, isFeatureEnabled } = useAuth();
+  // Admin/owner doesn't track personal attendance — they manage the
+  // team's. The attendance card is hidden for them; the home screen
+  // becomes a team-overview snapshot. Mirrors web dashboard logic.
+  const isAdminOrOwner =
+    !!user?.roles?.some((r: string) => ["admin", "super_admin"].includes(r.toLowerCase())) ||
+    orgRole === "owner" || orgRole === "admin";
+  const showAttendanceCard = !isAdminOrOwner && isFeatureEnabled("attendance");
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
   const [clockLoading, setClockLoading] = useState(false);
@@ -98,10 +106,15 @@ export default function HomeScreen() {
     if (clockLoading) return;
     setClockLoading(true);
     try {
+      // Best-effort GPS fix. Null → user denied permission or device
+      // can't get a position; check-in still proceeds with the IP
+      // captured server-side. The admin attendance UI flags
+      // no-location records explicitly so they're easy to spot.
+      const location = await captureLocation();
       if (isCheckedIn) {
-        await attendanceApi.checkOut();
+        await attendanceApi.checkOut(location ? { location } : undefined);
       } else {
-        await attendanceApi.checkIn();
+        await attendanceApi.checkIn(location ? { location } : undefined);
       }
       refetchToday();
     } catch (err: any) {
@@ -183,7 +196,10 @@ export default function HomeScreen() {
 
         {/* Content area with overlap */}
         <View style={styles.contentArea}>
-          {/* Attendance Card */}
+          {/* Attendance Card — shown only to users who clock in. Admin/
+              owner skips this; the rest of the home screen still
+              renders below (Quick Actions, recent activity, etc.). */}
+          {showAttendanceCard && (
           <View style={[styles.card, styles.attendanceCard]}>
             <View style={styles.attendanceHeader}>
               <View style={styles.attendanceTitleRow}>
@@ -295,6 +311,7 @@ export default function HomeScreen() {
               </>
             )}
           </View>
+          )}
 
           {/* Quick Actions */}
           <Text style={styles.sectionTitle}>Quick Actions</Text>

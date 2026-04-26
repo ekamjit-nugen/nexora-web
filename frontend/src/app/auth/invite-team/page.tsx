@@ -116,7 +116,7 @@ export default function InviteTeamPage() {
             ))}
           </div>
         </div>
-        <div className="ml-[260px] p-8 blur-[3px]">
+        <div className="md:ml-[260px] p-8 blur-[3px]">
           <div className="h-7 w-48 bg-[#E2E8F0] rounded-lg mb-8" />
           <div className="grid grid-cols-4 gap-6 mb-8">
             {[1,2,3,4].map(i => <div key={i} className="bg-white rounded-xl border border-[#E2E8F0] p-6 h-28"><div className="h-4 w-20 bg-[#F1F5F9] rounded mb-3" /><div className="h-8 w-16 bg-[#E2E8F0] rounded" /></div>)}
@@ -130,7 +130,19 @@ export default function InviteTeamPage() {
         <div className="w-full max-w-[680px] my-auto">
           {/* Stepper */}
           <div className="mb-8">
-            <div className="flex items-center justify-center gap-0">
+            {/* Mobile (<640px): current-step label + progress bar */}
+            <div className="sm:hidden mb-3">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-white/80 uppercase tracking-wider">
+                  Step {currentStep + 1} of {STEPS.length}
+                </p>
+                <p className="text-xs font-semibold text-white">
+                  {STEPS[currentStep].label}
+                </p>
+              </div>
+            </div>
+            {/* Desktop (≥640px): full 3-circle stepper with labels */}
+            <div className="hidden sm:flex items-center justify-center gap-0">
               {STEPS.map((step, i) => {
                 const isActive = i === currentStep;
                 const isDone = i < currentStep;
@@ -150,20 +162,23 @@ export default function InviteTeamPage() {
                           </svg>
                         ) : step.num}
                       </div>
-                      <div className="hidden sm:block">
+                      <div>
                         <p className={`text-sm font-semibold ${isActive || isDone ? "text-white" : "text-white/50"}`}>{step.label}</p>
                         <p className={`text-xs ${isActive || isDone ? "text-white/70" : "text-white/30"}`}>{step.desc}</p>
                       </div>
                     </div>
                     {i < STEPS.length - 1 && (
-                      <div className={`w-12 sm:w-20 h-[2px] mx-3 rounded-full ${isDone ? "bg-emerald-500" : "bg-[#E2E8F0]"}`} />
+                      <div className={`w-20 h-[2px] mx-3 rounded-full ${isDone ? "bg-emerald-500" : "bg-[#E2E8F0]"}`} />
                     )}
                   </div>
                 );
               })}
             </div>
             <div className="mt-5 h-1 bg-[#E2E8F0] rounded-full overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-[#2E86C1] to-[#5DADE2] rounded-full transition-all duration-500" style={{ width: "83%" }} />
+              <div
+                className="h-full bg-gradient-to-r from-[#2E86C1] to-[#5DADE2] rounded-full transition-all duration-500"
+                style={{ width: `${((currentStep + 1) / STEPS.length) * 100}%` }}
+              />
             </div>
           </div>
 
@@ -257,7 +272,7 @@ export default function InviteTeamPage() {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                     </svg>
                   )}
-                  {loading ? "Sending..." : "Add Member"}
+                  {loading ? "Sending..." : "Send Invite"}
                 </button>
               </form>
 
@@ -267,51 +282,74 @@ export default function InviteTeamPage() {
                     Invited ({invitedMembers.length})
                   </h3>
                   <div className="border border-[#E2E8F0] rounded-xl overflow-hidden">
-                    <table className="w-full text-sm">
-                      <thead className="bg-[#F8FAFC]">
-                        <tr>
-                          <th className="text-left px-4 py-2.5 font-semibold text-[#64748B] text-xs uppercase tracking-wider">Name</th>
-                          <th className="text-left px-4 py-2.5 font-semibold text-[#64748B] text-xs uppercase tracking-wider">Email</th>
-                          <th className="text-left px-4 py-2.5 font-semibold text-[#64748B] text-xs uppercase tracking-wider">Role</th>
-                          <th className="text-left px-4 py-2.5 font-semibold text-[#64748B] text-xs uppercase tracking-wider">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[#F1F5F9]">
-                        {invitedMembers.map((m, i) => (
-                          <tr key={i} className="hover:bg-[#F8FAFC]/50">
-                            <td className="px-4 py-2.5 text-[#0F172A] font-medium">{m.firstName} {m.lastName}</td>
-                            <td className="px-4 py-2.5 text-[#64748B]">{m.email}</td>
-                            <td className="px-4 py-2.5 text-[#64748B]">{m.role}</td>
-                            <td className="px-4 py-2.5">
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200/50">
-                                {m.status}
-                              </span>
-                            </td>
+                    {/* Desktop (≥640px): normal table */}
+                    <div className="hidden sm:block overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-[#F8FAFC]">
+                          <tr>
+                            <th className="text-left px-4 py-2.5 font-semibold text-[#64748B] text-xs uppercase tracking-wider whitespace-nowrap">Name</th>
+                            <th className="text-left px-4 py-2.5 font-semibold text-[#64748B] text-xs uppercase tracking-wider whitespace-nowrap">Email</th>
+                            <th className="text-left px-4 py-2.5 font-semibold text-[#64748B] text-xs uppercase tracking-wider whitespace-nowrap">Role</th>
+                            <th className="text-left px-4 py-2.5 font-semibold text-[#64748B] text-xs uppercase tracking-wider whitespace-nowrap">Status</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-[#F1F5F9]">
+                          {invitedMembers.map((m, i) => (
+                            <tr key={i} className="hover:bg-[#F8FAFC]/50">
+                              <td className="px-4 py-2.5 text-[#0F172A] font-medium whitespace-nowrap">{m.firstName} {m.lastName}</td>
+                              <td className="px-4 py-2.5 text-[#64748B] break-all">{m.email}</td>
+                              <td className="px-4 py-2.5 text-[#64748B] whitespace-nowrap">{m.role}</td>
+                              <td className="px-4 py-2.5 whitespace-nowrap">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200/50">
+                                  {m.status}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {/* Mobile (<640px): card layout per row so status never overflows */}
+                    <ul className="sm:hidden divide-y divide-[#F1F5F9]">
+                      {invitedMembers.map((m, i) => (
+                        <li key={i} className="px-4 py-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm font-semibold text-[#0F172A] truncate">
+                                {m.firstName} {m.lastName}
+                              </div>
+                              <div className="text-xs text-[#64748B] break-all mt-0.5">{m.email}</div>
+                              <div className="text-xs text-[#64748B] mt-0.5">{m.role}</div>
+                            </div>
+                            <span className="shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200/50">
+                              {m.status}
+                            </span>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 </div>
               )}
 
-              <div className="mt-8 flex gap-3">
+              {/* Mobile (<640px): stack vertically, primary first. Desktop (≥640px): original row layout. */}
+              <div className="mt-8 flex flex-col-reverse sm:flex-row gap-3">
                 <button
                   type="button"
                   onClick={() => router.push("/auth/setup-profile")}
-                  className="px-6 py-3 border border-[#E2E8F0] text-[#64748B] rounded-xl text-sm font-semibold hover:bg-[#F8FAFC] transition-all"
+                  className="px-6 py-3 border border-[#E2E8F0] text-[#64748B] rounded-xl text-sm font-semibold hover:bg-[#F8FAFC] transition-all whitespace-nowrap"
                 >
                   Back
                 </button>
                 <button
                   onClick={handleFinish}
-                  className="flex-1 py-3 text-[#64748B] border border-[#E2E8F0] rounded-xl text-sm font-semibold hover:bg-[#F8FAFC] transition-all"
+                  className="flex-1 px-4 py-3 text-[#64748B] border border-[#E2E8F0] rounded-xl text-sm font-semibold hover:bg-[#F8FAFC] transition-all whitespace-nowrap"
                 >
                   Skip for Now
                 </button>
                 <button
                   onClick={handleFinish}
-                  className="flex-1 py-3 bg-[#2E86C1] text-white rounded-xl text-sm font-semibold hover:bg-[#2471A3] transition-all shadow-lg shadow-[#2E86C1]/20"
+                  className="flex-1 px-4 py-3 bg-[#2E86C1] text-white rounded-xl text-sm font-semibold hover:bg-[#2471A3] transition-all shadow-lg shadow-[#2E86C1]/20 whitespace-nowrap"
                 >
                   Continue to Dashboard
                 </button>

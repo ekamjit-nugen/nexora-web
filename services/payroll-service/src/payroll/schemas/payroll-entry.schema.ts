@@ -10,6 +10,18 @@ export interface IAttendanceSummary {
   holidays: number;
   weekoffs: number;
   overtimeHours: number;
+  // Policy-aware OT split. The engine applies distinct multipliers per
+  // bucket (weekday 2x, weekend/holiday 2.5x per Factories Act, night
+  // shift gets a separate premium). When these are unset the engine
+  // treats all `overtimeHours` as weekday. When callers pre-bucketize
+  // (processPayrollRun does) the sum must match `overtimeHours` —
+  // invariant relied on by downstream reports. `nightShiftOvertimeHours`
+  // is orthogonal to day-type — it takes precedence when the record's
+  // `isNightShift` flag is set at clock-in.
+  weekdayOvertimeHours?: number;
+  weekendOvertimeHours?: number;
+  holidayOvertimeHours?: number;
+  nightShiftOvertimeHours?: number;
 }
 
 export interface IEarningEntry {
@@ -59,6 +71,26 @@ export interface ILoanDeductionEntry {
   remainingBalance: number;
 }
 
+// Per-bucket OT breakdown. Persisted on the PayrollEntry so the payslip
+// generator can render distinct earnings rows and a finance auditor can
+// reconstruct "how did we arrive at this OT amount" without rerunning
+// the engine. `capped: true` means the monthly cap clipped some hours —
+// UI should surface this so the employee knows their extra hours
+// weren't lost to a silent bug.
+export interface IOvertimeDetail {
+  weekdayHours: number;
+  weekendHours: number;
+  holidayHours: number;
+  nightShiftHours: number;
+  weekdayPay: number;
+  weekendPay: number;
+  holidayPay: number;
+  nightShiftPay: number;
+  totalPay: number;
+  hourlyRate: number;
+  capped: boolean;
+}
+
 export interface IPayrollEntryTotals {
   grossEarnings: number;
   totalDeductions: number;
@@ -93,6 +125,7 @@ export interface IPayrollEntry extends Document {
   reimbursements: IReimbursementEntry[];
   bonuses: IBonusEntry[];
   loanDeductions: ILoanDeductionEntry[];
+  overtime?: IOvertimeDetail | null;
   totals: IPayrollEntryTotals;
   paymentDetails: IPaymentDetails;
   payslipUrl?: string;
@@ -125,6 +158,10 @@ export const PayrollEntrySchema = new Schema<IPayrollEntry>(
       holidays: { type: Number, default: 0 },
       weekoffs: { type: Number, default: 0 },
       overtimeHours: { type: Number, default: 0 },
+      weekdayOvertimeHours: { type: Number, default: 0 },
+      weekendOvertimeHours: { type: Number, default: 0 },
+      holidayOvertimeHours: { type: Number, default: 0 },
+      nightShiftOvertimeHours: { type: Number, default: 0 },
     },
     earnings: [
       {
@@ -181,6 +218,19 @@ export const PayrollEntrySchema = new Schema<IPayrollEntry>(
         remainingBalance: { type: Number, default: 0 },
       },
     ],
+    overtime: {
+      weekdayHours: { type: Number, default: 0 },
+      weekendHours: { type: Number, default: 0 },
+      holidayHours: { type: Number, default: 0 },
+      nightShiftHours: { type: Number, default: 0 },
+      weekdayPay: { type: Number, default: 0 },
+      weekendPay: { type: Number, default: 0 },
+      holidayPay: { type: Number, default: 0 },
+      nightShiftPay: { type: Number, default: 0 },
+      totalPay: { type: Number, default: 0 },
+      hourlyRate: { type: Number, default: 0 },
+      capped: { type: Boolean, default: false },
+    },
     totals: {
       grossEarnings: { type: Number, default: 0 },
       totalDeductions: { type: Number, default: 0 },
@@ -193,10 +243,15 @@ export const PayrollEntrySchema = new Schema<IPayrollEntry>(
       netPayable: { type: Number, default: 0 },
     },
     paymentDetails: {
+      // `mode` defaulted to `null` with `enum: [...]` caused every process run
+      // to fail Mongoose validation — no employee could be processed until an
+      // explicit mode was set, and the UI didn't surface where. Default to
+      // `bank_transfer` (the overwhelmingly common case); actual mode gets
+      // overwritten when the bank-payout flow syncs transactions.
       mode: {
         type: String,
         enum: ['bank_transfer', 'cheque', 'cash'],
-        default: null,
+        default: 'bank_transfer',
       },
       bankName: { type: String, default: null },
       accountNumber: { type: String, default: null },
