@@ -44,7 +44,7 @@ export function MeetingCalendar({ onJoinMeeting }: MeetingCalendarProps) {
   const fetchMeetings = useCallback(async () => {
     setLoading(true);
     try {
-      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3005";
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://192.168.29.218:3005";
       const token = localStorage.getItem("accessToken");
       const res = await fetch(
         `${API_BASE}/api/v1/meetings?limit=100`,

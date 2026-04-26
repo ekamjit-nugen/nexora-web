@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { hrApi, policyApi, callApi, orgApi, Employee, Department, Designation, Policy } from "@/lib/api";
+import { hrApi, policyApi, callApi, orgApi, Employee, Department, Designation, Policy, EmployeeStatus } from "@/lib/api";
 import type { CallLog } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { Card, CardContent } from "@/components/ui/card";
@@ -45,7 +45,7 @@ const emptyForm: EmployeeFormData = {
   location: "",
   timezone: "",
   skills: "",
-  status: "active",
+  status: "invited",
   reportingManagerId: "",
 };
 
@@ -57,6 +57,7 @@ function EmployeeFormModal({
   departments,
   designations,
   employees,
+  statuses,
 }: {
   open: boolean;
   onClose: () => void;
@@ -65,6 +66,7 @@ function EmployeeFormModal({
   departments: Department[];
   designations: Designation[];
   employees: Employee[];
+  statuses: EmployeeStatus[];
 }) {
   const isEdit = !!employee;
   const [form, setForm] = useState<EmployeeFormData>(emptyForm);
@@ -126,7 +128,7 @@ function EmployeeFormModal({
         employmentType: form.employmentType || "full_time",
         joiningDate: form.joiningDate || new Date().toISOString(),
         skills,
-        status: form.status || "active",
+        status: form.status || "invited",
       };
 
       if (form.phone.trim()) payload.phone = form.phone.trim();
@@ -137,6 +139,9 @@ function EmployeeFormModal({
       if (form.timezone.trim()) payload.timezone = form.timezone.trim();
 
       if (isEdit) {
+        // Remove fields not allowed in update DTO
+        delete payload.email;
+        delete payload.joiningDate;
         await hrApi.updateEmployee(employee._id, payload as Partial<Employee>);
         toast.success("Employee updated successfully");
       } else {
@@ -301,19 +306,20 @@ function EmployeeFormModal({
                 <option value="intern">Intern</option>
               </select>
             </div>
-            <div>
-              <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Status</Label>
-              <select
-                value={form.status}
-                onChange={(e) => handleChange("status", e.target.value)}
-                className="w-full h-10 px-3 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] text-sm text-[#334155]"
-              >
-                <option value="active">Active</option>
-                <option value="on_notice">On Notice</option>
-                <option value="probation">Probation</option>
-                <option value="on_leave">On Leave</option>
-              </select>
-            </div>
+            {employee && (
+              <div>
+                <Label className="text-[12px] font-medium text-[#475569] mb-1.5 block">Status</Label>
+                <select
+                  value={form.status}
+                  onChange={(e) => handleChange("status", e.target.value)}
+                  className="w-full h-10 px-3 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] text-sm text-[#334155]"
+                >
+                  {statuses.filter((s) => s.isActive).map((s) => (
+                    <option key={s._id} value={s.value}>{s.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Joining Date & Reporting Manager */}
@@ -623,18 +629,23 @@ function PolicyManageModal({
 // ── Directory Page ──
 
 export default function DirectoryPage() {
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading, logout, hasOrgRole, isPlatformAdmin } = useAuth();
   const router = useRouter();
 
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [designations, setDesignations] = useState<Designation[]>([]);
+  const [statuses, setStatuses] = useState<EmployeeStatus[]>([]);
   const [stats, setStats] = useState({ total: 0, active: 0, onNotice: 0, departments: 0 });
   const [search, setSearch] = useState("");
   const [filterDept, setFilterDept] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [loading, setLoading] = useState(true);
+
+  // Pagination (client-side — API returns flat array)
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(12);
 
   // Policy state
   const [allPolicies, setAllPolicies] = useState<Policy[]>([]);
@@ -656,17 +667,20 @@ export default function DirectoryPage() {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const params: Record<string, string> = {};
+      // hr-service caps limit at 100. Client-side paginates from this page.
+      // TODO: switch to server-side pagination if org size exceeds 100.
+      const params: Record<string, string> = { limit: "100" };
       if (search) params.search = search;
       if (filterDept) params.departmentId = filterDept;
       if (filterStatus) params.status = filterStatus;
 
-      const [empRes, deptRes, statsRes, desigRes, policiesRes] = await Promise.all([
+      const [empRes, deptRes, statsRes, desigRes, policiesRes, statusRes] = await Promise.all([
         hrApi.getEmployees(params),
         hrApi.getDepartments(),
         hrApi.getStats(),
         hrApi.getDesignations(),
         policyApi.getAll().catch(() => ({ data: [] as Policy[] })),
+        hrApi.getEmployeeStatuses().catch(() => ({ data: [] as EmployeeStatus[] })),
       ]);
 
       // Filter out the currently logged-in user from directory
@@ -676,6 +690,7 @@ export default function DirectoryPage() {
       setDepartments(deptRes.data || []);
       setDesignations(desigRes.data || []);
       setAllPolicies(policiesRes.data || []);
+      setStatuses(statusRes.data || []);
       if (statsRes.data) setStats(statsRes.data);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load data";
@@ -688,6 +703,17 @@ export default function DirectoryPage() {
   useEffect(() => {
     if (user) fetchData();
   }, [user, fetchData]);
+
+  // Reset to first page whenever filters or page size change
+  useEffect(() => {
+    setPage(1);
+  }, [search, filterDept, filterStatus, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(employees.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * pageSize;
+  const pageEnd = Math.min(pageStart + pageSize, employees.length);
+  const paginatedEmployees = employees.slice(pageStart, pageEnd);
 
   const openAddModal = () => {
     setEditingEmployee(null);
@@ -715,7 +741,9 @@ export default function DirectoryPage() {
     );
   }
 
-  const canManageEmployees = user.roles?.some((r) => ["admin", "super_admin", "hr"].includes(r));
+  // Role-based gate — HR+, admin, owner, or any platform admin can manage employees.
+  // `user.roles` is a legacy field (empty for OTP users); the org-scoped role lives in the JWT's `orgRole`.
+  const canManageEmployees = isPlatformAdmin || hasOrgRole("hr");
 
   const handleDeleteEmployee = async () => {
     if (!deletingEmployee) return;
@@ -744,14 +772,27 @@ export default function DirectoryPage() {
     }
   };
 
-  const statusColors: Record<string, string> = {
-    active: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    invited: "bg-amber-50 text-amber-700 border-amber-200",
-    pending: "bg-amber-50 text-amber-700 border-amber-200",
-    on_notice: "bg-orange-50 text-orange-700 border-orange-200",
-    exited: "bg-red-50 text-red-700 border-red-200",
-    on_leave: "bg-blue-50 text-blue-700 border-blue-200",
-    probation: "bg-violet-50 text-violet-700 border-violet-200",
+  // Map status catalog `color` (e.g. 'emerald') → Tailwind badge classes.
+  // Falls back to gray for unknown colors. Status labels come from the catalog.
+  const colorClassMap: Record<string, string> = {
+    emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    amber: "bg-amber-50 text-amber-700 border-amber-200",
+    orange: "bg-orange-50 text-orange-700 border-orange-200",
+    red: "bg-red-50 text-red-700 border-red-200",
+    blue: "bg-blue-50 text-blue-700 border-blue-200",
+    violet: "bg-violet-50 text-violet-700 border-violet-200",
+    green: "bg-green-50 text-green-700 border-green-200",
+    gray: "bg-gray-50 text-gray-600 border-gray-200",
+    slate: "bg-slate-50 text-slate-700 border-slate-200",
+  };
+  const statusLookup = new Map(statuses.map((s) => [s.value, s]));
+  const getStatusClasses = (value: string): string => {
+    const s = statusLookup.get(value);
+    return (s && colorClassMap[s.color || ""]) || "bg-gray-50 text-gray-600 border-gray-200";
+  };
+  const getStatusLabel = (value: string): string => {
+    const s = statusLookup.get(value);
+    return s ? s.label : value.replace(/_/g, " ");
   };
 
   const handleResendInvite = async (emp: Employee) => {
@@ -868,12 +909,9 @@ export default function DirectoryPage() {
                 className="h-11 px-4 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] text-sm text-[#475569] min-w-[140px]"
               >
                 <option value="">All Status</option>
-                <option value="active">Active</option>
-                <option value="invited">Invited</option>
-                <option value="pending">Pending</option>
-                <option value="on_notice">On Notice</option>
-                <option value="probation">Probation</option>
-                <option value="on_leave">On Leave</option>
+                {statuses.filter((s) => s.isActive).map((s) => (
+                  <option key={s._id} value={s.value}>{s.label}</option>
+                ))}
               </select>
               <div className="flex border border-[#E2E8F0] rounded-xl overflow-hidden">
                 <button
@@ -921,7 +959,7 @@ export default function DirectoryPage() {
           </Card>
         ) : viewMode === "grid" ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {employees.map((emp) => {
+            {paginatedEmployees.map((emp) => {
               const initials = `${emp.firstName?.[0] || ""}${emp.lastName?.[0] || ""}`.toUpperCase();
               return (
                 <Card key={emp._id} className="border-0 shadow-sm hover:shadow-md transition-shadow group cursor-pointer">
@@ -964,24 +1002,30 @@ export default function DirectoryPage() {
                     </div>
 
                     <div className="space-y-2 text-[13px]">
-                      <div className="flex justify-between">
-                        <span className="text-[#94A3B8]">Department</span>
-                        <span className="text-[#334155] font-medium">{getDeptName(emp.departmentId)}</span>
+                      <div className="flex items-start justify-between gap-3">
+                        <span className="text-[#94A3B8] shrink-0">Department</span>
+                        <span className="text-[#334155] font-medium text-right truncate min-w-0" title={getDeptName(emp.departmentId)}>
+                          {getDeptName(emp.departmentId)}
+                        </span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#94A3B8]">Location</span>
-                        <span className="text-[#334155]">{emp.location || "\u2014"}</span>
+                      <div className="flex items-start justify-between gap-3">
+                        <span className="text-[#94A3B8] shrink-0">Location</span>
+                        <span className="text-[#334155] text-right truncate min-w-0" title={emp.location || "\u2014"}>
+                          {emp.location || "\u2014"}
+                        </span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#94A3B8]">Type</span>
-                        <span className="text-[#334155] capitalize">{emp.employmentType.replace("_", " ")}</span>
+                      <div className="flex items-start justify-between gap-3">
+                        <span className="text-[#94A3B8] shrink-0">Type</span>
+                        <span className="text-[#334155] capitalize text-right truncate min-w-0">
+                          {emp.employmentType.replace("_", " ")}
+                        </span>
                       </div>
                     </div>
 
                     <div className="flex items-center justify-between mt-4 pt-3 border-t border-[#F1F5F9]">
                       <div className="flex items-center gap-2">
-                        <span className={`text-xs font-medium px-2.5 py-1 rounded-full border capitalize ${statusColors[emp.status] || "bg-gray-50 text-gray-600 border-gray-200"}`}>
-                          {emp.status.replace("_", " ")}
+                        <span className={`text-xs font-medium px-2.5 py-1 rounded-full border ${getStatusClasses(emp.status)}`}>
+                          {getStatusLabel(emp.status)}
                         </span>
                         {(emp.status === "invited" || emp.status === "pending") && canManageEmployees && (
                           <button
@@ -1065,7 +1109,7 @@ export default function DirectoryPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {employees.map((emp) => {
+                  {paginatedEmployees.map((emp) => {
                     const initials = `${emp.firstName?.[0] || ""}${emp.lastName?.[0] || ""}`.toUpperCase();
                     return (
                       <tr key={emp._id} className="border-b border-[#F8FAFC] hover:bg-[#FAFBFC] transition-colors cursor-pointer group">
@@ -1085,8 +1129,8 @@ export default function DirectoryPage() {
                         <td className="px-5 py-3.5 text-[13px] text-[#64748B]">{emp.location || "\u2014"}</td>
                         <td className="px-5 py-3.5 text-[13px] text-[#64748B] capitalize">{emp.employmentType.replace("_", " ")}</td>
                         <td className="px-5 py-3.5">
-                          <span className={`text-xs font-medium px-2.5 py-1 rounded-full border capitalize ${statusColors[emp.status] || "bg-gray-50 text-gray-600 border-gray-200"}`}>
-                            {emp.status.replace("_", " ")}
+                          <span className={`text-xs font-medium px-2.5 py-1 rounded-full border ${getStatusClasses(emp.status)}`}>
+                            {getStatusLabel(emp.status)}
                           </span>
                         </td>
                         <td className="px-5 py-3.5">
@@ -1178,6 +1222,107 @@ export default function DirectoryPage() {
             </div>
           </Card>
         )}
+
+        {/* Pagination controls */}
+        {!loading && employees.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mt-6">
+            <div className="flex items-center gap-3 text-[13px] text-[#64748B]">
+              <span>
+                Showing <span className="font-semibold text-[#334155]">{pageStart + 1}</span>
+                {"–"}
+                <span className="font-semibold text-[#334155]">{pageEnd}</span>{" "}
+                of <span className="font-semibold text-[#334155]">{employees.length}</span>
+              </span>
+              <div className="flex items-center gap-2">
+                <span>Per page:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="h-8 px-2 rounded-lg border border-[#E2E8F0] bg-white text-[13px] text-[#475569]"
+                >
+                  <option value={12}>12</option>
+                  <option value={24}>24</option>
+                  <option value={48}>48</option>
+                  <option value={96}>96</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(1)}
+                disabled={currentPage === 1}
+                className="h-9 px-2.5 rounded-lg border border-[#E2E8F0] bg-white text-[#475569] text-[13px] font-medium hover:bg-[#F8FAFC] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title="First page"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+                </svg>
+              </button>
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="h-9 px-3 rounded-lg border border-[#E2E8F0] bg-white text-[#475569] text-[13px] font-medium hover:bg-[#F8FAFC] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Prev
+              </button>
+
+              {/* Page number buttons (windowed) */}
+              {(() => {
+                const pages: (number | "...")[] = [];
+                const windowSize = 5;
+                const half = Math.floor(windowSize / 2);
+                let start = Math.max(1, currentPage - half);
+                let end = Math.min(totalPages, start + windowSize - 1);
+                start = Math.max(1, end - windowSize + 1);
+                if (start > 1) {
+                  pages.push(1);
+                  if (start > 2) pages.push("...");
+                }
+                for (let i = start; i <= end; i++) pages.push(i);
+                if (end < totalPages) {
+                  if (end < totalPages - 1) pages.push("...");
+                  pages.push(totalPages);
+                }
+                return pages.map((p, i) =>
+                  p === "..." ? (
+                    <span key={`e-${i}`} className="px-2 text-[13px] text-[#94A3B8]">…</span>
+                  ) : (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p)}
+                      className={`h-9 min-w-[36px] px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
+                        p === currentPage
+                          ? "bg-[#2E86C1] text-white"
+                          : "border border-[#E2E8F0] bg-white text-[#475569] hover:bg-[#F8FAFC]"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ),
+                );
+              })()}
+
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="h-9 px-3 rounded-lg border border-[#E2E8F0] bg-white text-[#475569] text-[13px] font-medium hover:bg-[#F8FAFC] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Next
+              </button>
+              <button
+                onClick={() => setPage(totalPages)}
+                disabled={currentPage === totalPages}
+                className="h-9 px-2.5 rounded-lg border border-[#E2E8F0] bg-white text-[#475569] text-[13px] font-medium hover:bg-[#F8FAFC] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title="Last page"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Employee Form Modal */}
@@ -1192,6 +1337,7 @@ export default function DirectoryPage() {
         departments={departments}
         designations={designations}
         employees={employees}
+        statuses={statuses}
       />
 
       {/* Policy Management Modal */}

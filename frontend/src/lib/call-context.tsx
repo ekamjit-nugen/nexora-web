@@ -5,7 +5,7 @@ import { useSocket } from "@/lib/use-socket";
 import { API_BASE_URL } from "@/lib/api";
 
 const CALL_SOCKET_URL =
-  process.env.NEXT_PUBLIC_CALL_SOCKET_URL || "http://localhost:3051";
+  process.env.NEXT_PUBLIC_CALL_SOCKET_URL || "http://192.168.29.218:3051";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

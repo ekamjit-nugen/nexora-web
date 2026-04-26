@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { IEmployee } from './schemas/employee.schema';
@@ -10,6 +10,7 @@ import { IInvoice } from './schemas/invoice.schema';
 import { IInvoiceTemplate } from './schemas/invoice-template.schema';
 import { ICallLog } from './schemas/call-log.schema';
 import { IBillingRate } from './schemas/billing-rate.schema';
+import { IEmployeeStatus, DEFAULT_EMPLOYEE_STATUSES } from './schemas/employee-status.schema';
 import {
   CreateEmployeeDto, UpdateEmployeeDto, EmployeeQueryDto,
   CreateDepartmentDto, UpdateDepartmentDto,
@@ -22,6 +23,7 @@ import {
   CreateBillingRateDto, UpdateBillingRateDto, BillingRateQueryDto,
   PreviewInvoiceDto, GenerateInvoiceDto,
   CreateCallLogDto, UpdateCallLogDto, CallLogQueryDto,
+  CreateEmployeeStatusDto, UpdateEmployeeStatusDto,
 } from './dto/index';
 
 @Injectable()
@@ -38,13 +40,119 @@ export class HrService {
     @InjectModel('InvoiceTemplate') private invoiceTemplateModel: Model<IInvoiceTemplate>,
     @InjectModel('CallLog') private callLogModel: Model<ICallLog>,
     @InjectModel('BillingRate') private billingRateModel: Model<IBillingRate>,
+    @InjectModel('EmployeeStatus') private employeeStatusModel: Model<IEmployeeStatus>,
   ) {}
+
+  // ── Employee Statuses ──
+
+  /**
+   * Lazy-seed defaults for an org the first time statuses are listed.
+   * Using updateOne upsert so concurrent requests don't create duplicates.
+   */
+  private async ensureDefaultEmployeeStatuses(orgId: string): Promise<void> {
+    if (!orgId) return;
+    const existing = await this.employeeStatusModel.countDocuments({ organizationId: orgId });
+    if (existing > 0) return;
+    const docs = DEFAULT_EMPLOYEE_STATUSES.map((s) => ({
+      ...s,
+      organizationId: orgId,
+      isSystem: true,
+      isActive: true,
+      isDeleted: false,
+    }));
+    try {
+      await this.employeeStatusModel.insertMany(docs, { ordered: false });
+      this.logger.log(`Seeded ${docs.length} default employee statuses for org ${orgId}`);
+    } catch (err: any) {
+      // Ignore duplicate-key errors — another request may have seeded concurrently.
+      if (err?.code !== 11000) throw err;
+    }
+  }
+
+  async getEmployeeStatuses(orgId?: string) {
+    if (orgId) await this.ensureDefaultEmployeeStatuses(orgId);
+    const filter: any = { isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+    return this.employeeStatusModel.find(filter).sort({ order: 1, label: 1 });
+  }
+
+  /**
+   * Verifies that `status` exists in the org's catalog before writing it to an
+   * employee. Seeds defaults on first call so brand-new orgs don't get a false
+   * validation error. Returns silently if status is empty/undefined.
+   */
+  private async assertEmployeeStatusValid(status: string | undefined, orgId?: string): Promise<void> {
+    if (!status || !orgId) return;
+    await this.ensureDefaultEmployeeStatuses(orgId);
+    const exists = await this.employeeStatusModel.exists({
+      organizationId: orgId,
+      value: status,
+      isDeleted: false,
+      isActive: true,
+    });
+    if (!exists) {
+      throw new BadRequestException(
+        `Invalid status "${status}". Use one defined in the organization's status catalog.`,
+      );
+    }
+  }
+
+  async createEmployeeStatus(dto: CreateEmployeeStatusDto, orgId: string, userId?: string) {
+    if (!orgId) throw new BadRequestException('organizationId is required');
+    const value = dto.value.toLowerCase().trim();
+    const existing = await this.employeeStatusModel.findOne({
+      organizationId: orgId,
+      value,
+      isDeleted: false,
+    });
+    if (existing) throw new ConflictException(`Status "${value}" already exists`);
+    const doc = new this.employeeStatusModel({
+      ...dto,
+      value,
+      organizationId: orgId,
+      isSystem: false,
+      createdBy: userId || null,
+    });
+    await doc.save();
+    return doc;
+  }
+
+  async updateEmployeeStatus(id: string, dto: UpdateEmployeeStatusDto, orgId: string) {
+    const filter: any = { _id: id, isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+    const doc = await this.employeeStatusModel.findOneAndUpdate(filter, dto, { new: true });
+    if (!doc) throw new NotFoundException('Status not found');
+    return doc;
+  }
+
+  async deleteEmployeeStatus(id: string, orgId: string) {
+    const filter: any = { _id: id, isDeleted: false };
+    if (orgId) filter.organizationId = orgId;
+    const doc = await this.employeeStatusModel.findOne(filter);
+    if (!doc) throw new NotFoundException('Status not found');
+    if (doc.isSystem) throw new BadRequestException('System statuses cannot be deleted');
+    // Refuse delete if any employee still uses this status.
+    const inUse = await this.employeeModel.countDocuments({
+      organizationId: orgId,
+      status: doc.value,
+      isDeleted: false,
+    });
+    if (inUse > 0) {
+      throw new ConflictException(`Cannot delete: ${inUse} employee(s) still have this status`);
+    }
+    doc.isDeleted = true;
+    doc.isActive = false;
+    await doc.save();
+    return { message: 'Status deleted successfully' };
+  }
 
   // ── Employees ──
 
   async createEmployee(dto: CreateEmployeeDto, createdBy: string, authToken?: string, orgId?: string) {
     const existing = await this.employeeModel.findOne({ email: dto.email, isDeleted: false, organizationId: orgId });
     if (existing) throw new ConflictException('Employee with this email already exists');
+
+    await this.assertEmployeeStatusValid(dto.status, orgId);
 
     // Find the highest existing NXR-XXXX number GLOBALLY (unique index is global, not per-org)
     // This includes deleted employees since they still hold the unique index
@@ -160,10 +268,15 @@ export class HrService {
   }
 
   async getEmployees(query: EmployeeQueryDto, orgId?: string) {
+    // Tenant-isolation guarantee: refuse to list across all orgs. If orgId is missing
+    // the only safe behaviour is to reject rather than silently drop the scope filter.
+    if (!orgId) {
+      throw new ForbiddenException('Organization context required to list employees');
+    }
     const { search, departmentId, designationId, employmentType, status, location, page = 1, limit = 20, sort = '-createdAt' } = query;
 
     const filter: any = { isDeleted: false };
-    if (orgId) filter.organizationId = orgId;
+    filter.organizationId = orgId;
     if (departmentId) filter.departmentId = departmentId;
     if (designationId) filter.designationId = designationId;
     if (employmentType) filter.employmentType = employmentType;
@@ -210,6 +323,7 @@ export class HrService {
   }
 
   async updateEmployee(id: string, dto: UpdateEmployeeDto, updatedBy: string, orgId?: string) {
+    await this.assertEmployeeStatusValid(dto.status, orgId);
     const filter: any = { _id: id, isDeleted: false };
     if (orgId) filter.organizationId = orgId;
     const employee = await this.employeeModel.findOneAndUpdate(

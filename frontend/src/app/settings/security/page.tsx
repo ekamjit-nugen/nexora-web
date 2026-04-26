@@ -56,7 +56,7 @@ export default function SecuritySettingsPage() {
     try {
       const token = localStorage.getItem("accessToken");
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3005"}/api/v1/auth/change-password`,
+        `${process.env.NEXT_PUBLIC_API_URL || "http://192.168.29.218:3005"}/api/v1/auth/change-password`,
         {
           method: "POST",
           headers: {
@@ -87,7 +87,7 @@ export default function SecuritySettingsPage() {
     try {
       const token = localStorage.getItem("accessToken");
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3005"}/api/v1/auth/mfa/setup`,
+        `${process.env.NEXT_PUBLIC_API_URL || "http://192.168.29.218:3005"}/api/v1/auth/mfa/setup`,
         {
           method: "POST",
           headers: {
@@ -118,7 +118,7 @@ export default function SecuritySettingsPage() {
     try {
       const token = localStorage.getItem("accessToken");
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3005"}/api/v1/auth/mfa/verify`,
+        `${process.env.NEXT_PUBLIC_API_URL || "http://192.168.29.218:3005"}/api/v1/auth/mfa/verify`,
         {
           method: "POST",
           headers: {
@@ -157,7 +157,7 @@ export default function SecuritySettingsPage() {
         try {
           const token = localStorage.getItem("accessToken");
           const res = await fetch(
-            `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3005"}/api/v1/auth/mfa`,
+            `${process.env.NEXT_PUBLIC_API_URL || "http://192.168.29.218:3005"}/api/v1/auth/mfa`,
             {
               method: "DELETE",
               headers: {

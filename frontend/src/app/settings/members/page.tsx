@@ -117,7 +117,7 @@ export default function MembersSettingsPage() {
     try {
       const token = localStorage.getItem("accessToken");
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3005"}/api/v1/auth/organizations/${currentOrg._id}/members/${memberId}`,
+        `${process.env.NEXT_PUBLIC_API_URL || "http://192.168.29.218:3005"}/api/v1/auth/organizations/${currentOrg._id}/members/${memberId}`,
         {
           method: "PUT",
           headers: {
@@ -144,7 +144,7 @@ export default function MembersSettingsPage() {
     try {
       const token = localStorage.getItem("accessToken");
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3005"}/api/v1/auth/organizations/${currentOrg._id}/members/${memberId}`,
+        `${process.env.NEXT_PUBLIC_API_URL || "http://192.168.29.218:3005"}/api/v1/auth/organizations/${currentOrg._id}/members/${memberId}`,
         {
           method: "DELETE",
           headers: { Authorization: `Bearer ${token}` },

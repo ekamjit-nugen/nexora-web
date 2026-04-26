@@ -1,4 +1,5 @@
 import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 
 @Catch()
 export class HttpExceptionFilterImpl implements ExceptionFilter {
@@ -32,12 +33,20 @@ export class HttpExceptionFilterImpl implements ExceptionFilter {
       }
     }
 
+    // Always emit a UUID for error correlation. If the gateway forwards x-request-id
+    // we reuse it so gateway/service logs line up; otherwise generate a fresh one so
+    // downstream tracing never sees the "unknown" placeholder.
+    const requestId =
+      (typeof request.headers['x-request-id'] === 'string' && request.headers['x-request-id']) ||
+      (typeof request.id === 'string' && request.id) ||
+      randomUUID();
+
     const errorResponse = {
       success: false as const,
       error: { code, message, ...(details && { details }), ...(fields && { fields }) },
       meta: {
         timestamp: new Date().toISOString(),
-        requestId: request.headers['x-request-id'] || 'unknown',
+        requestId,
       },
     };
 

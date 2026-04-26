@@ -5,20 +5,22 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 
 export default function Home() {
-  const { user, loading, isPlatformAdmin, organizations } = useAuth();
+  const { user, loading, isPlatformAdmin } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (!loading) {
       if (!user) {
         router.push("/login");
-      } else if (isPlatformAdmin && organizations.length === 0) {
+      } else if (isPlatformAdmin) {
+        // Platform admin is cross-tenant — always routes to the platform console,
+        // never through tenant dashboards or org onboarding.
         router.push("/platform");
       } else {
         router.push("/dashboard");
       }
     }
-  }, [user, loading, isPlatformAdmin, organizations, router]);
+  }, [user, loading, isPlatformAdmin, router]);
 
   return (
     <div className="min-h-screen flex items-center justify-center">

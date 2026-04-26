@@ -13,6 +13,7 @@ import { InvoiceSchema } from './schemas/invoice.schema';
 import { InvoiceTemplateSchema } from './schemas/invoice-template.schema';
 import { CallLogSchema } from './schemas/call-log.schema';
 import { BillingRateSchema } from './schemas/billing-rate.schema';
+import { EmployeeStatusSchema } from './schemas/employee-status.schema';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @Module({
@@ -27,6 +28,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
       { name: 'InvoiceTemplate', schema: InvoiceTemplateSchema },
       { name: 'CallLog', schema: CallLogSchema },
       { name: 'BillingRate', schema: BillingRateSchema },
+      { name: 'EmployeeStatus', schema: EmployeeStatusSchema },
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],

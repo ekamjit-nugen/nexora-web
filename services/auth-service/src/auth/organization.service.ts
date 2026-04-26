@@ -60,11 +60,31 @@ export class OrganizationService {
   async createOrganization(dto: CreateOrganizationDto, userId: string): Promise<{ organization: IOrganization; membership: IOrgMembership }> {
     this.logger.debug(`Creating organization: ${dto.name} by user: ${userId}`);
 
-    const baseSlug = this.generateSlug(dto.name);
+    // Case-insensitive uniqueness check on name. Two orgs with identical display names
+    // cause confusion in directory/invite flows and break the implicit "slug derived from name"
+    // contract. Reject with 409 so the client can prompt the user to pick a different name.
+    // (Bug #6 in auth QA 2026-04-17.)
+    const trimmedName = dto.name?.trim() || '';
+    if (!trimmedName) {
+      throw new HttpException('Organization name is required', HttpStatus.BAD_REQUEST);
+    }
+    const escaped = trimmedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const duplicate = await this.organizationModel.findOne({
+      name: { $regex: `^${escaped}$`, $options: 'i' },
+      isDeleted: { $ne: true },
+    });
+    if (duplicate) {
+      throw new HttpException(
+        { success: false, error: { code: 'ORG_NAME_TAKEN', message: 'An organization with this name already exists' } },
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    const baseSlug = this.generateSlug(trimmedName);
     const slug = await this.ensureUniqueSlug(baseSlug);
 
     const organization = new this.organizationModel({
-      name: dto.name,
+      name: trimmedName,
       slug,
       industry: dto.industry || 'other',
       size: dto.size || '1-10',

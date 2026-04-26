@@ -60,7 +60,7 @@ export function useGroupCall(options?: UseGroupCallOptions): UseGroupCallReturn 
       // and this hook coordinates the fallback decision
 
       // Check if SFU is available by attempting connection
-      const sfuUrl = process.env.NEXT_PUBLIC_CALL_SOCKET_URL || "http://localhost:3051";
+      const sfuUrl = process.env.NEXT_PUBLIC_CALL_SOCKET_URL || "http://192.168.29.218:3051";
       const response = await fetch(`${sfuUrl}/health`, { signal: AbortSignal.timeout(3000) }).catch(() => null);
 
       if (response?.ok) {

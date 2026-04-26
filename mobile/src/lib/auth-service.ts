@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import axios, { AxiosInstance } from 'axios';
 
-const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3005';
+const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.218:3005';
 
 export interface AuthTokens {
   accessToken: string;

@@ -335,21 +335,43 @@ export class InviteService {
       organizationId: membership.organizationId,
     });
 
-    // Update employee status in HR service from 'invited' to 'active'
+    // Sync HR employee record: update existing to 'active', or provision a fresh one
+    // if none exists for this org. The "existing user joins a new org" path (e.g. a multi-org
+    // user accepting a second invite) otherwise leaves them out of the target-org directory.
+    let hrRecordFound = false;
     try {
+      const tempToken = this.jwtService.sign({
+        sub: actualUserId,
+        email: user?.email,
+        roles: ['admin'],
+        organizationId: membership.organizationId,
+      }, { expiresIn: '1m' });
+
       const hrServiceUrl = process.env.HR_SERVICE_URL || 'http://hr-service:3010';
-      const hrRes = await fetch(`${hrServiceUrl}/api/v1/employees?userId=${actualUserId}&organizationId=${membership.organizationId}`, {
-        headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(5000),
-      });
+      const hrRes = await fetch(
+        `${hrServiceUrl}/api/v1/employees?userId=${actualUserId}`,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${tempToken}`,
+          },
+          signal: AbortSignal.timeout(5000),
+        },
+      );
       if (hrRes.ok) {
         const hrData: any = await hrRes.json();
         const employees = Array.isArray(hrData?.data) ? hrData.data : (hrData?.data ? [hrData.data] : []);
+        // HR list endpoint is scoped to the JWT's orgId, so every row here belongs
+        // to the target org. Any match = existing record → update status instead of create.
+        hrRecordFound = employees.length > 0;
         for (const emp of employees) {
           if (emp._id && (emp.status === 'invited' || emp.status === 'pending')) {
             await fetch(`${hrServiceUrl}/api/v1/employees/${emp._id}`, {
               method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${tempToken}`,
+              },
               body: JSON.stringify({ status: 'active', userId: actualUserId }),
               signal: AbortSignal.timeout(5000),
             }).catch(() => {});
@@ -358,6 +380,20 @@ export class InviteService {
       }
     } catch (err: any) {
       this.logger.warn(`Failed to update HR employee status: ${err?.message}`);
+    }
+
+    // Provision path for the existing-user → new-org case: the HR list came back empty,
+    // meaning the invite flow never created an employee in this org. Create one now so
+    // the user appears in the target org's directory immediately on acceptance.
+    if (!hrRecordFound && user) {
+      await this.hrSyncService.provisionEmployee(
+        user.email,
+        user.firstName || user.email.split('@')[0],
+        user.lastName || '',
+        membership.organizationId,
+        actualUserId,
+        'active',
+      );
     }
 
     // Publish event so chat-service can activate the user in pre-added conversations

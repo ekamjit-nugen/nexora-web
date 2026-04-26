@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { io, Socket } from "socket.io-client";
 
-const SFU_SOCKET_URL = process.env.NEXT_PUBLIC_CALL_SOCKET_URL || "http://localhost:3051";
+const SFU_SOCKET_URL = process.env.NEXT_PUBLIC_CALL_SOCKET_URL || "http://192.168.29.218:3051";
 
 interface SfuProducer {
   id: string;

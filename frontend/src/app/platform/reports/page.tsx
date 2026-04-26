@@ -77,7 +77,7 @@ export default function ReportsPage() {
 
   const handleGenerateReport = async (template: ReportTemplate) => {
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3005"}/api/v1/reports/generate`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://192.168.29.218:3005"}/api/v1/reports/generate`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

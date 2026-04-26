@@ -4,7 +4,7 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import { io, Socket } from "socket.io-client";
 import { authApi } from "@/lib/api";
 
-const CHAT_SOCKET_URL = process.env.NEXT_PUBLIC_CHAT_SOCKET_URL || "http://localhost:3002";
+const CHAT_SOCKET_URL = process.env.NEXT_PUBLIC_CHAT_SOCKET_URL || "http://192.168.29.218:3002";
 
 interface UseSocketOptions {
   namespace?: string;

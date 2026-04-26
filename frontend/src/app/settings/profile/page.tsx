@@ -60,7 +60,7 @@ export default function ProfileSettingsPage() {
     try {
       const token = localStorage.getItem("accessToken");
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3005"}/api/v1/auth/me`,
+        `${process.env.NEXT_PUBLIC_API_URL || "http://192.168.29.218:3005"}/api/v1/auth/me`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },

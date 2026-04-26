@@ -455,7 +455,7 @@ export default function AutomationRulesPage() {
     try {
       // Pass empty string as sample task id; backend will use a default sample
       const res = await taskApi.testAutomationRule(rule._id, "");
-      setTestResult(res.data);
+      setTestResult(res.data ?? null);
     } catch (err: any) {
       toast.error(err.message || "Failed to test rule");
     } finally {

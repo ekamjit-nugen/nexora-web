@@ -45,8 +45,8 @@ export class CreateEmployeeDto {
   @IsOptional() @IsArray() @IsString({ each: true })
   skills?: string[];
 
-  @IsOptional()
-  @IsEnum(['active', 'invited', 'pending', 'on_notice', 'exited', 'on_leave', 'probation'])
+  // Status is validated against the dynamic EmployeeStatus catalog at the service layer
+  @IsOptional() @IsString()
   status?: string;
 }
 
@@ -90,7 +90,8 @@ export class UpdateEmployeeDto {
   @IsOptional() @IsArray() @IsString({ each: true })
   skills?: string[];
 
-  @IsOptional() @IsEnum(['active', 'invited', 'pending', 'on_notice', 'exited', 'on_leave', 'probation'])
+  // Status is validated against the dynamic EmployeeStatus catalog at the service layer
+  @IsOptional() @IsString()
   status?: string;
 }
 
@@ -107,7 +108,8 @@ export class EmployeeQueryDto {
   @IsOptional() @IsEnum(['full_time', 'part_time', 'contract', 'intern'])
   employmentType?: string;
 
-  @IsOptional() @IsEnum(['active', 'invited', 'pending', 'on_notice', 'exited', 'on_leave', 'probation'])
+  // Status is validated against the dynamic EmployeeStatus catalog at the service layer
+  @IsOptional() @IsString()
   status?: string;
 
   @IsOptional() @IsString()
@@ -807,4 +809,40 @@ export class CallLogQueryDto {
 
   @IsOptional() @IsNumber() @Min(1) @Max(100)
   limit?: number;
+}
+
+// ── Employee Status DTOs ──
+
+export class CreateEmployeeStatusDto {
+  @IsString()
+  value: string;
+
+  @IsString()
+  label: string;
+
+  @IsOptional() @IsString()
+  color?: string;
+
+  @IsOptional() @IsString()
+  description?: string;
+
+  @IsOptional() @IsNumber()
+  order?: number;
+}
+
+export class UpdateEmployeeStatusDto {
+  @IsOptional() @IsString()
+  label?: string;
+
+  @IsOptional() @IsString()
+  color?: string;
+
+  @IsOptional() @IsString()
+  description?: string;
+
+  @IsOptional() @IsNumber()
+  order?: number;
+
+  @IsOptional() @IsBoolean()
+  isActive?: boolean;
 }

@@ -4,6 +4,7 @@ import compression from 'compression';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import axios from 'axios';
 import * as jwt from 'jsonwebtoken';
+import { randomUUID } from 'crypto';
 // @ts-ignore
 import rateLimit from 'express-rate-limit';
 
@@ -36,7 +37,7 @@ const ROUTES: Array<{ paths: string[]; target: string; name: string }> = [
   { paths: ['/api/v1/platform'], target: SERVICES.auth, name: 'auth-service' },
   { paths: ['/api/v1/auth'], target: SERVICES.auth, name: 'auth-service' },
   { paths: ['/api/v1/settings'], target: SERVICES.auth, name: 'auth-service' },
-  { paths: ['/api/v1/employees', '/api/v1/departments', '/api/v1/designations', '/api/v1/teams', '/api/v1/clients', '/api/v1/invoices', '/api/v1/billing', '/api/v1/call-logs'], target: SERVICES.hr, name: 'hr-service' },
+  { paths: ['/api/v1/employees', '/api/v1/employee-statuses', '/api/v1/departments', '/api/v1/designations', '/api/v1/teams', '/api/v1/clients', '/api/v1/invoices', '/api/v1/billing', '/api/v1/call-logs'], target: SERVICES.hr, name: 'hr-service' },
   { paths: ['/api/v1/attendance', '/api/v1/shifts', '/api/v1/alerts'], target: SERVICES.attendance, name: 'attendance-service' },
   { paths: ['/api/v1/policies'], target: SERVICES.policy, name: 'policy-service' },
   { paths: ['/api/v1/leaves', '/api/v1/leave-policies'], target: SERVICES.leave, name: 'leave-service' },
@@ -62,6 +63,19 @@ const ROUTES: Array<{ paths: string[]; target: string; name: string }> = [
   { paths: ['/api/v1/knowledge'], target: SERVICES.knowledge, name: 'knowledge-service' },
   { paths: ['/api/v1/helpdesk'], target: SERVICES.helpdesk, name: 'helpdesk-service' },
 ];
+
+// Request-id propagation: reuse an incoming x-request-id if a client/proxy already set one,
+// otherwise mint a UUID. Downstream services read it for trace correlation and return it
+// on the response so failed requests can be cross-referenced with gateway logs.
+app.use((req: any, res: any, next: any) => {
+  const incoming = req.headers['x-request-id'];
+  const id = typeof incoming === 'string' && incoming.length > 0 && incoming.length <= 128
+    ? incoming
+    : randomUUID();
+  req.headers['x-request-id'] = id;
+  res.setHeader('X-Request-Id', id);
+  next();
+});
 
 // Middleware
 app.use(helmet({

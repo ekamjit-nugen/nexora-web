@@ -1,11 +1,37 @@
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
 
 export interface PushNotification {
   title: string;
   body: string;
   data?: Record<string, string>;
   sound?: boolean;
+}
+
+/**
+ * Route to the correct screen based on notification data
+ */
+function navigateFromNotificationData(data: Record<string, string> | undefined): void {
+  if (!data) {
+    router.push('/notifications');
+    return;
+  }
+
+  const entityType = data.entityType || data.type;
+  const entityId = data.entityId || data.referenceId;
+
+  if (!entityId) {
+    router.push('/notifications');
+    return;
+  }
+
+  if (entityType === 'sprint' || entityType === 'project') {
+    router.push(`/project/${data.projectId || entityId}`);
+  } else {
+    // task, comment, assignment, due_date, overdue, status, mention
+    router.push(`/task/${entityId}`);
+  }
 }
 
 /**
@@ -40,6 +66,12 @@ export class MobilePushNotificationService {
             shouldSetBadge: true,
           };
         },
+      });
+
+      // Handle notification tap — navigate to relevant screen
+      this.registerNotificationResponseHandler((response) => {
+        const data = response.notification.request.content.data as Record<string, string> | undefined;
+        navigateFromNotificationData(data);
       });
 
       // Register for push notifications
@@ -248,6 +280,12 @@ export class MobilePushNotificationService {
     return this.isInitialized;
   }
 }
+
+/**
+ * Navigate to the correct screen from notification data.
+ * Can be called from any component that receives notification data.
+ */
+export { navigateFromNotificationData };
 
 // Singleton instance
 let pushNotificationService: MobilePushNotificationService | null = null;

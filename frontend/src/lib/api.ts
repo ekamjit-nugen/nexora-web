@@ -256,7 +256,31 @@ export const hrApi = {
   getDesignations: () => request<Designation[]>("/designations"),
   createDesignation: (data: { title: string; level: number; departmentId?: string; track?: string }) =>
     request<Designation>("/designations", { method: "POST", body: JSON.stringify(data) }),
+
+  // Employee Statuses (dynamic, org-scoped)
+  getEmployeeStatuses: () => request<EmployeeStatus[]>("/employee-statuses"),
+  createEmployeeStatus: (data: { value: string; label: string; color?: string; description?: string; order?: number }) =>
+    request<EmployeeStatus>("/employee-statuses", { method: "POST", body: JSON.stringify(data) }),
+  updateEmployeeStatus: (id: string, data: Partial<EmployeeStatus>) =>
+    request<EmployeeStatus>(`/employee-statuses/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteEmployeeStatus: (id: string) =>
+    request(`/employee-statuses/${id}`, { method: "DELETE" }),
 };
+
+export interface EmployeeStatus {
+  _id: string;
+  organizationId?: string;
+  value: string;
+  label: string;
+  color?: string;
+  description?: string;
+  order: number;
+  isSystem: boolean;
+  isActive: boolean;
+  isDeleted: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
 
 // ── Client Types & API ──
 

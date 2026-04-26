@@ -114,9 +114,11 @@ export const EmployeeSchema = new Schema<IEmployee>(
         verified: { type: Boolean, default: false },
       },
     ],
+    // Status is validated dynamically against the per-org EmployeeStatus catalog
+    // (see HrService.ensureEmployeeStatusValid). Kept as a plain string here so
+    // orgs can define custom statuses without a schema migration.
     status: {
       type: String,
-      enum: ['active', 'invited', 'pending', 'on_notice', 'exited', 'on_leave', 'probation'],
       default: 'active',
     },
     isActive: { type: Boolean, default: true },

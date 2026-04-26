@@ -126,6 +126,13 @@ export class AuthService {
   // ── Post-OTP Routing Engine ──
 
   async determinePostLoginRoute(user: IUser): Promise<PostLoginRoute> {
+    // Platform admin short-circuit: cross-tenant super admin, never routes through
+    // org onboarding. Goes straight to the platform control panel regardless of
+    // setupStage or membership state.
+    if (user.isPlatformAdmin) {
+      return { route: '/platform', reason: 'platform_admin' };
+    }
+
     const memberships = await this.orgMembershipModel.find({
       userId: user._id.toString(),
       status: { $in: ['active', 'pending', 'invited'] },
@@ -144,6 +151,21 @@ export class AuthService {
         reason: 'pending_invite',
         organizationId: pendingMembership.organizationId,
       };
+    }
+
+    // Case 2b: Already-onboarded user who has a pending invite to another org.
+    // This MUST take priority over the single_active_org / multi_org branches below,
+    // otherwise the frontend silently drops them into their existing dashboard and
+    // they never learn about the pending invite. (Bug #4 in auth QA 2026-04-17.)
+    if (user.setupStage === 'complete') {
+      const pendingMembership = memberships.find(m => m.status === 'pending' || m.status === 'invited');
+      if (pendingMembership) {
+        return {
+          route: '/auth/accept-invite',
+          reason: 'pending_invite',
+          organizationId: pendingMembership.organizationId,
+        };
+      }
     }
 
     // Case 3: Org created but profile incomplete
@@ -532,7 +554,7 @@ export class AuthService {
       payload.sub &&
       payload.email &&
       Array.isArray(payload.roles) &&
-      typeof payload.isPlatformAdmin === 'boolean' &&
+      (payload.isPlatformAdmin === undefined || typeof payload.isPlatformAdmin === 'boolean') &&
       (payload.orgRole === undefined || payload.orgRole === null || typeof payload.orgRole === 'string')
     );
   }
@@ -844,9 +866,13 @@ export class AuthService {
   }> {
     const user = await this.userModel.findOne({ email: email.toLowerCase() }).select('+otp +otpExpiresAt +otpAttempts');
 
+    // Uniform error for unknown email. Returning 404 USER_NOT_FOUND here let an attacker
+    // distinguish "no such user" from "wrong OTP" — a cheap email-enumeration oracle.
+    // Match the real INVALID_OTP branch below (400) so the two responses are indistinguishable.
+    // (Bug #5 in auth QA 2026-04-17.)
     if (!user) throw new HttpException(
-      { success: false, error: { code: 'USER_NOT_FOUND', message: 'User not found' } },
-      HttpStatus.NOT_FOUND,
+      { success: false, error: { code: 'INVALID_OTP', message: 'Invalid OTP. Please try again.' } },
+      HttpStatus.BAD_REQUEST,
     );
 
     // Check lockout

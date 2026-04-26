@@ -57,7 +57,7 @@ export function GlobalSearch({ onClose, onNavigate }: GlobalSearchProps) {
       if (hasFilter) params.has = hasFilter;
       const qs = new URLSearchParams(params).toString();
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3005"}/api/v1/chat/search?${qs}`,
+        `${process.env.NEXT_PUBLIC_API_URL || "http://192.168.29.218:3005"}/api/v1/chat/search?${qs}`,
         { headers: { Authorization: `Bearer ${localStorage.getItem("accessToken")}` } },
       );
       const data = await res.json();

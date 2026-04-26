@@ -122,7 +122,7 @@ export function OrgSwitcher({ currentOrg, organizations, onSwitch }: OrgSwitcher
             <button
               onClick={() => {
                 setOpen(false);
-                router.push("/register?step=org");
+                router.push("/onboarding");
               }}
               className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-[#F8FAFC] text-[#64748B] transition-colors"
             >

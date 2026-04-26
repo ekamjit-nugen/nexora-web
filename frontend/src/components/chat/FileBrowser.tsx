@@ -55,7 +55,7 @@ export function FileBrowser({ conversationId, onClose }: FileBrowserProps) {
   const fetchFiles = useCallback(async () => {
     setLoading(true);
     try {
-      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3005";
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://192.168.29.218:3005";
       const token = localStorage.getItem("accessToken");
       const qs = filter ? `&type=${filter}` : "";
       const res = await fetch(

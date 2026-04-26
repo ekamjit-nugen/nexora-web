@@ -1,6 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 
-const API_BASE = process.env.EXPO_PUBLIC_API_URL || "http://localhost:3005";
+const API_BASE = process.env.EXPO_PUBLIC_API_URL || "http://192.168.29.218:3005";
 
 if (!__DEV__ && API_BASE && !API_BASE.startsWith("https://")) {
   console.warn("[Security] API_BASE should use HTTPS in production:", API_BASE);

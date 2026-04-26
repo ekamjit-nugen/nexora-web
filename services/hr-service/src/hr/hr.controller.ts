@@ -17,6 +17,7 @@ import {
   CreateInvoiceTemplateDto,
   CreateBillingRateDto, UpdateBillingRateDto, BillingRateQueryDto,
   PreviewInvoiceDto, GenerateInvoiceDto,
+  CreateEmployeeStatusDto, UpdateEmployeeStatusDto,
 } from './dto/index';
 
 @Controller()
@@ -169,6 +170,37 @@ export class HrController {
   @UseGuards(JwtAuthGuard)
   async deleteDesignation(@Param('id') id: string, @Req() req) {
     const result = await this.hrService.deleteDesignation(id, req.user?.organizationId);
+    return { success: true, ...result };
+  }
+
+  // ── Employee Statuses ──
+
+  @Get('employee-statuses')
+  @UseGuards(JwtAuthGuard)
+  async getEmployeeStatuses(@Req() req) {
+    const statuses = await this.hrService.getEmployeeStatuses(req.user?.organizationId);
+    return { success: true, message: 'Statuses retrieved', data: statuses };
+  }
+
+  @Post('employee-statuses')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.CREATED)
+  async createEmployeeStatus(@Body() dto: CreateEmployeeStatusDto, @Req() req) {
+    const status = await this.hrService.createEmployeeStatus(dto, req.user?.organizationId, req.user?.userId);
+    return { success: true, message: 'Status created successfully', data: status };
+  }
+
+  @Put('employee-statuses/:id')
+  @UseGuards(JwtAuthGuard)
+  async updateEmployeeStatus(@Param('id') id: string, @Body() dto: UpdateEmployeeStatusDto, @Req() req) {
+    const status = await this.hrService.updateEmployeeStatus(id, dto, req.user?.organizationId);
+    return { success: true, message: 'Status updated successfully', data: status };
+  }
+
+  @Delete('employee-statuses/:id')
+  @UseGuards(JwtAuthGuard)
+  async deleteEmployeeStatus(@Param('id') id: string, @Req() req) {
+    const result = await this.hrService.deleteEmployeeStatus(id, req.user?.organizationId);
     return { success: true, ...result };
   }
 

@@ -384,7 +384,7 @@ export default function ChatPage() {
 
         // Stream response via SSE
         const token = localStorage.getItem("accessToken");
-        const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3005";
+        const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://192.168.29.218:3005";
         const response = await fetch(apiBase + "/api/v1/ai/chat/stream", {
           method: "POST",
           headers: {

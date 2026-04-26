@@ -1,4 +1,5 @@
 import { IsEmail, IsString, IsOptional, MinLength, MaxLength, Matches } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class LoginDto {
   @IsEmail()
@@ -84,6 +85,24 @@ export class ChangePasswordDto {
   @IsString() @MinLength(8) @MaxLength(128) @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/, {
     message: 'Password must contain uppercase, lowercase, numbers, and special characters',
   }) newPassword: string;
+}
+
+export class SendOtpDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
+  @IsEmail({}, { message: 'email must be a valid email address' })
+  @MaxLength(254)
+  email: string;
+}
+
+export class VerifyOtpDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
+  @IsEmail({}, { message: 'email must be a valid email address' })
+  @MaxLength(254)
+  email: string;
+
+  @IsString()
+  @Matches(/^\d{6}$/, { message: 'otp must be a 6-digit numeric code' })
+  otp: string;
 }
 
 /*

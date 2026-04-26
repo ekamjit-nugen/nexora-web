@@ -5,7 +5,7 @@ import { authApi } from "./api";
 const CHAT_SOCKET_URL =
   process.env.EXPO_PUBLIC_CHAT_SOCKET_URL ||
   process.env.EXPO_PUBLIC_API_URL ||
-  "http://localhost:3002";
+  "http://192.168.29.218:3002";
 
 type EventHandler = (...args: any[]) => void;
 

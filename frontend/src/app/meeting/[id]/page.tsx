@@ -38,8 +38,8 @@ type Panel = "participants" | "chat" | "transcript" | null;
 
 const CALL_SOCKET_URL =
   typeof window !== "undefined"
-    ? process.env.NEXT_PUBLIC_CALL_SOCKET_URL || "http://localhost:3051"
-    : "http://localhost:3051";
+    ? process.env.NEXT_PUBLIC_CALL_SOCKET_URL || "http://192.168.29.218:3051"
+    : "http://192.168.29.218:3051";
 
 // ── Helpers ──
 
