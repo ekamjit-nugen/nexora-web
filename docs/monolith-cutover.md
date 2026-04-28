@@ -79,30 +79,56 @@ This was verified end-to-end on commit `0a1895c` — full Nugen March
 2026 payroll flow returns the same numbers (₹12,61,250 net, 13
 employees) on both `:3005` and `:3015`.
 
-## Routing the frontend to the monolith (cutover)
+## Routing the frontend to the monolith
 
-When you're ready to flip:
+The current `main` is already wired this way — frontend defaults to
+`http://localhost:3015`. But there are TWO sources that bake the URL
+into the Next.js client bundle, and missing either silently leaves the
+old `:3005` value in production:
 
-1. Edit `docker-compose.simple.yml` `frontend` service:
-   ```yaml
-   args:
-     NEXT_PUBLIC_API_URL:        http://192.168.29.218:3015
-     NEXT_PUBLIC_CHAT_SOCKET_URL: http://192.168.29.218:3015
-     NEXT_PUBLIC_CALL_SOCKET_URL: http://192.168.29.218:3015
-   ```
-   (Or set those vars in `.env` if you've parameterised the build.)
+  1. **Root `.env`** (gitignored, per-machine) — read by docker-compose
+     for `args: NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-...}`.
+  2. **`frontend/.env.local`** (gitignored, per-machine) — Next.js
+     auto-loads this DURING `npm run build`, OVERRIDING the build arg.
 
-2. Rebuild the frontend so it bakes those URLs:
-   ```bash
-   docker compose -p nexora -f docker-compose.simple.yml build frontend
-   docker compose -p nexora -f docker-compose.simple.yml up -d --force-recreate frontend
-   ```
+Both must be updated. Use the committed templates as your starting point:
 
-3. Hit `http://localhost:3100` in the browser. Login via OTP.
-   Everything routes to the monolith now.
+  - `.env.example`             ← root template
+  - `frontend/.env.example`    ← frontend template
 
-4. To roll back: revert step 1 + rebuild. Legacy services are still
-   running, so the frontend immediately starts hitting them again.
+To set up a fresh clone correctly:
+
+```bash
+cp .env.example .env
+cp frontend/.env.example frontend/.env.local
+# Both files now point at http://localhost:3015 by default.
+# If accessing from another machine on the LAN, edit both to use
+# your dev box's LAN IP instead of localhost (e.g. 192.168.1.42).
+```
+
+To verify what URL the running frontend is calling:
+
+```bash
+docker exec nexora-frontend sh -c \
+  "find /app/.next -name '*.js' | xargs grep -hoE 'localhost:30[0-9]+' | sort -u"
+```
+
+Should print `localhost:3015` only. If you see `localhost:3005`,
+your `.env` files are stale — fix them and rebuild **with `--no-cache`**:
+
+```bash
+docker compose -p nexora -f docker-compose.simple.yml build --no-cache frontend
+docker compose -p nexora -f docker-compose.simple.yml up -d --force-recreate frontend
+```
+
+**Why `--no-cache` matters**: docker can cache the `RUN npm run build`
+layer based on filesystem inputs even when `--build-arg` changes,
+because the ARG only takes effect on layers that use it via `ENV`.
+Re-running without `--no-cache` may give you a stale image.
+
+To roll back to the legacy 18-service stack: `git checkout
+v18-microservices-final` then `docker compose up -d`. Legacy frontend
+URLs will be picked up from the older committed templates.
 
 ## Decommissioning the 18 legacy services
 
