@@ -6,6 +6,8 @@ import { PayrollModule } from './modules/payroll/payroll.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { LeaveModule } from './modules/leave/leave.module';
 import { PolicyModule } from './modules/policy/policy.module';
+import { TaskModule } from './modules/task/task.module';
+import { ProjectModule } from './modules/project/project.module';
 
 /**
  * The root app module of the Nexora monolith.
@@ -46,6 +48,8 @@ import { PolicyModule } from './modules/policy/policy.module';
     AttendanceModule, // services/attendance-service -> modules/attendance (migrated)
     LeaveModule,      // services/leave-service      -> modules/leave      (migrated)
     PolicyModule,     // services/policy-service     -> modules/policy     (migrated)
+    TaskModule,       // services/task-service       -> modules/task       (migrated)
+    ProjectModule,    // services/project-service    -> modules/project    (migrated)
     // Migration playbook: docs/monolith-migration-playbook.md
   ],
 })
