@@ -10,6 +10,13 @@ import { TaskModule } from './modules/task/task.module';
 import { ProjectModule } from './modules/project/project.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { CallingModule } from './modules/calling/calling.module';
+import { NotificationModule } from './modules/notification/notification.module';
+import { MediaModule } from './modules/media/media.module';
+import { AssetModule } from './modules/asset/asset.module';
+import { BenchModule } from './modules/bench/bench.module';
+import { HelpdeskModule } from './modules/helpdesk/helpdesk.module';
+import { KnowledgeModule } from './modules/knowledge/knowledge.module';
+import { AiModule } from './modules/ai/ai.module';
 
 /**
  * The root app module of the Nexora monolith.
@@ -52,8 +59,15 @@ import { CallingModule } from './modules/calling/calling.module';
     PolicyModule,     // services/policy-service     -> modules/policy     (migrated)
     TaskModule,       // services/task-service       -> modules/task       (migrated)
     ProjectModule,    // services/project-service    -> modules/project    (migrated)
-    ChatModule,       // services/chat-service       -> modules/chat       (migrated, WS+REST)
-    CallingModule,    // services/calling-service    -> modules/calling    (migrated, WS+REST)
+    ChatModule,         // services/chat-service         -> modules/chat         (migrated, WS+REST)
+    CallingModule,      // services/calling-service      -> modules/calling      (migrated, WS+REST)
+    NotificationModule, // services/notification-service -> modules/notification (migrated)
+    MediaModule,        // services/media-service        -> modules/media        (migrated)
+    AssetModule,        // services/asset-service        -> modules/asset        (migrated)
+    BenchModule,        // services/bench-service        -> modules/bench        (migrated)
+    HelpdeskModule,     // services/helpdesk-service     -> modules/helpdesk     (migrated)
+    KnowledgeModule,    // services/knowledge-service    -> modules/knowledge    (migrated)
+    AiModule,           // services/ai-service           -> modules/ai           (migrated, stateless)
     // Migration playbook: docs/monolith-migration-playbook.md
   ],
 })
