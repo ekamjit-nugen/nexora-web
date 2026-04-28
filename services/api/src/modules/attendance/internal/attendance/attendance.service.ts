@@ -583,7 +583,11 @@ export class AttendanceService {
   }
 
   async getAllAttendance(query: AttendanceQueryDto, orgId?: string) {
-    const { employeeId, startDate, endDate, status, page = 1, limit = 20 } = query;
+    const {
+      employeeId, startDate, endDate, status,
+      search, departmentId, managerId,
+      page = 1, limit = 20,
+    } = query;
     const filter: any = { isDeleted: false };
     if (orgId) filter.organizationId = orgId;
     if (employeeId) filter.employeeId = employeeId;
@@ -592,6 +596,39 @@ export class AttendanceService {
       filter.date = {};
       if (startDate) filter.date.$gte = new Date(startDate);
       if (endDate) filter.date.$lte = new Date(endDate);
+    }
+
+    // Rich filters that need an HR-side lookup. We resolve search /
+    // department / manager into a list of employeeIds first, then
+    // attendance-scope the query to those ids. This keeps Mongo query
+    // shape simple and indexed-friendly.
+    const needsHrJoin = Boolean(search || departmentId || managerId);
+    if (needsHrJoin && orgId) {
+      const empFilter: any = {
+        organizationId: orgId,
+        isDeleted: { $ne: true },
+      };
+      if (departmentId) empFilter.departmentId = departmentId;
+      if (managerId) empFilter.reportingManagerId = managerId;
+      if (search) {
+        const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+        empFilter.$or = [
+          { firstName: re }, { lastName: re }, { email: re }, { employeeId: re },
+        ];
+      }
+      // Reach into hr DB by name; the attendance model only stores the
+      // hr employee id, so we need to translate the filter through hr.
+      const hrConn = this.attendanceModel.db.useDb('nexora_hr', { useCache: true });
+      const employeeCollection = hrConn.collection('employees');
+      const matchedIds = await employeeCollection
+        .find(empFilter, { projection: { _id: 1 } })
+        .limit(2000)
+        .toArray();
+      const ids = matchedIds.map((e: any) => String(e._id));
+      // Combine with any existing employeeId filter — narrowest wins.
+      filter.employeeId = filter.employeeId
+        ? (ids.includes(filter.employeeId) ? filter.employeeId : '__no_match__')
+        : { $in: ids.length ? ids : ['__no_match__'] };
     }
 
     const skip = (page - 1) * limit;

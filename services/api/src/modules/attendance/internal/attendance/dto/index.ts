@@ -83,6 +83,20 @@ export class AttendanceQueryDto {
   @IsEnum(['present', 'late', 'half_day', 'absent', 'holiday', 'leave', 'wfh', 'comp_off'])
   status?: string;
 
+  // Rich filters (added for the redesigned /attendance page).
+  // - search: free-text match on the employee snapshot (name / employeeId)
+  // - departmentId: HR department _id
+  // - managerId: HR reporting-manager _id (used for "my team" view)
+  // The service joins to nexora_hr.employees to honour these.
+  @IsOptional() @IsString()
+  search?: string;
+
+  @IsOptional() @IsString()
+  departmentId?: string;
+
+  @IsOptional() @IsString()
+  managerId?: string;
+
   @IsOptional() @IsNumber() @Min(1)
   page?: number;
 

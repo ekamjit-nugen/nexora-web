@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { AttendanceFilters } from "@/components/AttendanceFilters";
 import { RouteGuard } from "@/components/route-guard";
 
 interface TodayData {
@@ -28,6 +29,18 @@ export default function AttendancePage() {
   const [today, setToday] = useState<TodayData>({ checkedIn: false, checkedOut: false, record: null });
   const [history, setHistory] = useState<Attendance[]>([]);
   const [allRecords, setAllRecords] = useState<Attendance[]>([]);
+  // Default-today filter for the "All" tab. Each change triggers a
+  // dedicated re-fetch via the useEffect below — separate from the
+  // initial bulk fetchData() so changing filters doesn't reload
+  // approvals / employee map / stats.
+  const [allFilters, setAllFilters] = useState<{
+    startDate?: string; endDate?: string;
+    status?: string; search?: string;
+    departmentId?: string; managerId?: string;
+  }>(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return { startDate: today, endDate: today };
+  });
   const [pendingApprovals, setPendingApprovals] = useState<Attendance[]>([]);
   const [stats, setStats] = useState({ present: 0, late: 0, absent: 0, wfh: 0, pendingApprovals: 0 });
   const [employeeMap, setEmployeeMap] = useState<Record<string, string>>({});
@@ -117,6 +130,8 @@ export default function AttendancePage() {
       setActivePolicy(workPolicy);
 
       if (canManage && results[4]) {
+        // Initial load uses the default (today) filter via the
+        // re-fetch effect below; this just seeds while that runs.
         setAllRecords(((results[4] as { data: Attendance[] }).data) || []);
       }
       if (canManage && results[5]) {
@@ -294,6 +309,21 @@ export default function AttendancePage() {
       { key: "holidays" as const, label: "Holidays" },
     ] : []),
   ];
+
+  // Re-fetch the "All" tab whenever filters change. Only fires when
+  // the "all" tab is active to avoid wasted network on the "my" tab.
+  useEffect(() => {
+    if (!canManage || activeTab !== "all") return;
+    const params: Record<string, string> = {};
+    Object.entries(allFilters).forEach(([k, v]) => {
+      if (v) params[k] = String(v);
+    });
+    let alive = true;
+    attendanceApi.getAll(params).then((r: any) => {
+      if (alive) setAllRecords(r?.data || []);
+    }).catch(() => { /* swallowed; toast is too noisy on filter typing */ });
+    return () => { alive = false; };
+  }, [allFilters, activeTab, canManage]);
 
   const currentRecords = activeTab === "all" ? allRecords : activeTab === "approvals" ? pendingApprovals : history;
   const showEmployeeCol = activeTab === "all" || activeTab === "approvals";
@@ -502,6 +532,18 @@ export default function AttendancePage() {
                 records table to keep the table markup untouched. */}
             {activeTab === "holidays" && (
               <HolidayCalendarTab canWrite={!!canManage} />
+            )}
+
+            {/* Filter bar — only on the "All Records" tab for HR/admin/owner.
+                Default = today; role-aware (privileged sees dept + manager). */}
+            {activeTab === "all" && canManage && (
+              <div className="mb-4">
+                <AttendanceFilters
+                  privileged={canManage}
+                  value={allFilters}
+                  onChange={(next) => setAllFilters(next)}
+                />
+              </div>
             )}
 
             {/* Records Table */}

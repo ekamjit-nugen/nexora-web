@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { DatabaseModule } from './database/database.module';
 import { BootstrapAuthModule } from './auth/auth.module';
 import { EventBusModule } from './events/event-bus.module';
+import { S3BootstrapModule } from './s3/s3.module';
 
 /**
  * Aggregates all the cross-module infrastructure into a single import.
@@ -23,12 +24,14 @@ import { EventBusModule } from './events/event-bus.module';
     DatabaseModule,
     BootstrapAuthModule,
     EventBusModule,
+    S3BootstrapModule,
   ],
   exports: [
     ConfigModule,
     DatabaseModule,
     BootstrapAuthModule,
     EventBusModule,
+    S3BootstrapModule,
   ],
 })
 export class BootstrapModule {}
