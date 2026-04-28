@@ -1,6 +1,11 @@
 import * as SecureStore from "expo-secure-store";
 
-const API_BASE = process.env.EXPO_PUBLIC_API_URL || "http://192.168.29.218:3005";
+// Monolith default. The legacy 18-service stack lived at :3005 (Kong);
+// since the cutover, every API + WS endpoint is served by the monolith
+// on :3015. For real-device testing, override via EXPO_PUBLIC_API_URL
+// in mobile/.env to your dev box's LAN IP (e.g. http://192.168.x.y:3015)
+// because `localhost` on a phone points at the phone itself, not your laptop.
+const API_BASE = process.env.EXPO_PUBLIC_API_URL || "http://192.168.29.218:3015";
 
 if (!__DEV__ && API_BASE && !API_BASE.startsWith("https://")) {
   console.warn("[Security] API_BASE should use HTTPS in production:", API_BASE);

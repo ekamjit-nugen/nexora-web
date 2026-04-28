@@ -2,7 +2,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import axios, { AxiosInstance } from 'axios';
 
-const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.218:3005';
+// Monolith default — see comment in mobile/lib/api.ts. Both files MUST
+// stay in sync; if/when one of them is deleted, prefer keeping
+// mobile/lib/api.ts (the newer location).
+const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.218:3015';
 
 export interface AuthTokens {
   accessToken: string;

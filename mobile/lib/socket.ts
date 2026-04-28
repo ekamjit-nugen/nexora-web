@@ -2,10 +2,16 @@ import { io, Socket } from "socket.io-client";
 import * as SecureStore from "expo-secure-store";
 import { authApi } from "./api";
 
+// In the legacy 18-service stack, chat ran on :3002 (chat-service) and
+// calling on :3051 (calling-service) — separate ports for separate
+// processes. In the monolith, both Socket.IO gateways are mounted on
+// the same Nest app, so all WS traffic multiplexes through :3015.
+// Override via EXPO_PUBLIC_CHAT_SOCKET_URL only if chat is ever split
+// back out to its own service (see docs/extract-to-microservice.md).
 const CHAT_SOCKET_URL =
   process.env.EXPO_PUBLIC_CHAT_SOCKET_URL ||
   process.env.EXPO_PUBLIC_API_URL ||
-  "http://192.168.29.218:3002";
+  "http://192.168.29.218:3015";
 
 type EventHandler = (...args: any[]) => void;
 
