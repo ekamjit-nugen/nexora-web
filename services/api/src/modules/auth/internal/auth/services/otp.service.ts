@@ -17,7 +17,7 @@ export class OtpService {
   private readonly mailTransporter: nodemailer.Transporter;
 
   constructor(
-    @InjectModel('User') private userModel: Model<IUser>,
+    @InjectModel('User', 'nexora_auth') private userModel: Model<IUser>,
     private auditService: AuditService,
   ) {
     this.mailTransporter = nodemailer.createTransport({

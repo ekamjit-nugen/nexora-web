@@ -38,11 +38,11 @@ export interface ScheduledReport {
 @Injectable()
 export class ReportingService {
   constructor(
-    @InjectModel('Organization') private organizationModel: Model<any>,
-    @InjectModel('User') private userModel: Model<any>,
-    @InjectModel('AuditLog') private auditLogModel: Model<any>,
-    @InjectModel('ReportTemplate') private reportTemplateModel: Model<ReportTemplate>,
-    @InjectModel('ScheduledReport') private scheduledReportModel: Model<ScheduledReport>,
+    @InjectModel('Organization', 'nexora_auth') private organizationModel: Model<any>,
+    @InjectModel('User', 'nexora_auth') private userModel: Model<any>,
+    @InjectModel('AuditLog', 'nexora_auth') private auditLogModel: Model<any>,
+    @InjectModel('ReportTemplate', 'nexora_auth') private reportTemplateModel: Model<ReportTemplate>,
+    @InjectModel('ScheduledReport', 'nexora_auth') private scheduledReportModel: Model<ScheduledReport>,
   ) {}
 
   // ── Report Generation ──

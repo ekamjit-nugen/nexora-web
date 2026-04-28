@@ -15,7 +15,7 @@ export class GdprService {
   private readonly logger = new Logger(GdprService.name);
 
   constructor(
-    @InjectModel('User') private userModel: Model<IUser>,
+    @InjectModel('User', 'nexora_auth') private userModel: Model<IUser>,
   ) {}
 
   /**

@@ -8,8 +8,8 @@ import { v4 as uuidv4 } from 'uuid';
 @Injectable()
 export class OrgManagementService {
   constructor(
-    @InjectModel('Organization') private orgModel: Model<IOrganization>,
-    @InjectModel('OrgMembership') private membershipModel: Model<IOrgMembership>,
+    @InjectModel('Organization', 'nexora_auth') private orgModel: Model<IOrganization>,
+    @InjectModel('OrgMembership', 'nexora_auth') private membershipModel: Model<IOrgMembership>,
   ) {}
 
   /**

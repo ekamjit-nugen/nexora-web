@@ -8,9 +8,9 @@ import { IOrgMembership } from './schemas/org-membership.schema';
 @Injectable()
 export class PlatformAnalyticsService {
   constructor(
-    @InjectModel('User') private userModel: Model<IUser>,
-    @InjectModel('Organization') private orgModel: Model<IOrganization>,
-    @InjectModel('OrgMembership') private membershipModel: Model<IOrgMembership>,
+    @InjectModel('User', 'nexora_auth') private userModel: Model<IUser>,
+    @InjectModel('Organization', 'nexora_auth') private orgModel: Model<IOrganization>,
+    @InjectModel('OrgMembership', 'nexora_auth') private membershipModel: Model<IOrgMembership>,
   ) {}
 
   /**

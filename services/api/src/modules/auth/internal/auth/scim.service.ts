@@ -16,8 +16,8 @@ export class ScimService {
   private readonly logger = new Logger(ScimService.name);
 
   constructor(
-    @InjectModel('User') private userModel: Model<IUser>,
-    @InjectModel('Organization') private orgModel: Model<any>,
+    @InjectModel('User', 'nexora_auth') private userModel: Model<IUser>,
+    @InjectModel('Organization', 'nexora_auth') private orgModel: Model<any>,
   ) {}
 
   /**

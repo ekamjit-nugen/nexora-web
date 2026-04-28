@@ -47,10 +47,10 @@ export class AuthService {
   private readonly mailTransporter: nodemailer.Transporter;
 
   constructor(
-    @InjectModel('User') private userModel: Model<IUser>,
-    @InjectModel('Role') private roleModel: Model<IRole>,
-    @InjectModel('OrgMembership') private orgMembershipModel: Model<IOrgMembership>,
-    @InjectModel('Session') private sessionModel: Model<ISession>,
+    @InjectModel('User', 'nexora_auth') private userModel: Model<IUser>,
+    @InjectModel('Role', 'nexora_auth') private roleModel: Model<IRole>,
+    @InjectModel('OrgMembership', 'nexora_auth') private orgMembershipModel: Model<IOrgMembership>,
+    @InjectModel('Session', 'nexora_auth') private sessionModel: Model<ISession>,
     private jwtService: JwtService,
     private configService: ConfigService,
     private auditService: AuditService,

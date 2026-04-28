@@ -24,7 +24,7 @@ export class DeviceFingerprintService {
   private readonly logger = new Logger(DeviceFingerprintService.name);
 
   constructor(
-    @InjectModel('TrustedDevice') private trustedDeviceModel: Model<ITrustedDevice>,
+    @InjectModel('TrustedDevice', 'nexora_auth') private trustedDeviceModel: Model<ITrustedDevice>,
   ) {}
 
   /**

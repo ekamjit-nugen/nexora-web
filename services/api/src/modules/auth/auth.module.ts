@@ -89,9 +89,7 @@ import { HealthController } from './internal/health/health.controller';
 import { AUTH_PUBLIC_API } from './public-api';
 import { AuthPublicApiImpl } from './public-api/auth-public-api.impl';
 
-// AUTH_DB token is referenced from the extract-to-microservice runbook;
-// not imported here today because schemas live on the default connection.
-// import { AUTH_DB } from '../../bootstrap/database/database.tokens';
+import { AUTH_DB } from '../../bootstrap/database/database.tokens';
 
 /**
  * AuthModule — first migrated module in the monolith.
@@ -117,30 +115,32 @@ import { AuthPublicApiImpl } from './public-api/auth-public-api.impl';
 @Module({
   imports: [
     PassportModule.register({ defaultStrategy: 'jwt' }),
-    // Schemas register on the DEFAULT connection. The named-connection
-    // path (forFeature(..., AUTH_DB)) is the migration target for the
-    // day this module is split out — at that point we flip both the
-    // forFeature and every @InjectModel('Name') -> @InjectModel('Name', AUTH_DB)
-    // in one PR. Until then, every internal service uses
-    // @InjectModel('User') / etc. without a connection arg, and that
-    // resolves to the default connection registered by DatabaseModule.
-    // The AUTH_DB token is still exported and referenced in the
-    // extract-to-microservice runbook.
-    MongooseModule.forFeature([
-      { name: 'User', schema: UserSchema },
-      { name: 'Role', schema: RoleSchema },
-      { name: 'Organization', schema: OrganizationSchema },
-      { name: 'OrgMembership', schema: OrgMembershipSchema },
-      { name: 'Session', schema: SessionSchema },
-      { name: 'AuditLog', schema: AuditLogSchema },
-      { name: 'ReportTemplate', schema: ReportTemplateSchema },
-      { name: 'ScheduledReport', schema: ScheduledReportSchema },
-      { name: 'TrustedDevice', schema: TrustedDeviceSchema },
-      { name: 'ApiKey', schema: ApiKeySchema },
-      { name: 'Integration', schema: IntegrationSchema },
-      { name: 'WebhookEndpoint', schema: WebhookEndpointSchema },
-      { name: 'BugReport', schema: BugReportSchema },
-    ]),
+    // Each module uses its OWN named Mongo connection (DatabaseModule
+    // registers one per module with the right DB name appended to the
+    // base MONGODB_URI). Same Mongo instance today; per-module URI
+    // override env var ready when a module wants its own cluster
+    // post-split. CRITICAL: every internal `@InjectModel('Name')` MUST
+    // also pass AUTH_DB as the connection name — otherwise the model
+    // resolves on the default (un-named) connection and reads/writes
+    // go to the WRONG database.
+    MongooseModule.forFeature(
+      [
+        { name: 'User', schema: UserSchema },
+        { name: 'Role', schema: RoleSchema },
+        { name: 'Organization', schema: OrganizationSchema },
+        { name: 'OrgMembership', schema: OrgMembershipSchema },
+        { name: 'Session', schema: SessionSchema },
+        { name: 'AuditLog', schema: AuditLogSchema },
+        { name: 'ReportTemplate', schema: ReportTemplateSchema },
+        { name: 'ScheduledReport', schema: ScheduledReportSchema },
+        { name: 'TrustedDevice', schema: TrustedDeviceSchema },
+        { name: 'ApiKey', schema: ApiKeySchema },
+        { name: 'Integration', schema: IntegrationSchema },
+        { name: 'WebhookEndpoint', schema: WebhookEndpointSchema },
+        { name: 'BugReport', schema: BugReportSchema },
+      ],
+      AUTH_DB,
+    ),
   ],
 
   controllers: [

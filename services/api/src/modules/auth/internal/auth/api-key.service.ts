@@ -10,7 +10,7 @@ export class ApiKeyService {
   private readonly logger = new Logger(ApiKeyService.name);
 
   constructor(
-    @InjectModel('ApiKey') private apiKeyModel: Model<IApiKey>,
+    @InjectModel('ApiKey', 'nexora_auth') private apiKeyModel: Model<IApiKey>,
   ) {}
 
   /**

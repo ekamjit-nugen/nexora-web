@@ -8,7 +8,7 @@ export class SessionService {
   private readonly logger = new Logger(SessionService.name);
 
   constructor(
-    @InjectModel('Session') private sessionModel: Model<ISession>,
+    @InjectModel('Session', 'nexora_auth') private sessionModel: Model<ISession>,
   ) {}
 
   async getSessions(userId: string): Promise<ISession[]> {

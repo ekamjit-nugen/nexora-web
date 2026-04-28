@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { BootstrapModule } from './bootstrap/bootstrap.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { HrModule } from './modules/hr/hr.module';
+import { PayrollModule } from './modules/payroll/payroll.module';
 
 /**
  * The root app module of the Nexora monolith.
@@ -35,7 +37,9 @@ import { AuthModule } from './modules/auth/auth.module';
 @Module({
   imports: [
     BootstrapModule,
-    AuthModule, // services/auth-service -> modules/auth (migrated)
+    AuthModule,    // services/auth-service    -> modules/auth    (migrated)
+    HrModule,      // services/hr-service      -> modules/hr      (migrated)
+    PayrollModule, // services/payroll-service -> modules/payroll (migrated)
     // Migration playbook: docs/monolith-migration-playbook.md
   ],
 })

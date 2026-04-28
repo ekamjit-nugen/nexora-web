@@ -14,7 +14,7 @@ import { Model } from 'mongoose';
 @Injectable()
 export class OrgMembershipGuard implements CanActivate {
   constructor(
-    @InjectModel('OrgMembership') private orgMembershipModel: Model<any>,
+    @InjectModel('OrgMembership', 'nexora_auth') private orgMembershipModel: Model<any>,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {

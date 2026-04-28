@@ -71,7 +71,7 @@ export class AuditService {
   private readonly logger = new Logger(AuditService.name);
 
   constructor(
-    @InjectModel('AuditLog') private auditLogModel: Model<IAuditLog>,
+    @InjectModel('AuditLog', 'nexora_auth') private auditLogModel: Model<IAuditLog>,
   ) {}
 
   async log(params: {

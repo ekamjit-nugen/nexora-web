@@ -17,9 +17,9 @@ export class InviteService {
   private readonly frontendUrl: string;
 
   constructor(
-    @InjectModel('Organization') private organizationModel: Model<IOrganization>,
-    @InjectModel('OrgMembership') private orgMembershipModel: Model<IOrgMembership>,
-    @InjectModel('User') private userModel: Model<IUser>,
+    @InjectModel('Organization', 'nexora_auth') private organizationModel: Model<IOrganization>,
+    @InjectModel('OrgMembership', 'nexora_auth') private orgMembershipModel: Model<IOrgMembership>,
+    @InjectModel('User', 'nexora_auth') private userModel: Model<IUser>,
     private jwtService: JwtService,
     private auditService: AuditService,
     private hrSyncService: HrSyncService,

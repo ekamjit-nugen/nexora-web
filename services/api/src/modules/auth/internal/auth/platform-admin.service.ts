@@ -11,10 +11,10 @@ export class PlatformAdminService {
   private readonly logger = new Logger(PlatformAdminService.name);
 
   constructor(
-    @InjectModel('User') private userModel: Model<IUser>,
-    @InjectModel('Organization') private organizationModel: Model<IOrganization>,
-    @InjectModel('OrgMembership') private orgMembershipModel: Model<IOrgMembership>,
-    @InjectModel('AuditLog') private auditLogModel: Model<IAuditLog>,
+    @InjectModel('User', 'nexora_auth') private userModel: Model<IUser>,
+    @InjectModel('Organization', 'nexora_auth') private organizationModel: Model<IOrganization>,
+    @InjectModel('OrgMembership', 'nexora_auth') private orgMembershipModel: Model<IOrgMembership>,
+    @InjectModel('AuditLog', 'nexora_auth') private auditLogModel: Model<IAuditLog>,
   ) {}
 
   /**

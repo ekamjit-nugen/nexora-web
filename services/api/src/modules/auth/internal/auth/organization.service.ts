@@ -20,10 +20,10 @@ export class OrganizationService {
   private readonly frontendUrl: string;
 
   constructor(
-    @InjectModel('Organization') private organizationModel: Model<IOrganization>,
-    @InjectModel('OrgMembership') private orgMembershipModel: Model<IOrgMembership>,
-    @InjectModel('User') private userModel: Model<IUser>,
-    @InjectModel('Role') private roleModel: Model<IRole>,
+    @InjectModel('Organization', 'nexora_auth') private organizationModel: Model<IOrganization>,
+    @InjectModel('OrgMembership', 'nexora_auth') private orgMembershipModel: Model<IOrgMembership>,
+    @InjectModel('User', 'nexora_auth') private userModel: Model<IUser>,
+    @InjectModel('Role', 'nexora_auth') private roleModel: Model<IRole>,
     private jwtService: JwtService,
     private auditService: AuditService,
     private hrSyncService: HrSyncService,

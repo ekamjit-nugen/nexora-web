@@ -10,9 +10,7 @@ import {
 } from './auth-public-api';
 import { IUser } from '../internal/auth/schemas/user.schema';
 import { IOrganization } from '../internal/auth/schemas/organization.schema';
-// AUTH_DB is exported for forward-compat; today schemas live on the
-// default connection (see auth.module.ts comment for the rationale).
-// import { AUTH_DB } from '../../../bootstrap/database/database.tokens';
+import { AUTH_DB } from '../../../bootstrap/database/database.tokens';
 
 /**
  * In-process implementation of AuthPublicApi.
@@ -32,8 +30,8 @@ import { IOrganization } from '../internal/auth/schemas/organization.schema';
 @Injectable()
 export class AuthPublicApiImpl implements AuthPublicApi {
   constructor(
-    @InjectModel('User') private readonly userModel: Model<IUser>,
-    @InjectModel('Organization') private readonly orgModel: Model<IOrganization>,
+    @InjectModel('User', AUTH_DB) private readonly userModel: Model<IUser>,
+    @InjectModel('Organization', AUTH_DB) private readonly orgModel: Model<IOrganization>,
     private readonly jwt: JwtService,
   ) {}
 

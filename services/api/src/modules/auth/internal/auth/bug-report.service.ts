@@ -16,8 +16,8 @@ export class BugReportService {
   private readonly mailTransporter: nodemailer.Transporter;
 
   constructor(
-    @InjectModel('BugReport') private bugReportModel: Model<IBugReport>,
-    @InjectModel('User') private userModel: Model<IUser>,
+    @InjectModel('BugReport', 'nexora_auth') private bugReportModel: Model<IBugReport>,
+    @InjectModel('User', 'nexora_auth') private userModel: Model<IUser>,
   ) {
     // Same transporter pattern the OTP service uses — keeps dev wiring
     // consistent (MailHog locally, real SMTP in prod).

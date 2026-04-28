@@ -17,8 +17,8 @@ export class CompletenessService {
   private readonly logger = new Logger(CompletenessService.name);
 
   constructor(
-    @InjectModel('Organization') private organizationModel: Model<IOrganization>,
-    @InjectModel('OrgMembership') private orgMembershipModel: Model<IOrgMembership>,
+    @InjectModel('Organization', 'nexora_auth') private organizationModel: Model<IOrganization>,
+    @InjectModel('OrgMembership', 'nexora_auth') private orgMembershipModel: Model<IOrgMembership>,
   ) {}
 
   /**

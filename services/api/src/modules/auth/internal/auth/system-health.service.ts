@@ -8,7 +8,7 @@ export class SystemHealthService {
   private readonly logger = new Logger(SystemHealthService.name);
 
   constructor(
-    @InjectModel('User') private userModel: Model<IUser>,
+    @InjectModel('User', 'nexora_auth') private userModel: Model<IUser>,
   ) {}
 
   /**

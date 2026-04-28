@@ -13,9 +13,9 @@ export class MembershipService {
   private readonly logger = new Logger(MembershipService.name);
 
   constructor(
-    @InjectModel('OrgMembership') private orgMembershipModel: Model<IOrgMembership>,
-    @InjectModel('User') private userModel: Model<IUser>,
-    @InjectModel('Session') private sessionModel: Model<ISession>,
+    @InjectModel('OrgMembership', 'nexora_auth') private orgMembershipModel: Model<IOrgMembership>,
+    @InjectModel('User', 'nexora_auth') private userModel: Model<IUser>,
+    @InjectModel('Session', 'nexora_auth') private sessionModel: Model<ISession>,
     private jwtService: JwtService,
     private auditService: AuditService,
     private hrSyncService: HrSyncService,

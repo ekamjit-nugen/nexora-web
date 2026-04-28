@@ -14,7 +14,7 @@ export class WebhookEndpointService {
   private readonly logger = new Logger(WebhookEndpointService.name);
 
   constructor(
-    @InjectModel('WebhookEndpoint') private webhookEndpointModel: Model<IWebhookEndpoint>,
+    @InjectModel('WebhookEndpoint', 'nexora_auth') private webhookEndpointModel: Model<IWebhookEndpoint>,
   ) {}
 
   /**
