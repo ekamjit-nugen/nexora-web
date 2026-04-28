@@ -6,8 +6,21 @@ export class CreateTaskDto {
   @IsString()
   title: string;
 
-  @IsString()
-  projectId: string;
+  // ProjectId is now optional. Tasks without a project are "personal tasks" —
+  // a lightweight todo list use-case that doesn't require setting up a
+  // project structure. The service layer auto-flips `isPersonal: true` and
+  // skips taskKey generation when projectId is absent.
+  @IsOptional() @IsString()
+  projectId?: string;
+
+  @IsOptional() @IsBoolean()
+  isPersonal?: boolean;
+
+  // Optional collaborators on a personal task — co-workers the user wants
+  // to share the todo with. Stored alongside watchers but distinct
+  // semantically: collaborators can edit/comment, watchers just observe.
+  @IsOptional() @IsArray() @IsString({ each: true })
+  collaborators?: string[];
 
   @IsOptional() @IsString()
   description?: string;

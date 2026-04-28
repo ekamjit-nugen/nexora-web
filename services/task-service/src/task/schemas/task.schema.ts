@@ -46,7 +46,13 @@ export interface ITask extends Document {
   taskKey?: string;
   title: string;
   description?: string;
-  projectId: string;
+  // Optional — empty for personal tasks (see `isPersonal`).
+  projectId?: string | null;
+  // Personal tasks: lightweight todos with no project context. Created via
+  // the personal-tasks UI, listed in /tasks/personal endpoint, and can have
+  // optional collaborators (other users invited to view/edit).
+  isPersonal?: boolean;
+  collaborators?: string[];
   parentTaskId?: string;
   type: string;
   status: string;
@@ -96,7 +102,13 @@ export const TaskSchema = new Schema<ITask>(
     taskKey: { type: String, default: null, index: true },
     title: { type: String, required: true, trim: true },
     description: { type: String, default: null },
-    projectId: { type: String, required: true, index: true },
+    // Project is now optional. Personal tasks (todo-list use-case) have
+    // projectId = null and isPersonal = true — they bypass the board/sprint
+    // machinery and only appear in /tasks/personal for the creator and any
+    // collaborators they explicitly added.
+    projectId: { type: String, default: null, index: true },
+    isPersonal: { type: Boolean, default: false, index: true },
+    collaborators: { type: [String], default: [] },
     parentTaskId: { type: String, default: null },
     type: {
       type: String,
@@ -175,7 +187,10 @@ export const TaskSchema = new Schema<ITask>(
       rule: { type: String, default: null },
       frequency: {
         type: String,
-        enum: ['daily', 'weekly', 'biweekly', 'monthly', 'quarterly', 'custom'],
+        // `null` allowed as the unset state — the default for non-recurring
+        // tasks. Without this, every new task save fails enum validation
+        // because mongoose materialises the subdoc with `frequency: null`.
+        enum: ['daily', 'weekly', 'biweekly', 'monthly', 'quarterly', 'custom', null],
         default: null,
       },
       interval: { type: Number, default: 1 },
@@ -210,5 +225,20 @@ TaskSchema.index({ assigneeId: 1, status: 1 });
 TaskSchema.index({ dueDate: 1 });
 TaskSchema.index({ isDeleted: 1 });
 TaskSchema.index({ boardId: 1, columnId: 1 });
-TaskSchema.index({ projectId: 1, taskKey: 1 }, { unique: true, sparse: true });
+// Partial unique index — only applies when BOTH projectId and taskKey are
+// non-null. Sparse indexes treat `null` as present, so two personal tasks
+// (both having projectId=null AND taskKey=null) would collide on a sparse
+// unique index. Partial filters fix that: personal tasks are excluded from
+// the uniqueness constraint entirely, while project tasks still enforce the
+// "one taskKey per project" rule.
+TaskSchema.index(
+  { projectId: 1, taskKey: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      projectId: { $type: 'string' },
+      taskKey: { $type: 'string' },
+    },
+  },
+);
 TaskSchema.index({ 'recurrence.enabled': 1, isDeleted: 1 });

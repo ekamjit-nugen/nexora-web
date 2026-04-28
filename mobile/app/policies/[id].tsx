@@ -8,6 +8,7 @@ import {
 } from "react-native";
 import { Text, ActivityIndicator } from "react-native-paper";
 import { LinearGradient } from "expo-linear-gradient";
+import { Hero } from "../../components/Hero";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -90,34 +91,7 @@ export default function PolicyDetailScreen() {
   if (isLoading) {
     return (
       <View style={styles.container}>
-        <LinearGradient
-          colors={[COLORS.gradientStart, COLORS.gradientSoft]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.headerGradient}
-        >
-          <SafeAreaView edges={["top"]}>
-            <View style={styles.headerContent}>
-              <View style={styles.headerRow}>
-                <TouchableOpacity
-                  onPress={() => router.back()}
-                  style={styles.backBtn}
-                  activeOpacity={0.7}
-                >
-                  <MaterialCommunityIcons
-                    name="arrow-left"
-                    size={24}
-                    color="#FFFFFF"
-                  />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle} numberOfLines={1}>
-                  Policy
-                </Text>
-                <View style={{ width: 40 }} />
-              </View>
-            </View>
-          </SafeAreaView>
-        </LinearGradient>
+        <Hero title="Policy" showBack />
         <ActivityIndicator
           size="large"
           color={COLORS.primary}
@@ -130,32 +104,7 @@ export default function PolicyDetailScreen() {
   if (!policy) {
     return (
       <View style={styles.container}>
-        <LinearGradient
-          colors={[COLORS.gradientStart, COLORS.gradientSoft]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.headerGradient}
-        >
-          <SafeAreaView edges={["top"]}>
-            <View style={styles.headerContent}>
-              <View style={styles.headerRow}>
-                <TouchableOpacity
-                  onPress={() => router.back()}
-                  style={styles.backBtn}
-                  activeOpacity={0.7}
-                >
-                  <MaterialCommunityIcons
-                    name="arrow-left"
-                    size={24}
-                    color="#FFFFFF"
-                  />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>Policy</Text>
-                <View style={{ width: 40 }} />
-              </View>
-            </View>
-          </SafeAreaView>
-        </LinearGradient>
+        <Hero title="Policy" showBack />
         <View style={styles.emptyState}>
           <MaterialCommunityIcons
             name="file-remove-outline"
@@ -178,39 +127,7 @@ export default function PolicyDetailScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <LinearGradient
-        colors={[COLORS.gradientStart, COLORS.gradientSoft]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.headerGradient}
-      >
-        <SafeAreaView edges={["top"]}>
-          <View style={styles.headerContent}>
-            <View style={styles.headerRow}>
-              <TouchableOpacity
-                onPress={() => router.back()}
-                style={styles.backBtn}
-                activeOpacity={0.7}
-              >
-                <MaterialCommunityIcons
-                  name="arrow-left"
-                  size={24}
-                  color="#FFFFFF"
-                />
-              </TouchableOpacity>
-              <Text
-                style={styles.headerTitle}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {policy.title || policy.name}
-              </Text>
-              <View style={{ width: 40 }} />
-            </View>
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
+      <Hero title={policy.title || policy.name || "Policy"} showBack />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}

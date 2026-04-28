@@ -57,15 +57,19 @@ export default function TabsLayout() {
         tabBarInactiveTintColor: COLORS.tabInactive,
         tabBarStyle: {
           backgroundColor: COLORS.tabBar,
-          borderTopWidth: 0,
-          height: Platform.OS === "ios" ? 88 : 68,
-          paddingBottom: Platform.OS === "ios" ? 28 : 10,
-          paddingTop: 8,
-          ...SHADOWS.md,
+          // Hairline top border + soft shadow — keeps the bar feeling
+          // floating and modern without the old heavy drop shadow.
+          borderTopWidth: 1,
+          borderTopColor: COLORS.border,
+          height: Platform.OS === "ios" ? 84 : 64,
+          paddingBottom: Platform.OS === "ios" ? 28 : 8,
+          paddingTop: 6,
+          ...SHADOWS.sm,
         },
         tabBarLabelStyle: {
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: "600",
+          letterSpacing: 0.1,
           marginTop: 2,
         },
         tabBarIconStyle: {

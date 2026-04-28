@@ -352,6 +352,41 @@ export class PayrollController {
     return { success: true, message: 'Payslips generated successfully', data: result };
   }
 
+  // Per-employee payslip (re)generation. Used by the per-row "Generate"
+  // button on the payroll-run entries grid, and by the recovery flow
+  // when HR releases an entry from `on_hold` after the bulk-generate
+  // pass has already run (the bulk endpoint skips on_hold rows). Same
+  // RBAC as the bulk endpoint — admin/owner/super_admin only.
+  @Post('payroll-runs/:id/entries/:employeeId/generate-payslip')
+  @UseGuards(JwtAuthGuard)
+  @Roles('admin', 'super_admin')
+  async generatePayslipForEmployee(
+    @Param('id') id: string,
+    @Param('employeeId') employeeId: string,
+    @Req() req,
+  ) {
+    const orgId = req.user?.organizationId;
+    const userId = req.user.userId;
+    const result = await this.payrollService.generatePayslips(
+      id, userId, orgId, { employeeId },
+    );
+    // Fetch the freshly upserted payslip so the client can navigate
+    // straight to the download link without a follow-up list query.
+    const payslip = await this.payrollService.findPayslipForEntry(
+      id, employeeId, orgId,
+    );
+    return {
+      success: true,
+      message: 'Payslip generated successfully',
+      data: {
+        count: result.count,
+        employeeId,
+        payslipId: payslip?._id?.toString() || null,
+        downloadUrl: payslip ? `/api/v1/payslips/${payslip._id}/download` : null,
+      },
+    };
+  }
+
   // ── Bank Payouts ──
 
   @Post('payroll-runs/:id/payout')

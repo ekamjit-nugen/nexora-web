@@ -8,6 +8,7 @@ import {
 } from "react-native";
 import { Text, Searchbar } from "react-native-paper";
 import { LinearGradient } from "expo-linear-gradient";
+import { Hero } from "../../components/Hero";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
@@ -130,27 +131,7 @@ export default function NewChatScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <LinearGradient
-        colors={[COLORS.gradientStart, COLORS.gradientSoft]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.headerGradient}
-      >
-        <SafeAreaView edges={["top"]}>
-          <View style={styles.headerContent}>
-            <TouchableOpacity
-              onPress={() => router.back()}
-              style={styles.backButton}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <MaterialCommunityIcons name="close" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>New Message</Text>
-            <View style={{ width: 40 }} />
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
+      <Hero title="New Message" showBack />
 
       {/* Search */}
       <View style={styles.searchContainer}>

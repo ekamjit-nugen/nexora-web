@@ -14,6 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { notificationApi } from "../lib/api";
 import { COLORS, SPACING, RADIUS, SHADOWS } from "../lib/theme";
+import { Hero } from "../components/Hero";
 
 const NOTIFICATION_TYPE_CONFIG: Record<
   string,
@@ -209,46 +210,23 @@ export default function NotificationsScreen() {
 
   return (
     <View style={styles.container}>
-      <SafeAreaView edges={["top"]} style={styles.safeArea}>
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => router.back()}
-            activeOpacity={0.7}
-          >
-            <MaterialCommunityIcons
-              name="arrow-left"
-              size={24}
-              color={COLORS.text}
-            />
-          </TouchableOpacity>
-          <View style={styles.headerTitleRow}>
-            <Text style={styles.headerTitle}>Notifications</Text>
-            {unreadCount > 0 && (
-              <View style={styles.headerBadge}>
-                <Text style={styles.headerBadgeText}>
-                  {unreadCount > 99 ? "99+" : unreadCount}
-                </Text>
-              </View>
-            )}
-          </View>
-          <TouchableOpacity
-            style={styles.markAllButton}
-            onPress={handleMarkAllRead}
-            activeOpacity={0.7}
-            disabled={unreadCount === 0}
-          >
-            <Text
-              style={[
-                styles.markAllText,
-                unreadCount === 0 && styles.markAllTextDisabled,
-              ]}
+      <Hero
+        title="Notifications"
+        subtitle={unreadCount > 0 ? `${unreadCount} unread` : "All caught up"}
+        showBack
+        right={
+          unreadCount > 0 ? (
+            <TouchableOpacity
+              style={styles.markAllPill}
+              onPress={handleMarkAllRead}
+              activeOpacity={0.7}
             >
-              Mark all read
-            </Text>
-          </TouchableOpacity>
-        </View>
+              <Text style={styles.markAllPillText}>Mark all read</Text>
+            </TouchableOpacity>
+          ) : undefined
+        }
+      />
+      <SafeAreaView edges={[]} style={styles.safeArea}>
 
         {/* Notification List */}
         {isLoading ? (
@@ -335,6 +313,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
     color: "#FFFFFF",
+  },
+  // Glass action pill on the hero gradient — for "Mark all read".
+  markAllPill: {
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 6,
+    borderRadius: RADIUS.full,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.22)",
+  },
+  markAllPillText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#FFFFFF",
+    letterSpacing: -0.1,
   },
   markAllButton: {
     paddingHorizontal: SPACING.sm,

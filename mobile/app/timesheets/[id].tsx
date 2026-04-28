@@ -16,6 +16,7 @@ import {
   Modal,
 } from "react-native-paper";
 import { LinearGradient } from "expo-linear-gradient";
+import { Hero } from "../../components/Hero";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -206,32 +207,17 @@ export default function TimesheetDetailScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <LinearGradient
-        colors={[COLORS.gradientStart, COLORS.gradientSoft]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.headerGradient}
-      >
-        <SafeAreaView edges={["top"]}>
-          <View style={styles.headerContent}>
-            <View style={styles.headerTopRow}>
-              <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-                <MaterialCommunityIcons name="arrow-left" size={22} color="#FFFFFF" />
-              </TouchableOpacity>
-              <Text style={styles.headerTitle}>Timesheet</Text>
-              <View style={{ width: 36 }} />
-            </View>
-            {startDate && endDate && (
-              <Text style={styles.headerSubtitle}>{formatWeekLabel(startDate, endDate)}</Text>
-            )}
-            <View style={[styles.headerBadge, { backgroundColor: "rgba(255,255,255,0.2)" }]}>
-              <MaterialCommunityIcons name={cfg.icon as any} size={14} color="#FFFFFF" />
-              <Text style={styles.headerBadgeText}>{cfg.label}</Text>
-            </View>
+      <Hero
+        title="Timesheet"
+        subtitle={startDate && endDate ? formatWeekLabel(startDate, endDate) : undefined}
+        showBack
+        bottom={
+          <View style={styles.headerBadge}>
+            <MaterialCommunityIcons name={cfg.icon as any} size={14} color="#FFFFFF" />
+            <Text style={styles.headerBadgeText}>{cfg.label}</Text>
           </View>
-        </SafeAreaView>
-      </LinearGradient>
+        }
+      />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
@@ -593,11 +579,14 @@ const styles = StyleSheet.create({
   headerBadge: {
     flexDirection: "row",
     alignItems: "center",
-    alignSelf: "center",
+    alignSelf: "flex-start",
     gap: SPACING.xs,
     paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.xs + 1,
+    paddingVertical: SPACING.xs + 2,
     borderRadius: RADIUS.full,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.20)",
   },
   headerBadgeText: {
     fontSize: 12,

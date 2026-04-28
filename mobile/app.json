@@ -15,7 +15,9 @@
       "supportsTablet": true,
       "bundleIdentifier": "io.nexora.mobile",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Nexora attaches your location to attendance check-ins and check-outs so administrators can verify on-site presence. You can deny this and still clock in — your record will be tagged as having no location."
+        "NSLocationWhenInUseUsageDescription": "Nexora attaches your location to attendance check-ins and check-outs so administrators can verify on-site presence. You can deny this and still clock in — your record will be tagged as having no location.",
+        "NSPhotoLibraryUsageDescription": "Nexora needs access to your photos so you can pick a profile picture. We only read the image you select; we don't browse your library.",
+        "NSCameraUsageDescription": "Nexora needs access to your camera so you can take a profile picture."
       }
     },
     "android": {
@@ -25,7 +27,10 @@
       "package": "io.nexora.mobile",
       "permissions": [
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
+        "ACCESS_FINE_LOCATION",
+        "READ_EXTERNAL_STORAGE",
+        "READ_MEDIA_IMAGES",
+        "CAMERA"
       ]
     },
     "platforms": [

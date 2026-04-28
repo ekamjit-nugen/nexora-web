@@ -98,6 +98,19 @@ export class TaskController {
     return { success: true, message: 'My work retrieved', data };
   }
 
+  // Personal tasks queue — tasks with no project, where the user is creator,
+  // assignee, or a collaborator. Drives the /my-tasks screens on mobile/web.
+  @Get('personal')
+  @UseGuards(JwtAuthGuard)
+  async getMyPersonalTasks(@Query('status') status: string | undefined, @Req() req) {
+    const data = await this.taskService.getMyPersonalTasks(
+      req.user.userId,
+      req.user?.organizationId,
+      status,
+    );
+    return { success: true, message: 'Personal tasks retrieved', data };
+  }
+
   @Get(':id/children')
   @UseGuards(JwtAuthGuard)
   async getChildTasks(@Param('id') id: string, @Req() req) {

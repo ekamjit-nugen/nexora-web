@@ -52,9 +52,31 @@ export class JwtAuthGuard implements CanActivate {
       ]);
 
       if (requiredRoles && requiredRoles.length > 0) {
-        const userRoles: string[] = request.user.roles;
-        const hasRole = requiredRoles.some((role) => userRoles.includes(role));
-        if (!hasRole) {
+        // An endpoint can be authorised by EITHER axis:
+        //   • top-level `roles[]` claim — for users with explicit
+        //     super_admin / admin / hr / manager roles set on their User
+        //     record (legacy migrated users + super admins).
+        //   • per-org `orgRole` claim — for OTP-only users who never had
+        //     top-level roles set (Varun-style owners come in with
+        //     `roles: []` and orgRole "owner"; gating only on roles[]
+        //     locked them out of every recruitment / payroll endpoint
+        //     they should clearly have access to).
+        // Platform admins always pass; org owners always pass (they're
+        // tenant administrators). Otherwise we accept any required role
+        // matching either axis, and treat orgRole "owner" as ≥ admin
+        // so an owner satisfies an `@Roles('admin', 'hr')` gate.
+        const userRoles: string[] = Array.isArray(request.user.roles) ? request.user.roles : [];
+        const orgRole: string | null = request.user.orgRole;
+        const isPlatformAdmin: boolean = request.user.isPlatformAdmin;
+        const allowed =
+          isPlatformAdmin ||
+          requiredRoles.some((r) => userRoles.includes(r)) ||
+          (orgRole !== null && requiredRoles.includes(orgRole)) ||
+          // owner is strictly above admin/hr/manager in the hierarchy —
+          // any decorator that admits one of those should admit owner too.
+          (orgRole === 'owner' &&
+            requiredRoles.some((r) => ['admin', 'hr', 'manager'].includes(r)));
+        if (!allowed) {
           throw new ForbiddenException('Insufficient permissions for this operation');
         }
       }

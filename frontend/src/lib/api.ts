@@ -1250,6 +1250,11 @@ export interface OrgFeatures {
   performance?: { enabled: boolean };
   helpdesk?:    { enabled: boolean };
   knowledge?:   { enabled: boolean };
+  // Per-tenant capability flags. Default OFF for all tenants; super admin
+  // turns them on from the platform organisations detail page once the
+  // tenant has the right plan / training / data hygiene to use them.
+  customFields?: { enabled: boolean };
+  automations?:  { enabled: boolean };
   [key: string]: { enabled: boolean } | undefined;
 }
 
@@ -2379,7 +2384,13 @@ export interface Task {
   projectKey?: string;
   title: string;
   description?: string;
-  projectId: string;
+  // Optional — null/undefined for personal tasks (see `isPersonal`).
+  projectId?: string | null;
+  // Personal todo-list tasks (no project context). Backend sets isPersonal=true
+  // when projectId is omitted at create time.
+  isPersonal?: boolean;
+  // Optional list of teammate userIds invited to view/edit a personal task.
+  collaborators?: string[];
   type: 'epic' | 'story' | 'task' | 'sub_task' | 'bug' | 'improvement' | 'spike';
   status: 'backlog' | 'todo' | 'in_progress' | 'in_review' | 'blocked' | 'done' | 'cancelled';
   priority: 'critical' | 'high' | 'medium' | 'low' | 'trivial';
@@ -2455,6 +2466,26 @@ export const taskApi = {
   delete: (id: string) =>
     request(`/tasks/${id}`, { method: "DELETE" }),
   getMyTasks: () => request<Task[]>("/tasks/my"),
+
+  // Personal tasks (no project, isPersonal=true). Optional collaborators.
+  // The backend lists tasks where the caller is creator/assignee/collaborator
+  // — i.e. the user's "todo list" surface.
+  getPersonalTasks: (status?: string) =>
+    request<Task[]>(`/tasks/personal${status ? `?status=${status}` : ""}`),
+
+  createPersonalTask: (data: {
+    title: string;
+    description?: string;
+    priority?: string;
+    dueDate?: string;
+    assigneeId?: string;
+    collaborators?: string[];
+    labels?: string[];
+  }) =>
+    request<Task>("/tasks", {
+      method: "POST",
+      body: JSON.stringify({ ...data, isPersonal: true }),
+    }),
   getMyStats: () => request<{
     thisWeek: {
       tasksCompleted: number;

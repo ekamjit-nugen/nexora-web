@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { Text, ActivityIndicator } from "react-native-paper";
 import { LinearGradient } from "expo-linear-gradient";
+import { Hero, HeroIconButton } from "../../../components/Hero";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -430,84 +431,87 @@ export default function BoardScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <LinearGradient
-        colors={[COLORS.gradientStart, COLORS.gradientSoft]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.headerGradient}
-      >
-        <SafeAreaView edges={["top"]}>
-          <View style={styles.headerContent}>
-            <View style={styles.headerRow}>
-              <TouchableOpacity
-                onPress={() => router.back()}
-                style={styles.backBtn}
-                activeOpacity={0.7}
-              >
-                <MaterialCommunityIcons
-                  name="arrow-left"
-                  size={24}
-                  color="#FFFFFF"
-                />
-              </TouchableOpacity>
+      <Hero
+        title={project?.name || "Project"}
+        subtitle="Board"
+        showBack
+        right={
+          <HeroIconButton
+            icon="filter-variant"
+            onPress={() => setFilterVisible(true)}
+          />
+        }
+      />
 
-              <View style={styles.headerTitleBlock}>
-                <Text style={styles.headerProjectName} numberOfLines={1}>
-                  {project?.name || "Project"}
-                </Text>
-                <Text style={styles.headerBoardLabel}>Board</Text>
-              </View>
-
-              <TouchableOpacity
-                style={styles.filterBtn}
-                onPress={() => setFilterVisible(true)}
-                activeOpacity={0.7}
-              >
-                <MaterialCommunityIcons
-                  name="filter-variant"
-                  size={22}
-                  color={activeFilter !== "all" ? COLORS.warning : "#FFFFFF"}
-                />
-              </TouchableOpacity>
-            </View>
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
-
-      {/* Column indicator dots */}
-      {columns.length > 1 && (
-        <View style={styles.dotIndicatorContainer}>
-          {columns.map((col, idx) => (
-            <TouchableOpacity
-              key={col._id || col.id || col.key}
-              onPress={() => scrollToColumn(idx)}
-              style={styles.dotTouchArea}
-            >
-              <View
-                style={[
-                  styles.dot,
-                  idx === activeColumnIndex && styles.dotActive,
-                  idx === activeColumnIndex && {
-                    backgroundColor: getColumnColor(col, idx),
-                  },
-                ]}
-              />
-              <Text
-                style={[
-                  styles.dotLabel,
-                  idx === activeColumnIndex && styles.dotLabelActive,
-                ]}
-                numberOfLines={1}
-              >
-                {col.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
+      {/* Horizontal scrollable column tabs — replaces the old vertical
+          dot indicator. Reclaims ~40px of vertical space and gives users
+          a familiar "swipe between tabs" pattern that scales to many
+          columns without crowding. The active tab gets the column's
+          coloured underline so users always know which lane they're in. */}
+      {columns.length > 0 && !isLoading && (
+        <View style={styles.tabBar}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.tabBarContent}
+          >
+            {columns.map((col, idx) => {
+              const colId = col._id || col.id || col.key;
+              const taskCount = (tasksByColumn[colId] || []).length;
+              const active = idx === activeColumnIndex;
+              const accent = getColumnColor(col, idx);
+              return (
+                <TouchableOpacity
+                  key={colId}
+                  onPress={() => {
+                    setActiveColumnIndex(idx);
+                    scrollViewRef.current?.scrollTo({
+                      x: idx * SCREEN_WIDTH,
+                      animated: true,
+                    });
+                  }}
+                  style={[
+                    styles.tab,
+                    active && { borderBottomColor: accent },
+                  ]}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.tabText,
+                      active && { color: COLORS.text, fontWeight: "700" },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {col.name}
+                  </Text>
+                  {taskCount > 0 && (
+                    <View
+                      style={[
+                        styles.tabCount,
+                        active && { backgroundColor: accent + "20" },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.tabCountText,
+                          active && { color: accent },
+                        ]}
+                      >
+                        {taskCount}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
         </View>
       )}
 
-      {/* Board content */}
+      {/* Board content — swipeable paged columns. Each column now uses
+          full screen width with minimal padding so task cards get the
+          maximum readable area. */}
       {isLoading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.primary} />
@@ -760,43 +764,46 @@ const styles = StyleSheet.create({
   },
 
   // Dot indicators
-  dotIndicatorContainer: {
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "flex-start",
-    paddingVertical: SPACING.sm + 2,
-    paddingHorizontal: SPACING.md,
-    gap: SPACING.xs,
+  // ─── Column tab bar ──────────────────────────────────────────────
+  // Replaces the old vertical-label dot indicator. Horizontally scrollable
+  // so it scales gracefully to projects with 5+ columns without truncating.
+  tabBar: {
     backgroundColor: COLORS.surface,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
-  dotTouchArea: {
+  tabBarContent: {
+    paddingHorizontal: SPACING.md,
+    gap: SPACING.xs,
+  },
+  tab: {
+    flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: SPACING.xs + 2,
-    flex: 1,
+    gap: 6,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm + 4,
+    borderBottomWidth: 2,
+    borderBottomColor: "transparent",
   },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: COLORS.border,
-    marginBottom: 4,
-  },
-  dotActive: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  dotLabel: {
-    fontSize: 10,
-    color: COLORS.textMuted,
+  tabText: {
+    fontSize: 14,
     fontWeight: "500",
-    textAlign: "center",
+    color: COLORS.textSecondary,
+    letterSpacing: -0.1,
   },
-  dotLabelActive: {
-    color: COLORS.text,
+  tabCount: {
+    minWidth: 22,
+    height: 20,
+    paddingHorizontal: 6,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.surfaceMuted,
+  },
+  tabCountText: {
+    fontSize: 11,
     fontWeight: "700",
+    color: COLORS.textSecondary,
   },
 
   // Board scroll
@@ -816,17 +823,21 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
 
-  // Column
+  // Column — slim outer padding so task cards have ~340px of usable
+  // horizontal area on a 375pt iPhone (vs ~327px before). Cards inside
+  // get their own inner padding via `taskCard` styles.
   columnContainer: {
     width: SCREEN_WIDTH,
-    paddingHorizontal: SPACING.lg,
-    paddingTop: SPACING.sm,
+    paddingHorizontal: SPACING.sm + 4,  // 12px each side
+    paddingTop: SPACING.xs,
   },
   column: {
     flex: 1,
-    backgroundColor: COLORS.borderLight,
+    backgroundColor: COLORS.surfaceMuted,
     borderRadius: RADIUS.lg,
     overflow: "hidden",
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   columnHeader: {
     flexDirection: "row",

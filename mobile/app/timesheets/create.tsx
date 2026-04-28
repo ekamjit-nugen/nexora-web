@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
 } from "react-native-paper";
 import { LinearGradient } from "expo-linear-gradient";
+import { Hero } from "../../components/Hero";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
@@ -84,25 +85,7 @@ export default function CreateTimesheetScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <LinearGradient
-        colors={[COLORS.gradientStart, COLORS.gradientSoft]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.headerGradient}
-      >
-        <SafeAreaView edges={["top"]}>
-          <View style={styles.headerContent}>
-            <View style={styles.headerTopRow}>
-              <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-                <MaterialCommunityIcons name="close" size={22} color="#FFFFFF" />
-              </TouchableOpacity>
-              <Text style={styles.headerTitle}>New Timesheet</Text>
-              <View style={{ width: 36 }} />
-            </View>
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
+      <Hero title="New Timesheet" showBack />
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.card}>

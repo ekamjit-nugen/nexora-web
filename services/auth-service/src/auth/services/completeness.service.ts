@@ -69,6 +69,14 @@ export class CompletenessService {
       status: { $in: ['active', 'pending', 'invited'] },
     });
 
+    // Case 0: Platform admin — they don't belong to any org and shouldn't
+    // be pushed through tenant-onboarding. Without this short-circuit they
+    // hit Case 7 (`/auth/setup-organization`) just like a fresh tenant
+    // signup with no memberships, which is wrong for super admins.
+    if (user.isPlatformAdmin === true) {
+      return { route: '/platform/organizations', reason: 'platform_admin' };
+    }
+
     // Case 1: Brand new user — no org, no memberships
     if (user.setupStage === 'otp_verified' && memberships.length === 0) {
       return { route: '/auth/setup-organization', reason: 'new_user' };

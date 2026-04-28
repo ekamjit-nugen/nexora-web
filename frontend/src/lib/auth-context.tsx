@@ -278,14 +278,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return memberIndex >= minIndex;
   }, [isPlatformAdmin, hasOrgRole, user]);
 
+  // Capability flags default to OFF when missing — these are opt-in
+  // features that super admin enables per-tenant after a plan/training
+  // gate. Everything else defaults to ON for backward compat with orgs
+  // created before section-level flags existed.
+  const OPT_IN_FLAGS: Array<keyof OrgFeatures> = ["customFields", "automations"];
+
   const isFeatureEnabled = useCallback((feature: keyof OrgFeatures): boolean => {
     if (isPlatformAdmin) return true;
+    // Owner / org admin bypass — they're the tenant administrators.
+    // Feature flags exist to scope what END USERS see; the owner needs
+    // to see everything to configure modules, decide what to roll out,
+    // and audit data even in modules that are toggled off for the rest
+    // of the team. Rule-of-thumb: feature flags are about which
+    // capabilities are "live" for users, not about hiding things from
+    // the people responsible for the tenant.
+    if (orgRole === "owner" || orgRole === "admin") return true;
     const features = currentOrg?.features;
-    if (!features) return true;
+    const optIn = OPT_IN_FLAGS.includes(feature);
+    if (!features) return !optIn;
     const flag = features[feature];
-    if (flag === undefined) return true;
+    if (flag === undefined) return !optIn;
     return flag.enabled === true;
-  }, [isPlatformAdmin, currentOrg]);
+  }, [isPlatformAdmin, orgRole, currentOrg]);
 
   const handleSetCurrentOrg = (org: Organization | null) => {
     setCurrentOrg(org);

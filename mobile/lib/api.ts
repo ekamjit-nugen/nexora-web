@@ -128,7 +128,48 @@ export const authApi = {
       }
     ),
 
+  // Check whether an account exists for this email — drives the
+  // "no account, contact your admin" gate on the mobile login screen.
+  // Mobile is invite-only: brand-new users can't sign up here, they
+  // get added to an org by an admin first. Returns shape:
+  //   { exists: boolean, hasOrgs: boolean, orgs: [{ _id, name }] }
+  checkEmail: (email: string) =>
+    request<{ exists: boolean; hasOrgs: boolean; orgs: Array<{ _id: string; name: string }> }>(
+      `/auth/check-email?email=${encodeURIComponent(email)}`,
+    ),
+
   me: () => request<any>("/auth/me"),
+
+  // Update the current user's editable profile fields. Backend (auth-service
+  // PUT /auth/me) accepts firstName, lastName, phoneNumber, avatar — all
+  // optional — and returns the updated user. Other fields (email, roles,
+  // setupStage) are not editable from the client.
+  updateProfile: (data: {
+    firstName?: string;
+    lastName?: string;
+    phoneNumber?: string;
+    avatar?: string;
+  }) =>
+    request<any>("/auth/me", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  // User preferences — notifications (email/inApp/desktop), theme,
+  // language, timezone. Persisted on the auth-service user record.
+  getPreferences: () =>
+    request<{
+      notifications?: { email?: boolean; inApp?: boolean; desktop?: boolean };
+      theme?: "system" | "light" | "dark";
+      language?: string;
+      timezone?: string | null;
+    }>("/auth/preferences"),
+
+  updatePreferences: (prefs: Record<string, unknown>) =>
+    request<any>("/auth/preferences", {
+      method: "PUT",
+      body: JSON.stringify(prefs),
+    }),
 
   logout: () => request("/auth/logout", { method: "POST" }),
 
@@ -137,6 +178,80 @@ export const authApi = {
       method: "POST",
       body: JSON.stringify({ refreshToken }),
     }),
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Media uploads — multipart/form-data to media-service. Used for profile
+// avatars, chat attachments, etc. The server stores the file and returns a
+// `storageUrl` we can persist on whichever record needed the image.
+// ─────────────────────────────────────────────────────────────────────────────
+export const mediaApi = {
+  // Upload a local image (file://...) and return the server URL.
+  // `accessLevel` — "private" (default) requires auth to read back; "public"
+  // is OK for avatars since they're already shown to anyone in the org.
+  uploadImage: async (
+    localUri: string,
+    opts?: { fileName?: string; accessLevel?: "public" | "private" },
+  ): Promise<{ storageUrl: string; _id: string }> => {
+    const token = await SecureStore.getItemAsync("accessToken");
+    const orgId = await SecureStore.getItemAsync("currentOrgId");
+
+    const form = new FormData();
+    // Infer mime + filename. RN's FormData accepts the {uri, name, type}
+    // shape — Metro handles the multipart serialisation.
+    const guessedName = opts?.fileName || `avatar-${Date.now()}.jpg`;
+    const ext = guessedName.split(".").pop()?.toLowerCase() || "jpg";
+    const mimeType =
+      ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+
+    // @ts-ignore — RN's FormData typing diverges from web FormData.
+    form.append("file", { uri: localUri, name: guessedName, type: mimeType });
+    if (opts?.accessLevel) form.append("accessLevel", opts.accessLevel);
+
+    const res = await fetch(`${API_BASE}/api/v1/media/upload`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token || ""}`,
+        ...(orgId ? { "X-Organization-Id": orgId } : {}),
+        // NB: don't set Content-Type manually — fetch needs to fill in
+        // the multipart boundary itself.
+      },
+      body: form as any,
+    });
+
+    const json = await res.json();
+    if (!res.ok) {
+      throw new Error(json?.error?.message || json?.message || `Upload failed (${res.status})`);
+    }
+    return {
+      storageUrl: json?.data?.storageUrl,
+      _id: json?.data?._id,
+    };
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bug reports — platform-level ticket system. Any user can submit; the
+// platform team receives an email at platform@nexora.io and triages from
+// the super-admin dashboard.
+// ─────────────────────────────────────────────────────────────────────────────
+export const bugReportApi = {
+  submit: (data: {
+    title: string;
+    description: string;
+    category?: "bug" | "feature" | "feedback" | "security" | "data";
+    severity?: "low" | "medium" | "high" | "critical";
+    area?: string;
+    appVersion?: string;
+    platform?: "ios" | "android" | "web";
+    userAgent?: string;
+    url?: string;
+  }) =>
+    request<any>("/bug-reports", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  mine: () => request<any[]>("/bug-reports/mine"),
 };
 
 export const orgApi = {
@@ -252,6 +367,36 @@ export const taskApi = {
     }),
 
   getMyWork: () => request<any>("/tasks/my-work"),
+
+  // ─── Personal tasks (no project) ─────────────────────────────────
+  // Lightweight todo list scoped to the user. Backend stores them with
+  // `isPersonal: true` and `projectId: null`. Optional collaborators
+  // are other org members the user wants to share the todo with.
+  getPersonal: (status?: string) =>
+    request<any[]>(`/tasks/personal${status ? `?status=${status}` : ""}`),
+
+  createPersonal: (data: {
+    title: string;
+    description?: string;
+    priority?: "critical" | "high" | "medium" | "low" | "trivial";
+    dueDate?: string;
+    assigneeId?: string;
+    collaborators?: string[];
+    labels?: string[];
+  }) =>
+    request<any>("/tasks", {
+      method: "POST",
+      body: JSON.stringify({ ...data, isPersonal: true }),
+    }),
+
+  update: (id: string, data: Record<string, unknown>) =>
+    request<any>(`/tasks/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  remove: (id: string) =>
+    request<any>(`/tasks/${id}`, { method: "DELETE" }),
 };
 
 export const boardApi = {

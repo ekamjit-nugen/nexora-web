@@ -160,7 +160,7 @@ export const TUTORIALS: Tutorial[] = [
       'The directory respects role-based access — employees see basic info, managers see more details for their reports.',
       'Use the directory to quickly find a colleague\'s phone number or email.',
     ],
-    relatedIds: ['manage-profiles', 'org-chart', 'invite-members'],
+    relatedIds: ['manage-profiles', 'invite-members'],
   },
   {
     id: 'manage-profiles',
@@ -182,24 +182,15 @@ export const TUTORIALS: Tutorial[] = [
     ],
     relatedIds: ['employee-directory', 'onboard-employee', 'salary-structures'],
   },
-  {
-    id: 'org-chart',
-    section: 'people_hr', sectionIcon: SECTIONS.people_hr.icon, sectionColor: SECTIONS.people_hr.color,
-    title: 'Understanding the Org Chart',
-    description: 'Navigate your organization\'s reporting hierarchy visually.',
-    duration: 2, audience: 'all',
-    steps: [
-      { title: 'Open Org Chart', description: 'Click "Org Chart" under the PEOPLE section in the sidebar.' },
-      { title: 'Explore the Hierarchy', description: 'The org chart displays employees in a tree structure based on reporting manager relationships. The CEO/founder appears at the top.' },
-      { title: 'Expand and Collapse', description: 'Click the expand/collapse arrows on any node to show or hide their direct reports.' },
-      { title: 'Click for Details', description: 'Click on any person\'s card to see their designation, department, email, and a link to their full profile.' },
-    ],
-    proTips: [
-      'The org chart is auto-generated from reporting manager assignments — keep those updated.',
-      'Use this to understand who reports to whom before making leave/approval decisions.',
-    ],
-    relatedIds: ['employee-directory', 'add-departments'],
-  },
+  // Org Chart tutorial hidden alongside the sidebar entry — the feature
+  // is paused pending design + content review. Re-enable here when the
+  // sidebar link is restored.
+  // {
+  //   id: 'org-chart',
+  //   section: 'people_hr', sectionIcon: SECTIONS.people_hr.icon, sectionColor: SECTIONS.people_hr.color,
+  //   title: 'Understanding the Org Chart',
+  //   ...
+  // },
   {
     id: 'onboard-employee',
     section: 'people_hr', sectionIcon: SECTIONS.people_hr.icon, sectionColor: SECTIONS.people_hr.color,

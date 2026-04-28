@@ -16,6 +16,7 @@ import {
   Snackbar,
 } from "react-native-paper";
 import { LinearGradient } from "expo-linear-gradient";
+import { Hero } from "../../components/Hero";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -348,23 +349,10 @@ export default function WorkScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <LinearGradient
-        colors={[COLORS.gradientStart, COLORS.gradientSoft]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.headerGradient}
-      >
-        <SafeAreaView edges={["top"]}>
-          <View style={styles.headerContent}>
-            <Text style={styles.headerTitle}>My Work</Text>
-            <Text style={styles.headerGreeting}>
-              {getGreeting()}, {user?.firstName || "there"}
-            </Text>
-            <Text style={styles.headerDate}>{formatDate()}</Text>
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
+      <Hero
+        title="My Work"
+        subtitle={`${getGreeting()}, ${user?.firstName || "there"} · ${formatDate()}`}
+      />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}

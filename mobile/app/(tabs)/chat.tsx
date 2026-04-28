@@ -13,6 +13,7 @@ import {
   Badge,
 } from "react-native-paper";
 import { LinearGradient } from "expo-linear-gradient";
+import { Hero } from "../../components/Hero";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -148,19 +149,7 @@ export default function ChatScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <LinearGradient
-        colors={[COLORS.gradientStart, COLORS.gradientSoft]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.headerGradient}
-      >
-        <SafeAreaView edges={["top"]}>
-          <View style={styles.headerContent}>
-            <Text style={styles.headerTitle}>Chat</Text>
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
+      <Hero title="Chat" />
 
       {/* Search */}
       <View style={styles.searchContainer}>

@@ -12,6 +12,7 @@ import {
   FAB,
 } from "react-native-paper";
 import { LinearGradient } from "expo-linear-gradient";
+import { Hero } from "../../components/Hero";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
@@ -186,58 +187,34 @@ export default function TimesheetsScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <LinearGradient
-        colors={[COLORS.gradientStart, COLORS.gradientSoft]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.headerGradient}
-      >
-        <SafeAreaView edges={["top"]}>
-          <View style={styles.headerContent}>
-            <View style={styles.headerTopRow}>
-              <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-                <MaterialCommunityIcons name="arrow-left" size={22} color="#FFFFFF" />
+      <Hero
+        title="Timesheets"
+        showBack
+        bottom={
+          isManager ? (
+            <View style={styles.tabSwitcher}>
+              <TouchableOpacity
+                style={[styles.tabBtn, activeTab === "my" && styles.tabBtnActive]}
+                onPress={() => setActiveTab("my")}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.tabBtnText, activeTab === "my" && styles.tabBtnTextActive]}>
+                  My Timesheets
+                </Text>
               </TouchableOpacity>
-              <Text style={styles.headerTitle}>Timesheets</Text>
-              <View style={{ width: 36 }} />
+              <TouchableOpacity
+                style={[styles.tabBtn, activeTab === "pending" && styles.tabBtnActive]}
+                onPress={() => setActiveTab("pending")}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.tabBtnText, activeTab === "pending" && styles.tabBtnTextActive]}>
+                  Pending Review
+                </Text>
+              </TouchableOpacity>
             </View>
-
-            {isManager && (
-              <View style={styles.tabSwitcher}>
-                <TouchableOpacity
-                  style={[styles.tabBtn, activeTab === "my" && styles.tabBtnActive]}
-                  onPress={() => setActiveTab("my")}
-                  activeOpacity={0.8}
-                >
-                  <MaterialCommunityIcons
-                    name="file-document-outline"
-                    size={16}
-                    color={activeTab === "my" ? COLORS.primary : "rgba(255,255,255,0.7)"}
-                  />
-                  <Text style={[styles.tabBtnText, activeTab === "my" && styles.tabBtnTextActive]}>
-                    My Timesheets
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.tabBtn, activeTab === "pending" && styles.tabBtnActive]}
-                  onPress={() => setActiveTab("pending")}
-                  activeOpacity={0.8}
-                >
-                  <MaterialCommunityIcons
-                    name="clipboard-check-outline"
-                    size={16}
-                    color={activeTab === "pending" ? COLORS.primary : "rgba(255,255,255,0.7)"}
-                  />
-                  <Text style={[styles.tabBtnText, activeTab === "pending" && styles.tabBtnTextActive]}>
-                    Pending Review
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
+          ) : undefined
+        }
+      />
 
       <FlatList
         data={timesheets || []}

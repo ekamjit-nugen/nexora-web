@@ -39,6 +39,10 @@ const navSections: NavSection[] = [
     items: [
       { label: "Dashboard", href: "/dashboard", icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" },
       { label: "My Work", href: "/my-work", feature: "tasks", icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" },
+      // My Tasks — personal todos. Independent of /tasks (project index)
+      // and /my-work (assigned work across projects). For lightweight
+      // personal use; doesn't require setting up a project.
+      { label: "My Tasks", href: "/my-tasks", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" },
       { label: "Manager", href: "/manager", minRole: "manager", icon: "M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
       { label: "Calendar", href: "/calendar", icon: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" },
     ],
@@ -74,7 +78,10 @@ const navSections: NavSection[] = [
     title: "PEOPLE",
     items: [
       { label: "Directory", href: "/directory", icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" },
-      { label: "Org Chart", href: "/org-chart", icon: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" },
+      // Org Chart hidden from sidebar pending design + content review.
+      // Route still exists at /org-chart for direct access; add back here
+      // when ready by un-commenting the line below.
+      // { label: "Org Chart", href: "/org-chart", icon: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" },
       { label: "Departments", href: "/departments", minRole: "admin", icon: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" },
     ],
   },
@@ -161,8 +168,12 @@ const navSections: NavSection[] = [
     items: [
       { label: "Roles", href: "/roles", icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" },
       { label: "Policies", href: "/policies", icon: "M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" },
-      { label: "Custom Fields", href: "/settings/custom-fields", minRole: "manager", icon: "M4 6h16M4 10h16M4 14h16M4 18h16" },
-      { label: "Automations", href: "/settings/automation-rules", minRole: "manager", icon: "M13 10V3L4 14h7v7l9-11h-7z" },
+      // Custom Fields + Automations are gated by per-tenant feature flags
+      // (default OFF). Super admins flip them on per organisation from
+      // /platform/organizations/[id] when a tenant is ready for these
+      // capabilities. Existing tenants get them off until explicitly enabled.
+      { label: "Custom Fields", href: "/settings/custom-fields", minRole: "manager", feature: "customFields", icon: "M4 6h16M4 10h16M4 14h16M4 18h16" },
+      { label: "Automations", href: "/settings/automation-rules", minRole: "manager", feature: "automations", icon: "M13 10V3L4 14h7v7l9-11h-7z" },
     ],
   },
 ];

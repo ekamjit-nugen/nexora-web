@@ -164,7 +164,7 @@ function PermCheckbox({
 // ── Main Page Component ──
 
 export default function RolesPage() {
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading, logout, hasOrgRole } = useAuth();
   const router = useRouter();
 
   const [roles, setRoles] = useState<Role[]>([]);
@@ -451,7 +451,13 @@ export default function RolesPage() {
     );
   }
 
-  const hasAccess = user.roles?.some((r) => ["admin", "super_admin"].includes(r));
+  // Cover both axes: top-level roles[] (super_admin / migrated users) AND
+  // per-org membership role (owner / admin via hasOrgRole). Without this,
+  // OTP-only owners get an Access Denied screen even though they should
+  // clearly manage org roles.
+  const hasAccess =
+    !!user.roles?.some((r) => ["admin", "super_admin"].includes(r)) ||
+    hasOrgRole("admin");
 
   if (!hasAccess) {
     return (

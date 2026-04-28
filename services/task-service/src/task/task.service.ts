@@ -48,29 +48,42 @@ export class TaskService {
   }
 
   async createTask(dto: CreateTaskDto, userId: string, orgId?: string) {
-    // Auto-generate task key atomically to prevent duplicates
-    const taskKey = await this.getNextTaskKey(dto.projectId, dto.projectKey);
+    // Personal tasks: no project = no board key. Auto-flip the personal flag
+    // and skip the project-scoped taskKey counter (which would NPE without a
+    // projectId anyway). The DTO's `isPersonal` is honoured if explicitly
+    // set so a future flow can opt in even with a project assigned.
+    const isPersonal = !dto.projectId || dto.isPersonal === true;
+    const taskKey = isPersonal || !dto.projectId
+      ? null
+      : await this.getNextTaskKey(dto.projectId, dto.projectKey);
 
     const { projectKey: _pk, ...taskData } = dto as any;
     const task = new this.taskModel({
       ...taskData,
       taskKey,
+      isPersonal,
       reporterId: userId,
       createdBy: userId,
       ...(orgId && { organizationId: orgId }),
     });
     await task.save();
-    this.logger.log(`Task created: ${task.taskKey || task._id} - ${dto.title}`);
-    await this.logActivity({
-      projectId: task.projectId,
-      organizationId: orgId,
-      taskId: task._id.toString(),
-      action: 'task.created',
-      actorId: userId,
-      entityType: 'task',
-      entityTitle: task.title,
-      details: { type: task.type, priority: task.priority, status: task.status },
-    }).catch(() => {});
+    this.logger.log(
+      `Task created: ${task.taskKey || task._id} - ${dto.title}${isPersonal ? ' (personal)' : ''}`,
+    );
+    if (!isPersonal) {
+      // Project-scoped activity log only — personal tasks don't have a
+      // project to attach to, and would muddy the project's activity stream.
+      await this.logActivity({
+        projectId: task.projectId,
+        organizationId: orgId,
+        taskId: task._id.toString(),
+        action: 'task.created',
+        actorId: userId,
+        entityType: 'task',
+        entityTitle: task.title,
+        details: { type: task.type, priority: task.priority, status: task.status },
+      }).catch(() => {});
+    }
 
     // Notification: assignment on creation
     if (task.assigneeId && task.assigneeId !== userId) {
@@ -465,6 +478,29 @@ export class TaskService {
 
   async getMyTasks(userId: string, query: TaskQueryDto, orgId?: string) {
     return this.getTasks({ ...query, assigneeId: userId }, orgId);
+  }
+
+  // Personal-task queue: tasks the user owns OR is a collaborator on, with
+  // no project attached. Used by the My Tasks screen in mobile/web. Sorted
+  // by status (incomplete first) then due date so the most-actionable items
+  // surface at the top.
+  async getMyPersonalTasks(userId: string, orgId?: string, status?: string) {
+    const filter: any = {
+      isPersonal: true,
+      isDeleted: false,
+      $or: [
+        { createdBy: userId },
+        { assigneeId: userId },
+        { collaborators: userId },
+      ],
+    };
+    if (orgId) filter.organizationId = orgId;
+    if (status) filter.status = status;
+    const tasks = await this.taskModel
+      .find(filter)
+      .sort({ status: 1, dueDate: 1, createdAt: -1 })
+      .lean();
+    return tasks;
   }
 
   async getMyWork(userId: string, orgId?: string) {

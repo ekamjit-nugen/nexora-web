@@ -12,497 +12,360 @@ import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { leaveApi } from "../../lib/api";
 import { useAuth } from "../../lib/auth-context";
 import { COLORS, SPACING, RADIUS, SHADOWS } from "../../lib/theme";
-import Svg, { Circle } from "react-native-svg";
+import { Hero } from "../../components/Hero";
 
-type Tab = "my_leaves" | "pending_approval";
+// ─────────────────────────────────────────────────────────────────────────────
+// Leave — employee-facing screen.
+//
+// Shows the caller's leave balances + their personal request history. Admins/
+// owners reviewing the team's pending requests use the dedicated /approvals
+// screen instead — this one is single-purpose to avoid the render-fragility
+// the previous combined screen had (ProgressRing SVG + tab switching +
+// conditional FAB all in one file caused crashes for managers on newArch).
+//
+// The Apply CTA is hidden for admins/owners (backend rejects 403 anyway —
+// surfacing the button just produces a confusing error toast).
+// ─────────────────────────────────────────────────────────────────────────────
 
-const LEAVE_TYPE_COLORS: Record<string, string> = {
-  casual: COLORS.primary,
-  sick: COLORS.danger,
-  earned: COLORS.success,
-  comp_off: COLORS.secondary,
-  wfh: COLORS.accent,
-  maternity: "#EC4899",
-  paternity: "#8B5CF6",
-  bereavement: COLORS.textSecondary,
-  lop: COLORS.warning,
+const LEAVE_TYPE_TONES: Record<string, { bg: string; fg: string }> = {
+  casual:      COLORS.toneIndigo,
+  sick:        COLORS.toneRose,
+  earned:      COLORS.toneEmerald,
+  comp_off:    COLORS.toneViolet,
+  wfh:         COLORS.toneTeal,
+  maternity:   { bg: "#FCE7F3", fg: "#BE185D" },
+  paternity:   COLORS.toneViolet,
+  bereavement: COLORS.toneSlate,
+  lop:         COLORS.toneAmber,
 };
 
-const LEAVE_TYPE_ICONS: Record<string, string> = {
-  casual: "beach",
-  sick: "hospital-box-outline",
-  earned: "star-outline",
-  comp_off: "swap-horizontal",
-  wfh: "home-outline",
-  maternity: "baby-carriage",
-  paternity: "human-male-child",
-  bereavement: "heart-outline",
-  lop: "alert-circle-outline",
-};
-
-function ProgressRing({
-  used,
-  total,
-  color,
-  size = 56,
-  strokeWidth = 5,
-}: {
-  used: number;
-  total: number;
-  color: string;
-  size?: number;
-  strokeWidth?: number;
-}) {
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const progress = total > 0 ? Math.min(used / total, 1) : 0;
-  const strokeDashoffset = circumference * (1 - progress);
-
-  return (
-    <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
-      <Svg width={size} height={size} style={{ transform: [{ rotate: "-90deg" }] }}>
-        <Circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          stroke={color + "20"}
-          strokeWidth={strokeWidth}
-          fill="transparent"
-        />
-        <Circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          stroke={color}
-          strokeWidth={strokeWidth}
-          fill="transparent"
-          strokeDasharray={`${circumference}`}
-          strokeDashoffset={strokeDashoffset}
-          strokeLinecap="round"
-        />
-      </Svg>
-      <View style={{ position: "absolute", alignItems: "center" }}>
-        <Text style={{ fontSize: 14, fontWeight: "800", color }}>{total - used}</Text>
-      </View>
-    </View>
-  );
+function tone(t?: string) {
+  return LEAVE_TYPE_TONES[t || ""] || COLORS.toneSlate;
 }
 
-function getStatusColor(status: string) {
+function getStatusColor(status: string): string {
   switch (status) {
-    case "approved": return COLORS.success;
-    case "pending": return COLORS.warning;
-    case "rejected": return COLORS.danger;
+    case "approved":  return COLORS.success;
+    case "pending":   return COLORS.warning;
+    case "rejected":  return COLORS.danger;
     case "cancelled": return COLORS.textMuted;
-    default: return COLORS.textSecondary;
+    default:          return COLORS.textSecondary;
   }
 }
 
-function getStatusIcon(status: string): string {
+function getStatusIcon(status: string): any {
   switch (status) {
-    case "approved": return "check-circle";
-    case "pending": return "clock-outline";
-    case "rejected": return "close-circle";
+    case "approved":  return "check-circle";
+    case "pending":   return "clock-outline";
+    case "rejected":  return "close-circle";
     case "cancelled": return "cancel";
-    default: return "help-circle-outline";
+    default:          return "help-circle-outline";
   }
 }
 
-function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
+function formatDate(d?: string) {
+  if (!d) return "—";
+  return new Date(d).toLocaleDateString("en-US", {
+    month: "short", day: "numeric", year: "numeric",
   });
 }
 
-function formatDateShort(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
+function formatDateShort(d?: string) {
+  if (!d) return "—";
+  return new Date(d).toLocaleDateString("en-US", {
+    month: "short", day: "numeric",
   });
 }
 
-function getLeaveTypeLabel(type: string) {
-  return type
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+function getLeaveTypeLabel(type?: string) {
+  if (!type) return "Leave";
+  return type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export default function LeaveIndexScreen() {
-  const queryClient = useQueryClient();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { user, orgRole } = useAuth();
-  const [activeTab, setActiveTab] = useState<Tab>("my_leaves");
-  const [refreshing, setRefreshing] = useState(false);
 
-  const isManager = user?.roles?.some((r: string) =>
-    ["admin", "manager", "hr", "hr_manager", "team_lead"].includes(r.toLowerCase())
-  );
-  // Admins/owners can review approvals on this screen but can't apply
-  // for leave themselves — backend rejects with 403, so we hide the
-  // FAB to avoid confusing error toasts. Mirrors the web rule.
+  // Admin/owner sees this screen as a passive list (their personal leaves are
+  // empty anyway; the Apply CTA is hidden because the backend rejects 403).
   const isAdminOrOwner =
-    !!user?.roles?.some((r: string) => ["admin", "super_admin"].includes(r.toLowerCase())) ||
+    !!user?.roles?.some((r: string) =>
+      ["admin", "super_admin"].includes(r.toLowerCase()),
+    ) ||
     orgRole === "owner" ||
     orgRole === "admin";
   const canApplyLeave = !isAdminOrOwner;
 
-  // Queries
+  const [refreshing, setRefreshing] = useState(false);
+
   const {
     data: balanceData,
     isLoading: balanceLoading,
     refetch: refetchBalance,
+    error: balanceError,
   } = useQuery({
     queryKey: ["leaves", "balance"],
     queryFn: () => leaveApi.getBalance(),
+    retry: 1,
   });
 
   const {
     data: myLeavesData,
     isLoading: leavesLoading,
     refetch: refetchLeaves,
+    error: leavesError,
   } = useQuery({
     queryKey: ["leaves", "my"],
     queryFn: () => leaveApi.getMyLeaves({ page: 1 }),
-    enabled: activeTab === "my_leaves",
+    retry: 1,
   });
 
-  const {
-    data: pendingData,
-    isLoading: pendingLoading,
-    refetch: refetchPending,
-  } = useQuery({
-    queryKey: ["leaves", "pending-approval"],
-    queryFn: () => leaveApi.getAll({ page: 1, status: "pending" }),
-    enabled: activeTab === "pending_approval" && !!isManager,
-  });
-
-  // Cancel mutation
   const cancelMutation = useMutation({
     mutationFn: (id: string) => leaveApi.cancel(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["leaves"] });
-    },
-    onError: (err: any) => {
-      Alert.alert("Error", err.message || "Failed to cancel leave");
-    },
-  });
-
-  // Approve/reject mutation
-  const approveMutation = useMutation({
-    mutationFn: ({ id, status, rejectionReason }: { id: string; status: "approved" | "rejected"; rejectionReason?: string }) =>
-      leaveApi.approve(id, { status, rejectionReason }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["leaves"] });
-    },
-    onError: (err: any) => {
-      Alert.alert("Error", err.message || "Failed to update leave");
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["leaves"] }),
+    onError: (err: any) =>
+      Alert.alert("Couldn't cancel", err?.message || "Please try again."),
   });
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    const promises = [refetchBalance()];
-    if (activeTab === "my_leaves") {
-      promises.push(refetchLeaves());
-    } else if (isManager) {
-      promises.push(refetchPending());
-    }
-    await Promise.all(promises);
+    await Promise.all([refetchBalance(), refetchLeaves()]);
     setRefreshing(false);
-  }, [activeTab, isManager, refetchBalance, refetchLeaves, refetchPending]);
+  }, [refetchBalance, refetchLeaves]);
 
   const handleCancel = (id: string) => {
-    Alert.alert("Cancel Leave", "Are you sure you want to cancel this leave request?", [
-      { text: "No", style: "cancel" },
-      { text: "Yes, Cancel", style: "destructive", onPress: () => cancelMutation.mutate(id) },
-    ]);
-  };
-
-  const handleQuickApprove = (id: string) => {
-    Alert.alert("Approve Leave", "Approve this leave request?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Approve", onPress: () => approveMutation.mutate({ id, status: "approved" }) },
-    ]);
-  };
-
-  const handleQuickReject = (id: string) => {
-    Alert.alert("Reject Leave", "Reject this leave request?", [
-      { text: "Cancel", style: "cancel" },
+    Alert.alert("Cancel leave?", "This will withdraw your request.", [
+      { text: "Keep it", style: "cancel" },
       {
-        text: "Reject",
+        text: "Cancel leave",
         style: "destructive",
-        onPress: () => approveMutation.mutate({ id, status: "rejected", rejectionReason: "Rejected by manager" }),
+        onPress: () => cancelMutation.mutate(id),
       },
     ]);
   };
 
-  const renderBalanceCards = () => {
-    const balances = balanceData?.data || [];
-    if (balanceLoading) {
-      return (
-        <View style={styles.card}>
-          <ActivityIndicator size="small" color={COLORS.primary} style={styles.loader} />
-        </View>
-      );
+  // Defensive parse — the leave-service returns `data: { balances: [...] }`
+  // (object with a balances array). Older shapes used a plain array or an
+  // object-map of type→count. Handle all of them so a shape mismatch never
+  // crashes the screen.
+  const balances: any[] = (() => {
+    const d: any = balanceData?.data;
+    if (Array.isArray(d)) return d;
+    if (Array.isArray(d?.balances)) return d.balances;
+    if (d && typeof d === "object") {
+      return Object.entries(d)
+        // Skip metadata fields (year, _id, organizationId, etc.) — keep
+        // only entries whose value looks like a balance count or record.
+        .filter(([k, v]) => {
+          if (["_id", "year", "organizationId", "employeeId", "createdAt", "updatedAt", "__v"].includes(k)) return false;
+          return typeof v === "number" || (v && typeof v === "object");
+        })
+        .map(([type, v]: [string, any]) => ({
+          leaveType: type,
+          available: typeof v === "number" ? v : v?.available ?? v?.remaining ?? 0,
+          opening: typeof v === "object" ? v?.opening ?? v?.total ?? v?.annualAllocation ?? 0 : 0,
+        }));
     }
+    return [];
+  })();
 
-    if (balances.length === 0) {
-      return (
-        <View style={styles.card}>
-          <View style={styles.emptyState}>
-            <MaterialCommunityIcons name="calendar-remove-outline" size={36} color={COLORS.textMuted} />
-            <Text style={styles.emptyText}>No leave balances available</Text>
-          </View>
-        </View>
-      );
-    }
-
-    return (
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.balanceScrollContent}
-      >
-        {balances.map((item: any, idx: number) => {
-          const type = item.type || item.leaveType || "leave";
-          const total = item.total ?? item.annualAllocation ?? 0;
-          const used = item.used ?? (total - (item.remaining ?? item.balance ?? total));
-          const remaining = item.remaining ?? item.balance ?? total;
-          const color = LEAVE_TYPE_COLORS[type] || COLORS.primary;
-          const icon = LEAVE_TYPE_ICONS[type] || "calendar-blank-outline";
-
-          return (
-            <View key={idx} style={styles.balanceCard}>
-              <View style={styles.balanceCardHeader}>
-                <View style={[styles.balanceIconCircle, { backgroundColor: color + "15" }]}>
-                  <MaterialCommunityIcons name={icon as any} size={18} color={color} />
-                </View>
-                <ProgressRing used={used} total={total} color={color} />
-              </View>
-              <Text style={styles.balanceCardType} numberOfLines={1}>
-                {getLeaveTypeLabel(type)}
-              </Text>
-              <Text style={styles.balanceCardDetail}>
-                {used} used of {total}
-              </Text>
-            </View>
-          );
-        })}
-      </ScrollView>
-    );
-  };
-
-  const renderLeaveCard = (leave: any, showActions: boolean = false) => {
-    const statusColor = getStatusColor(leave.status);
-    const typeColor = LEAVE_TYPE_COLORS[leave.leaveType || leave.type] || COLORS.primary;
-
-    return (
-      <TouchableOpacity
-        key={leave._id}
-        style={styles.leaveCard}
-        activeOpacity={0.7}
-        onPress={() => router.push(`/leave/${leave._id}`)}
-      >
-        <View style={styles.leaveCardTop}>
-          <View style={styles.leaveCardLeft}>
-            <View style={[styles.leaveTypeBadge, { backgroundColor: typeColor + "15" }]}>
-              <Text style={[styles.leaveTypeBadgeText, { color: typeColor }]}>
-                {getLeaveTypeLabel(leave.leaveType || leave.type)}
-              </Text>
-            </View>
-            <Text style={styles.leaveCardDates}>
-              {formatDateShort(leave.startDate)} - {formatDateShort(leave.endDate)}
-            </Text>
-          </View>
-          <View style={[styles.statusBadge, { backgroundColor: statusColor + "15" }]}>
-            <MaterialCommunityIcons name={getStatusIcon(leave.status) as any} size={14} color={statusColor} />
-            <Text style={[styles.statusBadgeText, { color: statusColor }]}>
-              {leave.status}
-            </Text>
-          </View>
-        </View>
-
-        {leave.reason && (
-          <Text style={styles.leaveCardReason} numberOfLines={2}>
-            {leave.reason}
-          </Text>
-        )}
-
-        {showActions && leave.employeeName && (
-          <View style={styles.employeeRow}>
-            <MaterialCommunityIcons name="account-outline" size={14} color={COLORS.textSecondary} />
-            <Text style={styles.employeeName}>{leave.employeeName || (leave.employee ? `${leave.employee.firstName || ''} ${leave.employee.lastName || ''}`.trim() : 'Unknown')}</Text>
-          </View>
-        )}
-
-        {/* Action buttons */}
-        {!showActions && leave.status === "pending" && (
-          <View style={styles.leaveCardActions}>
-            <TouchableOpacity
-              style={styles.cancelBtn}
-              onPress={() => handleCancel(leave._id)}
-              activeOpacity={0.7}
-            >
-              <MaterialCommunityIcons name="close" size={14} color={COLORS.danger} />
-              <Text style={styles.cancelBtnText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {showActions && (
-          <View style={styles.approvalActions}>
-            <TouchableOpacity
-              style={styles.rejectBtn}
-              onPress={() => handleQuickReject(leave._id)}
-              activeOpacity={0.7}
-            >
-              <MaterialCommunityIcons name="close" size={16} color={COLORS.danger} />
-              <Text style={[styles.actionBtnText, { color: COLORS.danger }]}>Reject</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.approveBtn}
-              onPress={() => handleQuickApprove(leave._id)}
-              activeOpacity={0.7}
-            >
-              <MaterialCommunityIcons name="check" size={16} color="#FFFFFF" />
-              <Text style={[styles.actionBtnText, { color: "#FFFFFF" }]}>Approve</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </TouchableOpacity>
-    );
-  };
-
-  const renderMyLeaves = () => {
-    if (leavesLoading) {
-      return <ActivityIndicator size="small" color={COLORS.primary} style={styles.loader} />;
-    }
-    const leaves = myLeavesData?.data || [];
-    if (leaves.length === 0) {
-      return (
-        <View style={styles.emptyState}>
-          <MaterialCommunityIcons name="file-document-outline" size={48} color={COLORS.textMuted} />
-          <Text style={styles.emptyTitle}>No Leave Requests</Text>
-          <Text style={styles.emptyText}>You have not applied for any leaves yet.</Text>
-        </View>
-      );
-    }
-    return leaves.map((leave: any) => renderLeaveCard(leave, false));
-  };
-
-  const renderPendingApproval = () => {
-    if (pendingLoading) {
-      return <ActivityIndicator size="small" color={COLORS.primary} style={styles.loader} />;
-    }
-    const leaves = pendingData?.data || [];
-    if (leaves.length === 0) {
-      return (
-        <View style={styles.emptyState}>
-          <MaterialCommunityIcons name="check-all" size={48} color={COLORS.textMuted} />
-          <Text style={styles.emptyTitle}>All Caught Up</Text>
-          <Text style={styles.emptyText}>No pending leave requests to review.</Text>
-        </View>
-      );
-    }
-    return leaves.map((leave: any) => renderLeaveCard(leave, true));
-  };
+  const myLeaves: any[] = Array.isArray(myLeavesData?.data)
+    ? myLeavesData.data
+    : Array.isArray((myLeavesData as any)?.data?.data)
+    ? (myLeavesData as any).data.data
+    : [];
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <LinearGradient
-        colors={[COLORS.gradientStart, COLORS.gradientSoft]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.headerGradient}
-      >
-        <SafeAreaView edges={["top"]}>
-          <View style={styles.headerContent}>
-            <View style={styles.headerRow}>
-              <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
-                <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
-              </TouchableOpacity>
-              <Text style={styles.headerTitle}>Leave</Text>
-              <View style={{ width: 40 }} />
-            </View>
-
-            {isManager && (
-              <View style={styles.tabSwitcher}>
-                <TouchableOpacity
-                  style={[styles.tabBtn, activeTab === "my_leaves" && styles.tabBtnActive]}
-                  onPress={() => setActiveTab("my_leaves")}
-                  activeOpacity={0.8}
-                >
-                  <MaterialCommunityIcons
-                    name="file-document-outline"
-                    size={16}
-                    color={activeTab === "my_leaves" ? COLORS.primary : "rgba(255,255,255,0.7)"}
-                  />
-                  <Text style={[styles.tabBtnText, activeTab === "my_leaves" && styles.tabBtnTextActive]}>
-                    My Leaves
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.tabBtn, activeTab === "pending_approval" && styles.tabBtnActive]}
-                  onPress={() => setActiveTab("pending_approval")}
-                  activeOpacity={0.8}
-                >
-                  <MaterialCommunityIcons
-                    name="clipboard-check-outline"
-                    size={16}
-                    color={activeTab === "pending_approval" ? COLORS.primary : "rgba(255,255,255,0.7)"}
-                  />
-                  <Text style={[styles.tabBtnText, activeTab === "pending_approval" && styles.tabBtnTextActive]}>
-                    Approvals
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
+      <Hero
+        title="Leave"
+        subtitle={
+          balanceLoading
+            ? "Loading…"
+            : `${myLeaves.length} request${myLeaves.length === 1 ? "" : "s"}`
+        }
+        showBack
+      />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={COLORS.primary}
+          />
         }
-        showsVerticalScrollIndicator={false}
       >
-        {/* Balance Cards */}
-        {renderBalanceCards()}
-
-        {/* Section Header */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>
-            {activeTab === "my_leaves" ? "My Requests" : "Pending Approvals"}
-          </Text>
+        {/* Balance section — text-only cards. */}
+        <Text style={styles.sectionLabel}>Balance</Text>
+        <View style={styles.balanceCard}>
+          {balanceLoading ? (
+            <ActivityIndicator size="small" color={COLORS.primary} style={styles.loader} />
+          ) : balanceError ? (
+            <View style={styles.errorRow}>
+              <MaterialCommunityIcons name="alert-circle-outline" size={20} color={COLORS.danger} />
+              <Text style={styles.errorText}>
+                Couldn't load balances. Pull to retry.
+              </Text>
+            </View>
+          ) : balances.length === 0 ? (
+            <View style={styles.emptyInline}>
+              <Text style={styles.emptyInlineText}>
+                No leave balances configured yet.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.balanceGrid}>
+              {balances.map((b: any, idx: number) => {
+                const t = tone(b.type || b.leaveType);
+                // Backend writes `available` / `opening`. Older shapes used
+                // `remaining` / `total` / `annualAllocation` / `balance`.
+                // Try them all so the card always shows a number.
+                const remaining = b.available ?? b.remaining ?? b.balance ?? 0;
+                const total = b.opening ?? b.total ?? b.annualAllocation ?? null;
+                return (
+                  <View key={idx} style={styles.balanceItem}>
+                    <View style={[styles.balanceDot, { backgroundColor: t.bg }]}>
+                      <Text style={[styles.balanceNumber, { color: t.fg }]}>
+                        {remaining}
+                      </Text>
+                    </View>
+                    <Text style={styles.balanceLabel} numberOfLines={1}>
+                      {getLeaveTypeLabel(b.type || b.leaveType)}
+                    </Text>
+                    {total !== null && (
+                      <Text style={styles.balanceTotal}>of {total}</Text>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
+          )}
         </View>
 
-        {/* Leave List */}
-        {activeTab === "my_leaves" ? renderMyLeaves() : renderPendingApproval()}
+        {/* My requests */}
+        <Text style={styles.sectionLabel}>My Requests</Text>
+        {leavesLoading ? (
+          <View style={styles.center}>
+            <ActivityIndicator size="small" color={COLORS.primary} />
+          </View>
+        ) : leavesError ? (
+          <View style={[styles.balanceCard, styles.errorRow]}>
+            <MaterialCommunityIcons name="alert-circle-outline" size={20} color={COLORS.danger} />
+            <Text style={styles.errorText}>
+              Couldn't load your leaves. Pull to retry.
+            </Text>
+          </View>
+        ) : myLeaves.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <MaterialCommunityIcons
+              name="calendar-blank-outline"
+              size={40}
+              color={COLORS.textMuted}
+            />
+            <Text style={styles.emptyTitle}>No leave requests yet</Text>
+            <Text style={styles.emptyBody}>
+              {canApplyLeave
+                ? "Tap the button below to apply for your first leave."
+                : "Admins don't apply for personal leaves on this account."}
+            </Text>
+          </View>
+        ) : (
+          myLeaves.map((leave: any) => {
+            const t = tone(leave.leaveType || leave.type);
+            const statusColor = getStatusColor(leave.status);
+            return (
+              <TouchableOpacity
+                key={leave._id}
+                style={styles.card}
+                activeOpacity={0.7}
+                onPress={() => router.push(`/leave/${leave._id}` as any)}
+              >
+                <View style={styles.cardTop}>
+                  <View style={[styles.typeBadge, { backgroundColor: t.bg }]}>
+                    <Text style={[styles.typeBadgeText, { color: t.fg }]}>
+                      {getLeaveTypeLabel(leave.leaveType || leave.type)}
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.statusPill,
+                      { backgroundColor: statusColor + "18" },
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name={getStatusIcon(leave.status)}
+                      size={12}
+                      color={statusColor}
+                    />
+                    <Text style={[styles.statusText, { color: statusColor }]}>
+                      {leave.status}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.dateRow}>
+                  <MaterialCommunityIcons
+                    name="calendar-range"
+                    size={15}
+                    color={COLORS.textSecondary}
+                  />
+                  <Text style={styles.dateText}>
+                    {formatDateShort(leave.startDate)} → {formatDateShort(leave.endDate)}
+                  </Text>
+                </View>
+
+                {leave.reason ? (
+                  <Text style={styles.reason} numberOfLines={2}>
+                    {leave.reason}
+                  </Text>
+                ) : null}
+
+                {leave.status === "pending" && (
+                  <TouchableOpacity
+                    style={styles.cancelBtn}
+                    onPress={(e) => {
+                      // Stop the parent TouchableOpacity from firing — we want
+                      // Cancel to be a self-contained action, not navigate.
+                      e?.stopPropagation?.();
+                      handleCancel(leave._id);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <MaterialCommunityIcons
+                      name="close"
+                      size={14}
+                      color={COLORS.danger}
+                    />
+                    <Text style={styles.cancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                )}
+              </TouchableOpacity>
+            );
+          })
+        )}
       </ScrollView>
 
-      {/* Apply Leave FAB — hidden for admins/owners. They use this
-          screen to review approvals; the apply path is rejected
-          server-side with a 403. */}
+      {/* Apply Leave FAB — hidden for admins/owners. */}
       {canApplyLeave && (
         <TouchableOpacity
           style={styles.fab}
           activeOpacity={0.85}
-          onPress={() => router.push("/leave/apply")}
+          onPress={() => router.push("/leave/apply" as any)}
         >
           <LinearGradient
             colors={[COLORS.primary, COLORS.primaryDark]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
             style={styles.fabGradient}
           >
-            <MaterialCommunityIcons name="plus" size={26} color="#FFFFFF" />
+            <MaterialCommunityIcons name="plus" size={24} color="#FFFFFF" />
+            <Text style={styles.fabText}>Apply</Text>
           </LinearGradient>
         </TouchableOpacity>
       )}
@@ -515,270 +378,204 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
-  headerGradient: {
-    paddingBottom: SPACING.md,
-  },
-  headerContent: {
-    paddingHorizontal: SPACING.lg,
-    paddingTop: SPACING.sm,
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: SPACING.md,
-  },
-  backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.15)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerTitle: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: "#FFFFFF",
-    letterSpacing: -0.5,
-  },
-  tabSwitcher: {
-    flexDirection: "row",
-    backgroundColor: "rgba(255,255,255,0.15)",
-    borderRadius: RADIUS.md,
-    padding: 3,
-  },
-  tabBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: SPACING.xs,
-    paddingVertical: SPACING.sm + 2,
-    borderRadius: RADIUS.sm + 2,
-  },
-  tabBtnActive: {
-    backgroundColor: "#FFFFFF",
-  },
-  tabBtnText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "rgba(255,255,255,0.8)",
-  },
-  tabBtnTextActive: {
-    color: COLORS.primary,
-  },
   scrollContent: {
     padding: SPACING.lg,
-    paddingTop: SPACING.md,
-    paddingBottom: SPACING.xxl + 40,
+    paddingBottom: SPACING.xxl + 60, // leave room for FAB
   },
-  card: {
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: COLORS.textMuted,
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+    marginBottom: SPACING.sm,
+    marginTop: SPACING.sm,
+  },
+  // ─── Balance ──────────────────────────────────────────────────────
+  balanceCard: {
+    backgroundColor: COLORS.surface,
     borderRadius: RADIUS.lg,
     padding: SPACING.lg,
-    backgroundColor: COLORS.surface,
     marginBottom: SPACING.md,
-    ...SHADOWS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...SHADOWS.sm,
   },
   loader: {
-    marginVertical: SPACING.lg,
+    marginVertical: SPACING.md,
   },
-  // Balance cards
-  balanceScrollContent: {
-    paddingBottom: SPACING.sm,
+  errorRow: {
+    flexDirection: "row",
+    alignItems: "center",
     gap: SPACING.sm,
-  },
-  balanceCard: {
-    width: 130,
-    backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.lg,
-    padding: SPACING.md,
-    ...SHADOWS.sm,
-  },
-  balanceCardHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: SPACING.sm,
-  },
-  balanceIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  balanceCardType: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: COLORS.text,
-    marginBottom: 2,
-  },
-  balanceCardDetail: {
-    fontSize: 11,
-    color: COLORS.textMuted,
-    fontWeight: "500",
-  },
-  // Section
-  sectionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: SPACING.md,
-    marginBottom: SPACING.md,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: COLORS.text,
-    letterSpacing: -0.3,
-  },
-  // Leave card
-  leaveCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.lg,
-    padding: SPACING.md,
-    marginBottom: SPACING.sm,
-    ...SHADOWS.sm,
-  },
-  leaveCardTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: SPACING.sm,
-  },
-  leaveCardLeft: {
-    flex: 1,
-    marginRight: SPACING.sm,
-  },
-  leaveTypeBadge: {
-    alignSelf: "flex-start",
-    paddingHorizontal: SPACING.sm + 2,
-    paddingVertical: SPACING.xs,
-    borderRadius: RADIUS.sm,
-    marginBottom: SPACING.xs,
-  },
-  leaveTypeBadgeText: {
-    fontSize: 12,
-    fontWeight: "700",
-    textTransform: "capitalize",
-  },
-  leaveCardDates: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    fontWeight: "500",
-  },
-  statusBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: SPACING.sm + 2,
-    paddingVertical: SPACING.xs + 1,
-    borderRadius: RADIUS.full,
-  },
-  statusBadgeText: {
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "capitalize",
-  },
-  leaveCardReason: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    lineHeight: 18,
-    marginBottom: SPACING.sm,
-  },
-  employeeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: SPACING.xs,
-    marginBottom: SPACING.sm,
-  },
-  employeeName: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    fontWeight: "500",
-  },
-  leaveCardActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    borderTopWidth: 1,
-    borderTopColor: COLORS.borderLight,
-    paddingTop: SPACING.sm,
-  },
-  cancelBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: SPACING.xs,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.xs + 2,
-    borderRadius: RADIUS.sm,
-    backgroundColor: COLORS.dangerLight,
-  },
-  cancelBtnText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: COLORS.danger,
-  },
-  approvalActions: {
-    flexDirection: "row",
-    gap: SPACING.sm,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.borderLight,
-    paddingTop: SPACING.sm,
-  },
-  rejectBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: SPACING.xs,
     paddingVertical: SPACING.sm,
-    borderRadius: RADIUS.sm,
-    backgroundColor: COLORS.dangerLight,
   },
-  approveBtn: {
+  errorText: {
     flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: SPACING.xs,
-    paddingVertical: SPACING.sm,
-    borderRadius: RADIUS.sm,
-    backgroundColor: COLORS.success,
-  },
-  actionBtnText: {
     fontSize: 13,
-    fontWeight: "600",
-  },
-  // Empty state
-  emptyState: {
-    alignItems: "center",
-    paddingVertical: SPACING.xl + SPACING.md,
-    gap: SPACING.sm,
-  },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: "600",
     color: COLORS.text,
   },
-  emptyText: {
+  emptyInline: {
+    paddingVertical: SPACING.md,
+    alignItems: "center",
+  },
+  emptyInlineText: {
     fontSize: 13,
-    color: COLORS.textMuted,
-    fontWeight: "500",
-    textAlign: "center",
+    color: COLORS.textSecondary,
   },
-  // FAB
-  fab: {
-    position: "absolute",
-    bottom: 24,
-    right: 24,
-    ...SHADOWS.colored(COLORS.primary),
+  balanceGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
   },
-  fabGradient: {
+  balanceItem: {
+    width: "33.33%",
+    alignItems: "center",
+    paddingVertical: SPACING.sm,
+  },
+  balanceDot: {
     width: 56,
     height: 56,
     borderRadius: 28,
     alignItems: "center",
     justifyContent: "center",
+    marginBottom: SPACING.xs + 2,
+  },
+  balanceNumber: {
+    fontSize: 20,
+    fontWeight: "800",
+    letterSpacing: -0.5,
+  },
+  balanceLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.text,
+    textTransform: "capitalize",
+  },
+  balanceTotal: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 1,
+  },
+  // ─── Empty state ──────────────────────────────────────────────────
+  emptyCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    paddingVertical: SPACING.xl,
+    paddingHorizontal: SPACING.lg,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: SPACING.xs,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: COLORS.text,
+    marginTop: SPACING.xs,
+  },
+  emptyBody: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    textAlign: "center",
+  },
+  center: {
+    paddingVertical: SPACING.xl,
+    alignItems: "center",
+  },
+  // ─── Leave card ───────────────────────────────────────────────────
+  card: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.md + 2,
+    marginBottom: SPACING.sm + 4,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...SHADOWS.sm,
+  },
+  cardTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: SPACING.sm,
+  },
+  typeBadge: {
+    paddingHorizontal: SPACING.sm + 2,
+    paddingVertical: 4,
+    borderRadius: RADIUS.full,
+  },
+  typeBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: -0.1,
+  },
+  statusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 3,
+    borderRadius: RADIUS.full,
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  dateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: SPACING.xs,
+  },
+  dateText: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    fontWeight: "500",
+  },
+  reason: {
+    fontSize: 13,
+    color: COLORS.text,
+    lineHeight: 18,
+    marginTop: SPACING.xs,
+  },
+  cancelBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 4,
+    marginTop: SPACING.sm,
+    paddingHorizontal: SPACING.sm + 2,
+    paddingVertical: 4,
+    borderRadius: RADIUS.full,
+    backgroundColor: COLORS.dangerLight,
+  },
+  cancelText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: COLORS.danger,
+    letterSpacing: 0.2,
+  },
+  // ─── FAB ───────────────────────────────────────────────────────────
+  fab: {
+    position: "absolute",
+    right: SPACING.lg,
+    bottom: SPACING.lg + 8,
+    borderRadius: RADIUS.full,
+    overflow: "hidden",
+    ...SHADOWS.colored(COLORS.primary),
+  },
+  fabGradient: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md - 2,
+  },
+  fabText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#FFFFFF",
+    letterSpacing: -0.2,
   },
 });

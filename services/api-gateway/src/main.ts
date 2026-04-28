@@ -37,6 +37,14 @@ const ROUTES: Array<{ paths: string[]; target: string; name: string }> = [
   { paths: ['/api/v1/platform'], target: SERVICES.auth, name: 'auth-service' },
   { paths: ['/api/v1/auth'], target: SERVICES.auth, name: 'auth-service' },
   { paths: ['/api/v1/settings'], target: SERVICES.auth, name: 'auth-service' },
+  // GDPR — data export + account-deletion request flow lives on auth-service
+  // alongside the User record. The settings/privacy page calls these to show
+  // current deletion-request status and trigger export/erasure.
+  { paths: ['/api/v1/gdpr'], target: SERVICES.auth, name: 'auth-service' },
+  // Bug reports — platform-level support tickets. Reports are cross-tenant
+  // (any user can submit, lands in the super-admin queue at platform@nexora.io)
+  // so they live in auth-service alongside the platform-admin views.
+  { paths: ['/api/v1/bug-reports'], target: SERVICES.auth, name: 'auth-service' },
   { paths: ['/api/v1/employees', '/api/v1/employee-statuses', '/api/v1/departments', '/api/v1/designations', '/api/v1/teams', '/api/v1/clients', '/api/v1/invoices', '/api/v1/billing', '/api/v1/call-logs'], target: SERVICES.hr, name: 'hr-service' },
   { paths: ['/api/v1/attendance', '/api/v1/shifts', '/api/v1/alerts', '/api/v1/holidays'], target: SERVICES.attendance, name: 'attendance-service' },
   { paths: ['/api/v1/policies'], target: SERVICES.policy, name: 'policy-service' },

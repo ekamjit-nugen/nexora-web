@@ -18,6 +18,7 @@ import { TrustedDeviceSchema } from './auth/schemas/trusted-device.schema';
 import { ApiKeySchema } from './auth/schemas/api-key.schema';
 import { IntegrationSchema } from './auth/schemas/integration.schema';
 import { WebhookEndpointSchema } from './auth/schemas/webhook-endpoint.schema';
+import { BugReportSchema } from './auth/schemas/bug-report.schema';
 
 // Auth domain
 import { AuthController } from './auth/auth.controller';
@@ -58,6 +59,8 @@ import { WebhookEndpointService } from './auth/webhook-endpoint.service';
 
 // Platform domain
 import { PlatformAdminController } from './auth/platform-admin.controller';
+import { BugReportController } from './auth/bug-report.controller';
+import { BugReportService } from './auth/bug-report.service';
 import { PlatformAdminService } from './auth/platform-admin.service';
 import { SystemHealthController } from './auth/system-health.controller';
 import { SystemHealthService } from './auth/system-health.service';
@@ -111,6 +114,7 @@ import { HealthModule } from './health/health.module';
       { name: 'ApiKey', schema: ApiKeySchema },
       { name: 'Integration', schema: IntegrationSchema },
       { name: 'WebhookEndpoint', schema: WebhookEndpointSchema },
+      { name: 'BugReport', schema: BugReportSchema },
     ]),
 
     // Auth infrastructure
@@ -148,6 +152,7 @@ import { HealthModule } from './health/health.module';
     PlatformAdminController,
     SystemHealthController,
     ReportingController,
+    BugReportController,
   ],
 
   // Domain providers
@@ -176,6 +181,7 @@ import { HealthModule } from './health/health.module';
     AuditService,
     // Platform
     PlatformAdminService,
+    BugReportService,
     SystemHealthService,
     ReportingService,
     // Strategies

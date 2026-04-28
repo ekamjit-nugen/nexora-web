@@ -271,7 +271,7 @@ function DepartmentFormModal({
 // ── Departments Page ──
 
 export default function DepartmentsPage() {
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading, logout, hasOrgRole } = useAuth();
   const router = useRouter();
 
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -355,7 +355,14 @@ export default function DepartmentsPage() {
     );
   }
 
-  const canManage = user.roles?.some((r) => ["admin", "super_admin", "hr"].includes(r));
+  // OTP-only users (e.g. Nugen owners) have `roles: []` at the top level —
+  // their elevated permission lives in `orgRole: "owner" | "admin" | "hr"`.
+  // Use the auth-context helper so we cover both axes: top-level roles AND
+  // per-org membership role. Without this, owners were getting "Access
+  // Denied" on a page they should clearly manage.
+  const canManage =
+    !!user.roles?.some((r) => ["admin", "super_admin", "hr"].includes(r)) ||
+    hasOrgRole("hr"); // hr | admin | owner all pass via the role hierarchy
 
   if (!canManage) {
     return (

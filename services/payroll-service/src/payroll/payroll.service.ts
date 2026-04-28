@@ -1019,19 +1019,31 @@ export class PayrollService {
     const pc: any = orgConfig?.payroll ?? orgConfig ?? null;
     const hasPolicy = pc && (pc.pfConfig || pc.esiConfig || pc.ptConfig || pc.tdsConfig);
     if (hasPolicy) {
+      // Unit normalisation: the /settings/payroll UI persists rates as
+      // PERCENTAGES (e.g. 12 for 12%, 0.75 for 0.75%) but the calc
+      // engine expects FRACTIONS (0.12, 0.0075). Without this guard
+      // the engine multiplies pf wage × 12 instead of × 0.12 — so a
+      // ₹15k wage capped employee gets ₹1,80,000 deducted instead of
+      // ₹1,800. The heuristic: anything > 1 is treated as a percentage
+      // and divided by 100. Fractions (≤ 1) pass through unchanged so
+      // already-correct configs don't get re-divided.
+      const asFraction = (v: number | undefined, fallback: number): number => {
+        if (typeof v !== 'number' || !isFinite(v)) return fallback;
+        return v > 1 ? v / 100 : v;
+      };
       payrollConfig = {
         pfConfig: {
           applicable: pc.pfConfig?.applicable ?? true,
-          employeeRate: pc.pfConfig?.employeeRate ?? 0.12,
-          employerRate: pc.pfConfig?.employerRate ?? 0.12,
-          adminChargesRate: pc.pfConfig?.adminChargesRate ?? 0.005,
-          edliRate: pc.pfConfig?.edliRate ?? 0.005,
+          employeeRate:    asFraction(pc.pfConfig?.employeeRate,    0.12),
+          employerRate:    asFraction(pc.pfConfig?.employerRate,    0.12),
+          adminChargesRate: asFraction(pc.pfConfig?.adminChargesRate, 0.005),
+          edliRate:        asFraction(pc.pfConfig?.edliRate,        0.005),
           wageCeiling: pc.pfConfig?.wageCeiling ?? 15000,
         },
         esiConfig: {
           applicable: pc.esiConfig?.applicable ?? true,
-          employeeRate: pc.esiConfig?.employeeRate ?? 0.0075,
-          employerRate: pc.esiConfig?.employerRate ?? 0.0325,
+          employeeRate: asFraction(pc.esiConfig?.employeeRate, 0.0075),
+          employerRate: asFraction(pc.esiConfig?.employerRate, 0.0325),
           wageCeiling: pc.esiConfig?.wageCeiling ?? 21000,
         },
         tdsConfig: {
@@ -1931,6 +1943,11 @@ export class PayrollService {
     runId: string,
     userId: string,
     orgId: string,
+    // Pass `employeeId` to generate (or refresh) the payslip for a single
+    // employee in this run — used by the per-row "Generate Payslip" button
+    // and by the recovery flow for entries released from `on_hold` after
+    // the bulk generation pass already ran.
+    options?: { employeeId?: string },
   ): Promise<{ count: number }> {
     if (!orgId) throw new ForbiddenException('Organization context required');
     const runFilter: any = { _id: runId, isDeleted: false };
@@ -1947,11 +1964,24 @@ export class PayrollService {
       );
     }
 
-    // Get all entries for this run (skip on_hold entries)
-    const entryFilter: any = { payrollRunId: runId, isDeleted: false, status: { $ne: 'on_hold' } };
+    // Get all entries for this run (skip on_hold entries). When an
+    // `employeeId` is supplied we narrow to that one row — and we
+    // intentionally do NOT skip on_hold here, because the per-employee
+    // path is sometimes the way HR resolves a hold (release → regen).
+    const entryFilter: any = { payrollRunId: runId, isDeleted: false };
     entryFilter.organizationId = orgId;
+    if (options?.employeeId) {
+      entryFilter.employeeId = options.employeeId;
+    } else {
+      entryFilter.status = { $ne: 'on_hold' };
+    }
 
     const entries = await this.payrollEntryModel.find(entryFilter);
+    if (options?.employeeId && entries.length === 0) {
+      throw new NotFoundException(
+        `No payroll entry found for employee ${options.employeeId} in this run`,
+      );
+    }
 
     const monthNames = [
       '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -2188,8 +2218,26 @@ export class PayrollService {
 
       payslipData.organizationId = orgId;
 
-      const payslip = new this.payslipModel(payslipData);
-      await payslip.save();
+      // Idempotent: re-clicking "Generate Payslips" must not 500 with
+      // an E11000 dup-key. The Payslip collection has a unique compound
+      // index on (organizationId, employeeId, payPeriod.year,
+      // payPeriod.month) — a `new + save()` always tries to insert and
+      // collides on the second call. We upsert keyed on that natural key.
+      // On insert: full doc lands (timestamps via setDefaultsOnInsert).
+      // On update: every field is rewritten to match the latest entry,
+      // which is the right behaviour if an entry was tweaked via the
+      // reopen + override path before re-finalize.
+      const upsertFilter = {
+        organizationId: orgId,
+        employeeId: entry.employeeId,
+        'payPeriod.year': run.payPeriod.year,
+        'payPeriod.month': run.payPeriod.month,
+      };
+      await this.payslipModel.findOneAndUpdate(
+        upsertFilter,
+        { $set: payslipData },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      );
       count++;
     }
 
@@ -2198,6 +2246,23 @@ export class PayrollService {
     );
 
     return { count };
+  }
+
+  // Lookup helper used by the per-employee generate endpoint so it can
+  // return the freshly upserted payslip's id + download URL in one round-
+  // trip. Read-only, scoped to the org.
+  async findPayslipForEntry(
+    runId: string,
+    employeeId: string,
+    orgId: string,
+  ): Promise<IPayslip | null> {
+    if (!orgId) throw new ForbiddenException('Organization context required');
+    return this.payslipModel.findOne({
+      organizationId: orgId,
+      payrollRunId: runId,
+      employeeId,
+      isDeleted: false,
+    });
   }
 
   // ===========================================================================

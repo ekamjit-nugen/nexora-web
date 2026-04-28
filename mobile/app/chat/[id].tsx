@@ -19,7 +19,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { chatApi } from "../../lib/api";
 import { chatSocket } from "../../lib/socket";
 import { useAuth } from "../../lib/auth-context";
-import { COLORS, SPACING, RADIUS, SHADOWS } from "../../lib/theme";
+import { COLORS, SPACING, RADIUS, SHADOWS, SURFACES } from "../../lib/theme";
 
 interface Message {
   _id: string;
@@ -429,21 +429,24 @@ export default function ConversationScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <LinearGradient
-        colors={[COLORS.gradientStart, COLORS.gradientSoft]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.headerGradient}
-      >
-        <SafeAreaView edges={["top"]}>
+      {/* Custom chat header — keeps the avatar + status + call action
+          inline. Uses the same brand gradient + decorative blob as the
+          shared Hero so it sits visually in-family. */}
+      <SafeAreaView edges={["top"]}>
+        <LinearGradient
+          colors={SURFACES.heroGradient as unknown as string[]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.headerGradient}
+        >
+          <View style={styles.heroBlob} />
           <View style={styles.headerContent}>
             <TouchableOpacity
               onPress={() => router.back()}
               style={styles.backButton}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
-              <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
+              <MaterialCommunityIcons name="chevron-left" size={22} color="#FFFFFF" />
             </TouchableOpacity>
 
             <View
@@ -475,11 +478,11 @@ export default function ConversationScreen() {
             </View>
 
             <TouchableOpacity style={styles.headerAction} onPress={() => Alert.alert("Coming Soon", "Voice calls will be available in a future update.")}>
-              <MaterialCommunityIcons name="phone-outline" size={22} color="#FFFFFF" />
+              <MaterialCommunityIcons name="phone-outline" size={20} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
-        </SafeAreaView>
-      </LinearGradient>
+        </LinearGradient>
+      </SafeAreaView>
 
       {/* Messages */}
       <KeyboardAvoidingView
@@ -578,6 +581,18 @@ const styles = StyleSheet.create({
   },
   headerGradient: {
     paddingBottom: SPACING.sm,
+    overflow: "hidden",
+  },
+  // Decorative blob — same ambient shape as the shared Hero component
+  // so the chat header feels in-family.
+  heroBlob: {
+    position: "absolute",
+    top: -60,
+    right: -40,
+    width: 160,
+    height: 160,
+    borderRadius: 80,
+    backgroundColor: "rgba(255,255,255,0.08)",
   },
   headerContent: {
     flexDirection: "row",
@@ -587,8 +602,15 @@ const styles = StyleSheet.create({
     paddingBottom: SPACING.xs,
   },
   backButton: {
-    padding: SPACING.xs,
+    width: 32,
+    height: 32,
+    borderRadius: RADIUS.full,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
     marginRight: SPACING.sm,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.20)",
   },
   headerAvatar: {
     width: 38,
@@ -616,7 +638,14 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   headerAction: {
-    padding: SPACING.sm,
+    width: 36,
+    height: 36,
+    borderRadius: RADIUS.full,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.20)",
   },
   centered: {
     flex: 1,

@@ -34,6 +34,12 @@ export interface IOrganizationFeatures {
   performance: IFeatureFlag;   // Goals & OKRs, Reviews, Cycles, Kudos, Surveys, Learning
   helpdesk: IFeatureFlag;      // Internal IT/HR ticketing
   knowledge: IFeatureFlag;     // Wiki + bookmarks + search
+  // Capability flags — default OFF for every tenant. Super admin flips
+  // them on per-org from the platform organisations detail page once a
+  // tenant is on a plan / has the data hygiene to use them. Hidden from
+  // the sidebar entirely until enabled.
+  customFields: IFeatureFlag;  // Per-task / per-record custom field definitions
+  automations: IFeatureFlag;   // Rule-based automations across tasks, leaves, etc.
 }
 
 // ── Settings sub-document ──
@@ -415,6 +421,8 @@ export const OrganizationSchema = new Schema<IOrganization>(
         performance:      { enabled: true },
         helpdesk:         { enabled: true },
         knowledge:        { enabled: true },
+        customFields:     { enabled: false },  // off by default — super admin opts in
+        automations:      { enabled: false },  // off by default — super admin opts in
       }),
     },
 

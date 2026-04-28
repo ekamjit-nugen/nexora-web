@@ -200,6 +200,9 @@ const ALL_FEATURES: { key: keyof OrgFeatures; label: string; description: string
   { key: "assetManagement",  label: "IT Assets",      description: "Asset directory, categories, dashboard" },
   { key: "expenseManagement", label: "Expenses",       description: "Expense claims and reimbursements" },
   { key: "recruitment",      label: "Recruitment",     description: "Jobs, candidates, hiring pipeline" },
+  // Capability flags — default OFF for all tenants; flip on per-org.
+  { key: "customFields", label: "Custom Fields", description: "Per-task / per-record custom field definitions (Admin → Custom Fields)" },
+  { key: "automations",  label: "Automations",   description: "Rule-based automations across tasks, leaves, etc. (Admin → Automations)" },
   // AI
   { key: "ai",         label: "AI Features", description: "AI-powered tools and suggestions" },
 ];

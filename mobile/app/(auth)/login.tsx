@@ -82,9 +82,33 @@ export default function LoginScreen() {
 
     setLoading(true);
     setError("");
+    const normalized = email.trim().toLowerCase();
 
     try {
-      await authApi.sendOtp(email.trim().toLowerCase());
+      // Mobile is invite-only — brand-new accounts can't be created from
+      // this app. Check existence first; if the email isn't already on the
+      // platform, surface a friendly "ask your admin" message and stop
+      // before sending an OTP. Sending OTP for a non-existent user would
+      // auto-create a stub account on the backend and then strand the user
+      // on a screen with no orgs and no way forward.
+      let userExists = true;
+      try {
+        const resp = await authApi.checkEmail(normalized);
+        userExists = !!resp.data?.exists;
+      } catch {
+        // If the lookup itself fails (network blip), fall through to the OTP
+        // path so we don't block legitimate users. The verify step will
+        // still gate access correctly.
+      }
+      if (!userExists) {
+        setError(
+          "We couldn't find an account for this email. Please ask your administrator to invite you to your organisation.",
+        );
+        setLoading(false);
+        return;
+      }
+
+      await authApi.sendOtp(normalized);
       setOtpSent(true);
       setResendCooldown(60);
       animateTransition(() => setStep("otp"));
@@ -113,6 +137,19 @@ export default function LoginScreen() {
       const res = await authApi.verifyOtp(email.trim().toLowerCase(), otp);
       const accessToken = res.data?.accessToken || res.data?.tokens?.accessToken;
       const refreshToken = res.data?.refreshToken || res.data?.tokens?.refreshToken;
+      // Defence-in-depth: even though we pre-check existence on the email
+      // step, the backend may flag a verified user as "new" if they have
+      // no organisation yet. Mobile is invite-only — block that path so
+      // they can't land in a stranded post-login state with no orgs.
+      const isNewUser = (res.data as any)?.isNewUser;
+      const orgs: any[] = (res.data as any)?.orgs || (res.data as any)?.user?.organizations || [];
+      if (isNewUser || orgs.length === 0) {
+        setError(
+          "Your account isn't part of any organisation yet. Please ask your administrator for an invite.",
+        );
+        setLoading(false);
+        return;
+      }
       if (accessToken && refreshToken) {
         await login({ accessToken, refreshToken });
         router.replace("/(tabs)");

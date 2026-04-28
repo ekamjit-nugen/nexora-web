@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import {
   View,
   StyleSheet,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Dimensions,
   Alert,
+  Image,
 } from "react-native";
 import {
   Text,
@@ -15,21 +16,34 @@ import {
 } from "react-native-paper";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../lib/auth-context";
 import { attendanceApi, notificationApi, projectApi, taskApi, leaveApi } from "../../lib/api";
 import { captureLocation } from "../../lib/location";
-import { COLORS, SPACING, RADIUS, SHADOWS } from "../../lib/theme";
+import { COLORS, SPACING, RADIUS, SHADOWS, SURFACES } from "../../lib/theme";
 
 const { width } = Dimensions.get("window");
 
-const QUICK_ACTIONS = [
-  { key: "time", icon: "timer-outline" as const, label: "Log Time", color: COLORS.primary, bg: COLORS.primaryLight },
-  { key: "leave", icon: "calendar-plus" as const, label: "Apply Leave", color: COLORS.success, bg: COLORS.successLight },
-  { key: "projects", icon: "folder-outline" as const, label: "Projects", color: COLORS.accent, bg: COLORS.accentLight },
-  { key: "directory", icon: "account-group-outline" as const, label: "Directory", color: COLORS.secondary, bg: COLORS.secondaryLight },
+// Quick actions are role-aware. Admin/owner doesn't clock in or apply
+// for leave personally — they review the team's. Each tile gets its
+// own curated tone from the theme palette so the row reads as a
+// vibrant set rather than 4 identical neutral buttons.
+type QuickAction = { key: string; icon: any; label: string; tone: { bg: string; fg: string } };
+
+const EMPLOYEE_QUICK_ACTIONS: QuickAction[] = [
+  { key: "time",       icon: "timer-outline",                     label: "Log Time",    tone: COLORS.toneIndigo },
+  { key: "leave",      icon: "calendar-plus",                     label: "Apply Leave", tone: COLORS.toneEmerald },
+  { key: "my-tasks",   icon: "clipboard-check-outline",           label: "My Tasks",    tone: COLORS.toneViolet },
+  { key: "directory",  icon: "account-group-outline",             label: "Directory",   tone: COLORS.toneTeal },
+];
+
+const ADMIN_QUICK_ACTIONS: QuickAction[] = [
+  { key: "approvals",  icon: "checkbox-marked-circle-plus-outline", label: "Approvals", tone: COLORS.toneAmber },
+  { key: "my-tasks",   icon: "clipboard-check-outline",             label: "My Tasks",  tone: COLORS.toneViolet },
+  { key: "directory",  icon: "account-group-outline",               label: "Team",      tone: COLORS.toneTeal },
+  { key: "policies",   icon: "shield-check-outline",                label: "Policies",  tone: COLORS.toneIndigo },
 ];
 
 export default function HomeScreen() {
@@ -42,6 +56,7 @@ export default function HomeScreen() {
     orgRole === "owner" || orgRole === "admin";
   const showAttendanceCard = !isAdminOrOwner && isFeatureEnabled("attendance");
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
   const [clockLoading, setClockLoading] = useState(false);
 
@@ -75,9 +90,39 @@ export default function HomeScreen() {
   }, [refetchToday]);
 
   const today = todayData?.data;
-  const isCheckedIn = today?.status === "checked_in" || today?.sessions?.some(
-    (s: any) => s.checkIn && !s.checkOut
-  );
+  // Backend returns { checkedIn, hasOpenSession, sessions[], firstClockIn,
+  // record, totalHoursToday, ... }. Sessions are raw attendance docs whose
+  // fields are `checkInTime`/`checkOutTime`/`totalWorkingHours` — the
+  // mobile UI used to look for camelCase short forms (`checkIn`/`checkOut`)
+  // which never existed, so isCheckedIn was always false.
+  const isCheckedIn = !!(today?.hasOpenSession || (today?.checkedIn && !today?.checkedOut));
+
+  // Live ticking timer — re-renders every second while clocked in.
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!isCheckedIn) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [isCheckedIn]);
+
+  const liveHours = (() => {
+    const sessions: any[] = today?.sessions || [];
+    const closedHours = sessions
+      .filter((s) => s.checkOutTime)
+      .reduce((sum, s) => sum + (s.totalWorkingHours || 0), 0);
+    const openSession = sessions.find((s) => s.checkInTime && !s.checkOutTime);
+    if (!openSession) return closedHours;
+    const startedAt = new Date(openSession.checkInTime).getTime();
+    return closedHours + (now - startedAt) / 3_600_000;
+  })();
+  const formatHM = (hours: number) => {
+    const totalSec = Math.max(0, Math.floor(hours * 3600));
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    if (h > 0) return `${h}h ${m.toString().padStart(2, "0")}m`;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  };
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -106,17 +151,19 @@ export default function HomeScreen() {
     if (clockLoading) return;
     setClockLoading(true);
     try {
-      // Best-effort GPS fix. Null → user denied permission or device
-      // can't get a position; check-in still proceeds with the IP
-      // captured server-side. The admin attendance UI flags
-      // no-location records explicitly so they're easy to spot.
       const location = await captureLocation();
       if (isCheckedIn) {
         await attendanceApi.checkOut(location ? { location } : undefined);
       } else {
         await attendanceApi.checkIn(location ? { location } : undefined);
       }
-      refetchToday();
+      // AWAIT the refetch — the check-in/out response is a raw attendance
+      // doc, but the today-status query expects a composite shape. We
+      // can't optimistically write the cache without putting the wrong
+      // shape in. Awaiting the refetch costs one round-trip but ensures
+      // `isCheckedIn` flips correctly before the next render.
+      await queryClient.invalidateQueries({ queryKey: ["attendance", "today"] });
+      await refetchToday();
     } catch (err: any) {
       Alert.alert("Error", err.message || "Failed to record attendance. Please try again.");
     } finally {
@@ -138,63 +185,110 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* Gradient Header */}
-        <LinearGradient
-          colors={[COLORS.gradientStart, COLORS.gradientSoft]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.headerGradient}
-        >
-          <SafeAreaView edges={["top"]}>
-            <View style={styles.headerContent}>
-              <View style={styles.greetingRow}>
-                <View style={styles.greetingText}>
-                  <Text style={styles.greeting}>{getGreeting()},</Text>
-                  <Text style={styles.userName}>
+        {/* ── Hero gradient card ────────────────────────────────────
+            Indigo → violet, deeper than the old generic blue→purple.
+            Holds the greeting, an inline org chip, and (for employees)
+            an inline today snapshot so the highest-frequency action
+            sits within the most visually anchored surface. */}
+        <SafeAreaView edges={["top"]}>
+          <View style={styles.heroWrapper}>
+            <LinearGradient
+              colors={SURFACES.heroGradient as unknown as string[]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.heroCard}
+            >
+              {/* Decorative blob — just enough texture to keep the
+                  hero from reading flat. Pure CSS, no image. */}
+              <View style={styles.heroBlob} />
+
+              <View style={styles.heroTop}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.heroGreeting}>{getGreeting()}</Text>
+                  <Text style={styles.heroName}>
                     {user?.firstName || "User"}
                   </Text>
-                  <Text style={styles.date}>{formatDate()}</Text>
+                  {currentOrg && (
+                    <View style={styles.heroOrgChip}>
+                      <MaterialCommunityIcons
+                        name="office-building-outline"
+                        size={11}
+                        color="rgba(255,255,255,0.85)"
+                      />
+                      <Text style={styles.heroOrgChipText} numberOfLines={1}>
+                        {currentOrg.name}
+                      </Text>
+                    </View>
+                  )}
                 </View>
-                <View style={styles.headerActions}>
+                <View style={styles.heroActions}>
                   <TouchableOpacity
-                    style={styles.bellButton}
+                    style={styles.heroIconBtn}
                     activeOpacity={0.7}
                     onPress={() => router.push("/notifications")}
                   >
                     <MaterialCommunityIcons
                       name="bell-outline"
-                      size={24}
+                      size={20}
                       color="#FFFFFF"
                     />
                     {unreadCount > 0 && (
-                      <View style={styles.bellBadge}>
-                        <Text style={styles.bellBadgeText}>
-                          {unreadCount > 99 ? "99+" : unreadCount}
+                      <View style={styles.heroBellBadge}>
+                        <Text style={styles.heroBellBadgeText}>
+                          {unreadCount > 9 ? "9+" : unreadCount}
                         </Text>
                       </View>
                     )}
                   </TouchableOpacity>
-                  <View style={styles.avatarCircle}>
-                    <Text style={styles.avatarText}>
-                      {(user?.firstName?.[0] || "U").toUpperCase()}
-                    </Text>
+                  <View style={styles.heroAvatar}>
+                    {(user as any)?.avatar ? (
+                      <Image
+                        source={{ uri: (user as any).avatar }}
+                        style={styles.heroAvatarImage}
+                      />
+                    ) : (
+                      <Text style={styles.heroAvatarText}>
+                        {(user?.firstName?.[0] || "U").toUpperCase()}
+                      </Text>
+                    )}
                   </View>
                 </View>
               </View>
-              {currentOrg && (
-                <View style={styles.orgChip}>
-                  <MaterialCommunityIcons
-                    name="office-building-outline"
-                    size={13}
-                    color="rgba(255,255,255,0.8)"
-                  />
-                  <Text style={styles.orgChipText}>{currentOrg.name}</Text>
+
+              {/* Inline today snapshot for employees — admins skip
+                  this since they don't clock in personally. */}
+              {showAttendanceCard && (
+                <View style={styles.heroSnapshot}>
+                  <View style={styles.heroSnapItem}>
+                    <Text style={styles.heroSnapLabel}>In</Text>
+                    <Text style={styles.heroSnapValue}>
+                      {formatTime(today?.sessions?.[0]?.checkInTime || today?.firstClockIn)}
+                    </Text>
+                  </View>
+                  <View style={styles.heroSnapDivider} />
+                  <View style={styles.heroSnapItem}>
+                    <Text style={styles.heroSnapLabel}>Out</Text>
+                    <Text style={styles.heroSnapValue}>
+                      {formatTime(today?.sessions?.[today?.sessions?.length ? today.sessions.length - 1 : 0]?.checkOutTime)}
+                    </Text>
+                  </View>
+                  <View style={styles.heroSnapDivider} />
+                  <View style={styles.heroSnapItem}>
+                    <Text style={styles.heroSnapLabel}>Hours</Text>
+                    <Text style={styles.heroSnapValue}>
+                      {/* Live ticker — counts up every second while clocked
+                          in. Falls back to the closed-session total when
+                          not. */}
+                      {isCheckedIn || liveHours > 0 ? formatHM(liveHours) : "—"}
+                    </Text>
+                  </View>
                 </View>
               )}
-            </View>
-          </SafeAreaView>
-        </LinearGradient>
+            </LinearGradient>
+          </View>
+        </SafeAreaView>
 
-        {/* Content area with overlap */}
+        {/* Content area */}
         <View style={styles.contentArea}>
           {/* Attendance Card — shown only to users who clock in. Admin/
               owner skips this; the rest of the home screen still
@@ -250,7 +344,7 @@ export default function HomeScreen() {
                     />
                     <Text style={styles.timeLabel}>Check In</Text>
                     <Text style={styles.timeValue}>
-                      {formatTime(today?.sessions?.[0]?.checkIn)}
+                      {formatTime(today?.sessions?.[0]?.checkInTime || today?.firstClockIn)}
                     </Text>
                   </View>
                   <View style={styles.timeSep} />
@@ -263,7 +357,7 @@ export default function HomeScreen() {
                     <Text style={styles.timeLabel}>Check Out</Text>
                     <Text style={styles.timeValue}>
                       {formatTime(
-                        today?.sessions?.[today?.sessions?.length ? today.sessions.length - 1 : 0]?.checkOut
+                        today?.sessions?.[today?.sessions?.length ? today.sessions.length - 1 : 0]?.checkOutTime
                       )}
                     </Text>
                   </View>
@@ -276,11 +370,8 @@ export default function HomeScreen() {
                     />
                     <Text style={styles.timeLabel}>Total</Text>
                     <Text style={styles.timeValue}>
-                      {today?.totalHours
-                        ? `${Math.floor(today.totalHours)}h ${Math.round(
-                            (today.totalHours % 1) * 60
-                          )}m`
-                        : "--"}
+                      {/* Live ticker — see liveHours computation above. */}
+                      {isCheckedIn || liveHours > 0 ? formatHM(liveHours) : "--"}
                     </Text>
                   </View>
                 </View>
@@ -313,10 +404,11 @@ export default function HomeScreen() {
           </View>
           )}
 
-          {/* Quick Actions */}
+          {/* Quick Actions — admin/owner gets the approval-flavoured set,
+              everyone else gets the personal-attendance set. */}
           <Text style={styles.sectionTitle}>Quick Actions</Text>
           <View style={styles.quickActions}>
-            {QUICK_ACTIONS.map((action) => (
+            {(isAdminOrOwner ? ADMIN_QUICK_ACTIONS : EMPLOYEE_QUICK_ACTIONS).map((action) => (
               <TouchableOpacity
                 key={action.key}
                 style={styles.actionCard}
@@ -326,13 +418,20 @@ export default function HomeScreen() {
                   else if (action.key === "time") router.push("/(tabs)/time");
                   else if (action.key === "projects") router.push("/projects");
                   else if (action.key === "directory") router.push("/directory");
+                  else if (action.key === "approvals") router.push("/approvals" as any);
+                  else if (action.key === "policies") router.push("/policies");
+                  else if (action.key === "my-tasks") router.push("/my-tasks" as any);
                 }}
               >
-                <View style={[styles.actionIcon, { backgroundColor: action.bg }]}>
+                {/* Tone-tinted icon. Each action draws from the
+                    curated COLORS.tone* palette in the theme so the
+                    row reads as a vibrant, cohesive family rather
+                    than a row of grey buttons. */}
+                <View style={[styles.actionIcon, { backgroundColor: action.tone.bg }]}>
                   <MaterialCommunityIcons
                     name={action.icon}
                     size={22}
-                    color={action.color}
+                    color={action.tone.fg}
                   />
                 </View>
                 <Text style={styles.actionLabel}>{action.label}</Text>
@@ -340,43 +439,49 @@ export default function HomeScreen() {
             ))}
           </View>
 
-          {/* Overview Stats */}
+          {/* Overview Stats — neutral cards, but the BIG NUMBER is
+              tone-coloured so the trio scans quickly. Each tone is from
+              the curated palette so they look like one family. */}
           <Text style={styles.sectionTitle}>Overview</Text>
           <View style={styles.statsRow}>
-            <View style={[styles.statCard, { borderLeftColor: COLORS.primary }]}>
-              <Text style={[styles.statNumber, { color: COLORS.primary }]}>{projectsData?.data?.length ?? "--"}</Text>
+            <View style={styles.statCard}>
+              <Text style={[styles.statNumber, { color: COLORS.toneIndigo.fg }]}>{projectsData?.data?.length ?? "—"}</Text>
               <Text style={styles.statLabel}>Active Projects</Text>
             </View>
-            <View style={[styles.statCard, { borderLeftColor: COLORS.accent }]}>
-              <Text style={[styles.statNumber, { color: COLORS.accent }]}>
+            <View style={styles.statCard}>
+              <Text style={[styles.statNumber, { color: COLORS.toneViolet.fg }]}>
                 {tasksData?.data
                   ? (tasksData.data.overdue?.length || 0) + (tasksData.data.dueToday?.length || 0) + (tasksData.data.inProgress?.length || 0) + (tasksData.data.readyToStart?.length || 0)
-                  : "--"}
+                  : "—"}
               </Text>
               <Text style={styles.statLabel}>Open Tasks</Text>
             </View>
-            <View style={[styles.statCard, { borderLeftColor: COLORS.success }]}>
-              <Text style={[styles.statNumber, { color: COLORS.success }]}>
+            <View style={styles.statCard}>
+              <Text style={[styles.statNumber, { color: COLORS.toneEmerald.fg }]}>
                 {(() => {
+                  // Sum across all leave types. The backend uses `available`
+                  // (canonical), older shapes used `remaining` / `balance`.
+                  // Pick the first one that's a number for each row.
                   const data = leaveBalanceData?.data as any;
-                  if (!data) return "--";
-                  // Handle array format: [{ remaining: n, ... }]
-                  if (Array.isArray(data)) {
-                    return data.reduce((sum: number, b: any) => sum + (b.remaining ?? b.balance ?? 0), 0);
-                  }
-                  // Handle nested array: { balances: [...] }
-                  if (Array.isArray(data.balances)) {
-                    return data.balances.reduce((sum: number, b: any) => sum + (b.remaining ?? b.balance ?? 0), 0);
-                  }
-                  // Handle object format: { casual: 10, sick: 5, ... }
+                  if (!data) return "—";
+                  const sumOf = (rows: any[]) =>
+                    rows.reduce((sum: number, b: any) => {
+                      const n = b?.available ?? b?.remaining ?? b?.balance ?? 0;
+                      return sum + (typeof n === "number" ? n : 0);
+                    }, 0);
+                  if (Array.isArray(data)) return sumOf(data);
+                  if (Array.isArray(data.balances)) return sumOf(data.balances);
                   if (typeof data === "object") {
                     return Object.values(data).reduce((sum: number, v: any) => {
                       if (typeof v === "number") return sum + v;
-                      if (v && typeof v === "object" && typeof v.remaining === "number") return sum + v.remaining;
+                      if (v && typeof v === "object") {
+                        const n = v?.available ?? v?.remaining ?? v?.balance;
+                        if (typeof n === "number") return sum + n;
+                      }
                       return sum;
                     }, 0);
                   }
-                  return "--";
+                  return "—";
                 })()}
               </Text>
               <Text style={styles.statLabel}>Leaves Left</Text>
@@ -396,57 +501,88 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: SPACING.xxl + 20,
   },
-  headerGradient: {
-    paddingBottom: SPACING.xxl + 20,
-  },
-  headerContent: {
+  // ─── Hero gradient card ──────────────────────────────────────────
+  heroWrapper: {
     paddingHorizontal: SPACING.lg,
-    paddingTop: SPACING.md,
-    paddingBottom: SPACING.sm,
+    paddingTop: SPACING.sm,
+    paddingBottom: SPACING.md,
   },
-  greetingRow: {
+  heroCard: {
+    borderRadius: RADIUS.xl,
+    paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.lg,
+    paddingBottom: SPACING.lg,
+    overflow: "hidden",
+    // Indigo glow ties the hero into the rest of the screen.
+    ...SHADOWS.colored(COLORS.primaryDark),
+  },
+  // Decorative blob — soft white ellipse top-right adds depth without
+  // requiring an image asset.
+  heroBlob: {
+    position: "absolute",
+    top: -60,
+    right: -60,
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    backgroundColor: "rgba(255,255,255,0.10)",
+  },
+  heroTop: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
   },
-  greetingText: {
-    flex: 1,
+  heroGreeting: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.78)",
+    fontWeight: "600",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
   },
-  greeting: {
-    fontSize: 16,
-    color: "rgba(255,255,255,0.75)",
-    fontWeight: "500",
-  },
-  userName: {
-    fontSize: 26,
+  heroName: {
+    fontSize: 28,
     fontWeight: "800",
     color: "#FFFFFF",
-    letterSpacing: -0.5,
+    letterSpacing: -0.6,
     marginTop: 2,
   },
-  date: {
-    fontSize: 13,
-    color: "rgba(255,255,255,0.6)",
-    marginTop: SPACING.xs,
-    fontWeight: "500",
+  heroOrgChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignSelf: "flex-start",
+    paddingHorizontal: SPACING.sm + 2,
+    paddingVertical: 4,
+    borderRadius: RADIUS.full,
+    marginTop: SPACING.sm,
+    maxWidth: width * 0.55,
   },
-  headerActions: {
+  heroOrgChipText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.95)",
+    letterSpacing: 0.1,
+  },
+  heroActions: {
     flexDirection: "row",
     alignItems: "center",
     gap: SPACING.sm,
   },
-  bellButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+  heroIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: RADIUS.full,
     backgroundColor: "rgba(255,255,255,0.15)",
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
   },
-  bellBadge: {
+  heroBellBadge: {
     position: "absolute",
-    top: 2,
-    right: 2,
+    top: -2,
+    right: -2,
     backgroundColor: COLORS.danger,
     borderRadius: RADIUS.full,
     minWidth: 18,
@@ -455,53 +591,80 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
-    borderColor: "rgba(37, 99, 235, 0.9)",
+    borderColor: COLORS.primary,
   },
-  bellBadgeText: {
-    fontSize: 10,
-    fontWeight: "700",
+  heroBellBadgeText: {
+    fontSize: 9,
+    fontWeight: "800",
     color: "#FFFFFF",
   },
-  avatarCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    borderWidth: 2,
-    borderColor: "rgba(255,255,255,0.3)",
+  heroAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: RADIUS.full,
+    backgroundColor: "rgba(255,255,255,0.22)",
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.32)",
+    overflow: "hidden",
   },
-  avatarText: {
-    fontSize: 20,
+  heroAvatarImage: {
+    width: "100%",
+    height: "100%",
+  },
+  heroAvatarText: {
+    fontSize: 16,
     fontWeight: "700",
     color: "#FFFFFF",
   },
-  orgChip: {
+  // Inline today snapshot in the hero — glass row with In / Out / Hours.
+  heroSnapshot: {
     flexDirection: "row",
+    alignItems: "stretch",
+    marginTop: SPACING.lg,
+    backgroundColor: "rgba(255,255,255,0.13)",
+    borderRadius: RADIUS.md,
+    paddingVertical: SPACING.sm + 2,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.16)",
+  },
+  heroSnapItem: {
+    flex: 1,
     alignItems: "center",
-    gap: SPACING.xs,
-    marginTop: SPACING.sm,
-    backgroundColor: "rgba(255,255,255,0.12)",
-    paddingHorizontal: SPACING.sm + 4,
-    paddingVertical: SPACING.xs + 2,
-    borderRadius: RADIUS.full,
-    alignSelf: "flex-start",
+    gap: 2,
   },
-  orgChipText: {
-    fontSize: 12,
-    color: "rgba(255,255,255,0.85)",
+  heroSnapDivider: {
+    width: 1,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    marginVertical: 4,
+  },
+  heroSnapLabel: {
+    fontSize: 10,
+    color: "rgba(255,255,255,0.7)",
     fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
   },
+  heroSnapValue: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#FFFFFF",
+    letterSpacing: -0.3,
+  },
+  // ─── Content area ────────────────────────────────────────────────
   contentArea: {
-    marginTop: -SPACING.xl,
     paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.sm,
   },
+  // ─── Cards ────────────────────────────────────────────────────────
   card: {
     borderRadius: RADIUS.lg,
     padding: SPACING.lg,
     backgroundColor: COLORS.surface,
-    ...SHADOWS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...SHADOWS.sm,
   },
   attendanceCard: {
     marginBottom: SPACING.lg,
@@ -510,7 +673,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: SPACING.md + 4,
+    marginBottom: SPACING.md,
   },
   attendanceTitleRow: {
     flexDirection: "row",
@@ -518,9 +681,10 @@ const styles = StyleSheet.create({
     gap: SPACING.sm,
   },
   cardTitle: {
-    fontSize: 16,
-    fontWeight: "600",
+    fontSize: 15,
+    fontWeight: "700",
     color: COLORS.text,
+    letterSpacing: -0.2,
   },
   statusPill: {
     flexDirection: "row",
@@ -534,7 +698,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.successLight,
   },
   statusInactive: {
-    backgroundColor: COLORS.borderLight,
+    backgroundColor: COLORS.surfaceMuted,
   },
   statusDot: {
     width: 6,
@@ -542,33 +706,38 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   statusPillText: {
-    fontSize: 12,
-    fontWeight: "600",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+    textTransform: "uppercase",
   },
   timeRow: {
     flexDirection: "row",
-    alignItems: "center",
-    marginBottom: SPACING.md + 4,
+    alignItems: "stretch",
+    marginBottom: SPACING.md,
+    backgroundColor: COLORS.surfaceMuted,
+    borderRadius: RADIUS.md,
+    paddingVertical: SPACING.md,
   },
   timeBlock: {
     flex: 1,
     alignItems: "center",
-    gap: SPACING.xs,
+    gap: 4,
   },
   timeSep: {
     width: 1,
-    height: 44,
     backgroundColor: COLORS.border,
+    marginVertical: 4,
   },
   timeLabel: {
-    fontSize: 11,
+    fontSize: 10,
     color: COLORS.textMuted,
-    fontWeight: "500",
+    fontWeight: "700",
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
   timeValue: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: "700",
     color: COLORS.text,
     letterSpacing: -0.3,
@@ -576,6 +745,7 @@ const styles = StyleSheet.create({
   loader: {
     marginVertical: SPACING.lg,
   },
+  // ─── CTAs — gradient on the primary action ───────────────────────
   clockButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -593,35 +763,43 @@ const styles = StyleSheet.create({
     ...SHADOWS.colored(COLORS.danger),
   },
   clockButtonText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "700",
     color: "#FFFFFF",
+    letterSpacing: -0.2,
   },
+  // ─── Section heading ──────────────────────────────────────────────
   sectionTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: COLORS.text,
-    letterSpacing: -0.3,
+    fontSize: 12,
+    fontWeight: "800",
+    color: COLORS.textMuted,
+    letterSpacing: 0.8,
     marginBottom: SPACING.md,
-    marginTop: SPACING.xs,
+    marginTop: SPACING.lg,
+    textTransform: "uppercase",
   },
+  // ─── Quick actions — coloured tone tiles ──────────────────────────
   quickActions: {
     flexDirection: "row",
     gap: SPACING.sm,
-    marginBottom: SPACING.lg,
+    marginBottom: SPACING.md,
   },
   actionCard: {
     flex: 1,
     alignItems: "center",
     backgroundColor: COLORS.surface,
     borderRadius: RADIUS.lg,
-    paddingVertical: SPACING.md + 2,
+    paddingVertical: SPACING.md,
     paddingHorizontal: SPACING.sm,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     ...SHADOWS.sm,
   },
+  // Tone is applied inline (action.tone.bg / .fg) so each tile gets
+  // its own personality from the curated palette.
   actionIcon: {
-    width: 46,
-    height: 46,
+    width: 44,
+    height: 44,
     borderRadius: RADIUS.md,
     alignItems: "center",
     justifyContent: "center",
@@ -629,10 +807,12 @@ const styles = StyleSheet.create({
   },
   actionLabel: {
     fontSize: 12,
-    fontWeight: "600",
+    fontWeight: "700",
     color: COLORS.text,
     textAlign: "center",
+    letterSpacing: -0.1,
   },
+  // ─── Stat strip — neutral cards with tinted big numbers ───────────
   statsRow: {
     flexDirection: "row",
     gap: SPACING.sm,
@@ -640,20 +820,23 @@ const styles = StyleSheet.create({
   statCard: {
     flex: 1,
     backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.md,
+    borderRadius: RADIUS.lg,
     padding: SPACING.md,
-    borderLeftWidth: 3,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     ...SHADOWS.sm,
   },
   statNumber: {
     fontSize: 24,
     fontWeight: "800",
-    letterSpacing: -0.5,
-    marginBottom: SPACING.xs,
+    letterSpacing: -0.6,
+    marginBottom: 2,
   },
   statLabel: {
     fontSize: 11,
-    fontWeight: "500",
-    color: COLORS.textSecondary,
+    fontWeight: "600",
+    color: COLORS.textMuted,
+    letterSpacing: 0.2,
+    textTransform: "uppercase",
   },
 });

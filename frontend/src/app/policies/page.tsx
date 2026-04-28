@@ -196,7 +196,7 @@ function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: ()
 // ════════════════════════════════════════════════════════════
 
 export default function PoliciesPage() {
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading, logout, hasOrgRole } = useAuth();
   const router = useRouter();
 
   const [policies, setPolicies] = useState<Policy[]>([]);
@@ -528,7 +528,11 @@ export default function PoliciesPage() {
 
   // ── Access check ──
 
-  const hasAccess = user.roles?.some((r) => ["admin", "super_admin", "hr"].includes(r));
+  // Cover both top-level roles AND per-org orgRole — see departments page
+  // for the rationale (OTP-only owners have roles=[] but orgRole=owner).
+  const hasAccess =
+    !!user.roles?.some((r) => ["admin", "super_admin", "hr"].includes(r)) ||
+    hasOrgRole("hr");
   if (!hasAccess) {
     return (
       <div className="min-h-screen flex bg-[#F8FAFC]">

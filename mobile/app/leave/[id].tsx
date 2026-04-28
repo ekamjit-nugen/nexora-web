@@ -8,6 +8,7 @@ import {
 } from "react-native";
 import { Text, TextInput, ActivityIndicator } from "react-native-paper";
 import { LinearGradient } from "expo-linear-gradient";
+import { Hero } from "../../components/Hero";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -149,22 +150,7 @@ export default function LeaveDetailScreen() {
   if (!leave) {
     return (
       <View style={styles.container}>
-        <LinearGradient
-          colors={[COLORS.gradientStart, COLORS.gradientSoft]}
-          style={styles.headerGradient}
-        >
-          <SafeAreaView edges={["top"]}>
-            <View style={styles.headerContent}>
-              <View style={styles.headerRow}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
-                  <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>Leave Detail</Text>
-                <View style={{ width: 40 }} />
-              </View>
-            </View>
-          </SafeAreaView>
-        </LinearGradient>
+        <Hero title="Leave Detail" showBack />
         <View style={[styles.container, styles.centered]}>
           <MaterialCommunityIcons name="file-document-remove-outline" size={48} color={COLORS.textMuted} />
           <Text style={styles.notFoundText}>Leave request not found</Text>
@@ -179,25 +165,7 @@ export default function LeaveDetailScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <LinearGradient
-        colors={[COLORS.gradientStart, COLORS.gradientSoft]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.headerGradient}
-      >
-        <SafeAreaView edges={["top"]}>
-          <View style={styles.headerContent}>
-            <View style={styles.headerRow}>
-              <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
-                <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
-              </TouchableOpacity>
-              <Text style={styles.headerTitle}>Leave Detail</Text>
-              <View style={{ width: 40 }} />
-            </View>
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
+      <Hero title="Leave Detail" showBack />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
