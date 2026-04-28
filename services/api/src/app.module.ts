@@ -3,6 +3,9 @@ import { BootstrapModule } from './bootstrap/bootstrap.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { HrModule } from './modules/hr/hr.module';
 import { PayrollModule } from './modules/payroll/payroll.module';
+import { AttendanceModule } from './modules/attendance/attendance.module';
+import { LeaveModule } from './modules/leave/leave.module';
+import { PolicyModule } from './modules/policy/policy.module';
 
 /**
  * The root app module of the Nexora monolith.
@@ -37,9 +40,12 @@ import { PayrollModule } from './modules/payroll/payroll.module';
 @Module({
   imports: [
     BootstrapModule,
-    AuthModule,    // services/auth-service    -> modules/auth    (migrated)
-    HrModule,      // services/hr-service      -> modules/hr      (migrated)
-    PayrollModule, // services/payroll-service -> modules/payroll (migrated)
+    AuthModule,       // services/auth-service       -> modules/auth       (migrated)
+    HrModule,         // services/hr-service         -> modules/hr         (migrated)
+    PayrollModule,    // services/payroll-service    -> modules/payroll    (migrated)
+    AttendanceModule, // services/attendance-service -> modules/attendance (migrated)
+    LeaveModule,      // services/leave-service      -> modules/leave      (migrated)
+    PolicyModule,     // services/policy-service     -> modules/policy     (migrated)
     // Migration playbook: docs/monolith-migration-playbook.md
   ],
 })
