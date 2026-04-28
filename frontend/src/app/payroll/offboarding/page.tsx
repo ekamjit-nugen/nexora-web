@@ -797,6 +797,7 @@ export default function OffboardingPage() {
                     {(!selectedRecord.clearance || selectedRecord.clearance.length === 0) ? (
                       <p className="text-[13px] text-[#64748B]">No clearance departments configured.</p>
                     ) : (
+                      <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
                       <table className="w-full">
                         <thead>
                           <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
@@ -840,6 +841,7 @@ export default function OffboardingPage() {
                           })}
                         </tbody>
                       </table>
+                      </div>
                     )}
                   </div>
                 )}
@@ -1105,6 +1107,7 @@ export default function OffboardingPage() {
                                 = (basic + DA) / 30
                               </div>
                               {selectedRecord.fnfSettlement.leaveEncashmentDetail.buckets.length > 0 ? (
+                                <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
                                 <table className="w-full text-[12px]">
                                   <thead>
                                     <tr className="text-[#64748B] border-b border-[#F1F5F9]">
@@ -1153,6 +1156,7 @@ export default function OffboardingPage() {
                                     </tr>
                                   </tfoot>
                                 </table>
+                                </div>
                               ) : (
                                 <p className="text-[12px] text-[#94A3B8]">No buckets returned.</p>
                               )}

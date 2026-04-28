@@ -247,6 +247,7 @@ export default function DepartmentsPage() {
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm overflow-hidden">
+          <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
           <table className="w-full text-sm">
             <thead className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
               <tr>
@@ -272,6 +273,7 @@ export default function DepartmentsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

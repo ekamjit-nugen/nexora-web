@@ -436,6 +436,7 @@ export default function DeclarationAdminReview() {
                         <div className="px-4 py-2 bg-[#F8FAFC] text-[12px] font-medium text-[#0F172A]">
                           Section {s.section}
                         </div>
+                        <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
                         <table className="w-full text-[12px]">
                           <thead className="text-[#64748B] bg-white">
                             <tr>
@@ -507,6 +508,7 @@ export default function DeclarationAdminReview() {
                             })}
                           </tbody>
                         </table>
+                        </div>
                       </div>
                     ))}
 

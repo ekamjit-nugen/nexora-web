@@ -843,6 +843,7 @@ export default function SurveysPage() {
                       <p className="text-[14px] text-[#64748B]">No surveys created yet</p>
                     </div>
                   ) : (
+                    <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
                     <table className="w-full">
                       <thead className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
                         <tr>
@@ -927,6 +928,7 @@ export default function SurveysPage() {
                         })}
                       </tbody>
                     </table>
+                    </div>
                   )}
                 </div>
               )}

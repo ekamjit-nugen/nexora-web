@@ -1041,6 +1041,7 @@ export default function RolesPage() {
 
                         {/* Section content */}
                         {!isCollapsed && (
+                          <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
                           <table className="w-full">
                             <thead>
                               <tr className="border-b border-[#F1F5F9]">
@@ -1085,6 +1086,7 @@ export default function RolesPage() {
                               ))}
                             </tbody>
                           </table>
+                          </div>
                         )}
                       </div>
                     );

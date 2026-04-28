@@ -198,6 +198,7 @@ export default function ModerationPage() {
                 <p className="text-sm font-medium">No flagged messages found</p>
               </div>
             ) : (
+              <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
@@ -245,6 +246,7 @@ export default function ModerationPage() {
                   })}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         </>

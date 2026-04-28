@@ -536,6 +536,7 @@ export default function ExpenseClaimsPage() {
             </div>
           ) : (
             <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm overflow-hidden">
+              <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
@@ -714,6 +715,7 @@ export default function ExpenseClaimsPage() {
                   })}
                 </tbody>
               </table>
+              </div>
               {totalPages > 1 && (
                 <div className="flex items-center justify-between px-4 py-3 border-t border-[#E2E8F0]">
                   <p className="text-[12px] text-[#64748B]">

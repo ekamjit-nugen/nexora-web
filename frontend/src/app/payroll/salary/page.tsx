@@ -625,6 +625,7 @@ function StructureFormModal({
                   </button>
                 </div>
                 <div className="border border-[#E2E8F0] rounded-lg overflow-hidden">
+                  <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
                   <table className="w-full text-[13px]">
                     <thead className="bg-[#F8FAFC]">
                       <tr>
@@ -694,6 +695,7 @@ function StructureFormModal({
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               </div>
             );
@@ -941,6 +943,7 @@ function EmployeeSalaryView() {
                   <div className="px-6 py-4 border-b border-[#E2E8F0]">
                     <h3 className="text-[15px] font-semibold text-[#0F172A]">{title}</h3>
                   </div>
+                  <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
                   <table className="w-full">
                     <thead>
                       <tr className="bg-[#F8FAFC]">
@@ -962,6 +965,7 @@ function EmployeeSalaryView() {
                       )}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               );
             })}

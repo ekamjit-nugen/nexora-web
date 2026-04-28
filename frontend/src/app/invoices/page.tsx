@@ -838,6 +838,7 @@ export default function InvoicesPage() {
                 <p className="text-gray-400 text-sm">Create your first invoice to get started</p>
               </div>
             ) : (
+              <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50/50">
@@ -1018,6 +1019,7 @@ export default function InvoicesPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
 
             {/* Pagination */}
@@ -1158,6 +1160,7 @@ export default function InvoicesPage() {
               {/* Step 2: Line Items */}
               {invoiceStep === 1 && (<>
                 <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
                   <table className="w-full">
                     <thead><tr className="bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wide">
                       <th className="text-left px-3 py-2">Description</th><th className="text-center px-3 py-2 w-20">Qty</th><th className="text-center px-3 py-2 w-24">Rate</th><th className="text-center px-3 py-2 w-20">Tax %</th><th className="text-right px-3 py-2 w-24">Amount</th><th className="w-10"></th>
@@ -1175,6 +1178,7 @@ export default function InvoicesPage() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                   <div className="px-3 py-2 border-t border-gray-100">
                     <button onClick={() => setFormItems([...formItems, { description: "", quantity: 1, rate: 0, amount: 0, taxRate: 0, taxAmount: 0 }])} className="text-sm text-[#2E86C1] hover:underline font-medium">+ Add Item</button>
                   </div>
@@ -1298,6 +1302,7 @@ export default function InvoicesPage() {
                       </div>
 
                       {/* Items table */}
+                      <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
                       <table className="w-full mb-6">
                         <thead>
                           <tr className={`text-[10px] uppercase tracking-wider ${s.tableBg}`} style={{ borderBottom: `2px solid ${accent}30` }}>
@@ -1320,6 +1325,7 @@ export default function InvoicesPage() {
                           ))}
                         </tbody>
                       </table>
+                      </div>
 
                       {/* Totals */}
                       <div className="flex justify-end mb-6">
@@ -1486,6 +1492,7 @@ export default function InvoicesPage() {
               {/* Items */}
               <div>
                 <div className="text-xs font-medium text-gray-400 uppercase mb-2">Items</div>
+                <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-xs text-gray-400 uppercase border-b border-gray-200">
@@ -1506,6 +1513,7 @@ export default function InvoicesPage() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
 
               {/* Totals */}
@@ -1804,12 +1812,14 @@ export default function InvoicesPage() {
                 <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Bill To</p>
                 <p className="text-base font-semibold text-gray-800">{getClientName(quickPreviewInvoice.clientId)}</p>
               </div>
+              <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
               <table className="w-full mb-6">
                 <thead><tr className="text-[10px] text-gray-400 uppercase tracking-wider border-b border-gray-200"><th className="text-left py-2">Description</th><th className="text-center py-2 w-14">Qty</th><th className="text-right py-2 w-24">Rate</th><th className="text-right py-2 w-24">Amount</th></tr></thead>
                 <tbody>{quickPreviewInvoice.items.map((item, i) => (
                   <tr key={i} className="border-b border-gray-50"><td className="py-2.5 text-gray-700">{item.description}</td><td className="text-center py-2.5 text-gray-600">{item.quantity}</td><td className="text-right py-2.5 text-gray-600">{formatCurrency(item.rate, quickPreviewInvoice.currency)}</td><td className="text-right py-2.5 font-medium text-gray-800">{formatCurrency(item.amount, quickPreviewInvoice.currency)}</td></tr>
                 ))}</tbody>
               </table>
+              </div>
               <div className="flex justify-end mb-6">
                 <div className="w-64 space-y-1.5 text-sm">
                   <div className="flex justify-between"><span className="text-gray-500">Subtotal</span><span>{formatCurrency(quickPreviewInvoice.subtotal, quickPreviewInvoice.currency)}</span></div>

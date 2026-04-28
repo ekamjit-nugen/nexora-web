@@ -837,6 +837,7 @@ function HolidayCalendarTab({ canWrite }: { canWrite: boolean }) {
             No holidays declared for {year}.
           </div>
         ) : (
+          <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
           <table className="w-full text-[13px]">
             <thead>
               <tr className="border-b border-[#F1F5F9] bg-[#FAFBFC]">
@@ -879,6 +880,7 @@ function HolidayCalendarTab({ canWrite }: { canWrite: boolean }) {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </Card>

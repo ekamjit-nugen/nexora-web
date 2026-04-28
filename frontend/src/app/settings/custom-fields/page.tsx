@@ -422,6 +422,7 @@ export default function CustomFieldsPage() {
               </p>
             </div>
           ) : (
+            <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
             <table className="w-full text-sm min-w-[900px]">
               <thead className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
                 <tr>
@@ -506,6 +507,7 @@ export default function CustomFieldsPage() {
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </CardContent>
       </Card>

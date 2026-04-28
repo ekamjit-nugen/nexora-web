@@ -452,6 +452,7 @@ export default function TimesheetsPage() {
                   <p className="text-[12px] text-[#94A3B8] py-4 text-center">No active delegations. Click &quot;Delegate Approval&quot; to assign approval authority.</p>
                 ) : (
                   <div className="border border-[#E2E8F0] rounded-xl overflow-hidden">
+                    <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
                     <table className="w-full text-[12px]">
                       <thead>
                         <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
@@ -503,6 +504,7 @@ export default function TimesheetsPage() {
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   </div>
                 )}
               </CardContent>
@@ -643,6 +645,7 @@ export default function TimesheetsPage() {
                             <p className="text-[13px] text-[#94A3B8] py-4 text-center">No entries yet. Use Auto-Populate or log time on tasks.</p>
                           ) : (
                             <div className="border border-[#E2E8F0] rounded-xl overflow-hidden">
+                              <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
                               <table className="w-full text-[12px]">
                                 <thead>
                                   <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
@@ -678,6 +681,7 @@ export default function TimesheetsPage() {
                                   </tr>
                                 </tfoot>
                               </table>
+                              </div>
                             </div>
                           )}
 
@@ -884,6 +888,7 @@ export default function TimesheetsPage() {
                   <>
                     {/* Line items table */}
                     <div className="border border-[#E2E8F0] rounded-xl overflow-hidden">
+                      <div className="overflow-x-auto -mx-4 sm:mx-0 sm:rounded-lg">
                       <table className="w-full text-[12px]">
                         <thead>
                           <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
@@ -923,6 +928,7 @@ export default function TimesheetsPage() {
                           </tr>
                         </tfoot>
                       </table>
+                      </div>
                     </div>
 
                     {invoicePreview.grandTotal === 0 && (
