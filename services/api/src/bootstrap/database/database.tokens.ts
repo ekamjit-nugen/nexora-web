@@ -34,11 +34,14 @@ export const AI_DB = 'nexora_ai';
 export const BENCH_DB = 'nexora_bench';
 export const TASK_DB = 'nexora_tasks';                 // plural in legacy
 export const PROJECT_DB = 'nexora_projects';           // plural in legacy
+export const CHATBOT_DB = 'nexora_chatbot';            // new — chatbot conversations + feedback
+export const STORAGE_DB = 'nexora_storage';            // new — tenant cloud storage metadata
 
 export const ALL_DB_NAMES = [
   AUTH_DB, HR_DB, PAYROLL_DB, ATTENDANCE_DB, LEAVE_DB, POLICY_DB,
   ASSET_DB, HELPDESK_DB, KNOWLEDGE_DB, CHAT_DB, CALLING_DB, MEDIA_DB,
   NOTIFICATION_DB, AI_DB, BENCH_DB, TASK_DB, PROJECT_DB,
+  CHATBOT_DB, STORAGE_DB,
 ] as const;
 
 export type DbName = typeof ALL_DB_NAMES[number];

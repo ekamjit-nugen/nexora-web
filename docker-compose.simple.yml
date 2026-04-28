@@ -112,17 +112,38 @@ services:
       POLICY_SERVICE_URL: http://api:3000
       AI_SERVICE_URL: http://api:3000
 
-      # Media S3 / MinIO
-      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
-      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
-      S3_BUCKET: ${S3_BUCKET:-nexora-media}
+      # S3 — single bucket `s3-nexora` used for media uploads, asset
+      # docs, knowledge attachments, and per-tenant cloud storage.
+      # Files are partitioned by orgId prefix so tenants never collide.
+      # Set real values in your local .env to enable uploads:
+      #   S3_ENDPOINT=                          (blank for real AWS S3)
+      #   S3_ACCESS_KEY=AKIA...
+      #   S3_SECRET_KEY=...
+      # Placeholders below let the app boot without S3 traffic.
+      # If S3_ENDPOINT is unset, the AWS SDK uses the default AWS S3
+      # endpoint for the region. The legacy media helper requires a
+      # truthy endpoint string at boot — set a placeholder so it boots
+      # cleanly when running without real S3.
+      S3_ENDPOINT: ${S3_ENDPOINT:-https://s3.ap-south-1.amazonaws.com}
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-placeholder}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-placeholder}
+      S3_BUCKET: ${S3_BUCKET:-s3-nexora}
 
-      # AI module
+      # AI module (legacy LLM proxy)
       OPENAI_API_KEY: ${OPENAI_API_KEY:-placeholder}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-placeholder}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+
+      # Chatbot module — self-hosted Ollama backend.
+      OLLAMA_URL: ${OLLAMA_URL:-http://216.48.177.40:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder:7b}
+      # 7B model on a remote CPU host can take 30-90s for a buffered
+      # response. Streaming endpoint side-steps this — but the buffered
+      # /chatbot/ask still needs a generous timeout for callers that
+      # don't stream (curl, scripts, mobile clients without SSE).
+      OLLAMA_TIMEOUT_MS: ${OLLAMA_TIMEOUT_MS:-180000}
 
       # OTP rate limiting
       OTP_MAX_ATTEMPTS: ${OTP_MAX_ATTEMPTS:-20}

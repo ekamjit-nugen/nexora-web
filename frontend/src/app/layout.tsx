@@ -8,6 +8,7 @@ import { SocketProvider } from "@/lib/socket-context";
 import { CallProvider } from "@/lib/call-context";
 import { ThemeInitializer } from "@/components/theme-initializer";
 import { GlobalIncomingCall } from "@/components/calling";
+import { Chatbot } from "@/components/Chatbot";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
@@ -30,6 +31,7 @@ export default function RootLayout({
             <CallProvider>
               <GlobalIncomingCall />
               {children}
+              <Chatbot />
             </CallProvider>
           </SocketProvider>
         </AuthProvider>
