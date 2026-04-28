@@ -8,6 +8,8 @@ import { LeaveModule } from './modules/leave/leave.module';
 import { PolicyModule } from './modules/policy/policy.module';
 import { TaskModule } from './modules/task/task.module';
 import { ProjectModule } from './modules/project/project.module';
+import { ChatModule } from './modules/chat/chat.module';
+import { CallingModule } from './modules/calling/calling.module';
 
 /**
  * The root app module of the Nexora monolith.
@@ -50,6 +52,8 @@ import { ProjectModule } from './modules/project/project.module';
     PolicyModule,     // services/policy-service     -> modules/policy     (migrated)
     TaskModule,       // services/task-service       -> modules/task       (migrated)
     ProjectModule,    // services/project-service    -> modules/project    (migrated)
+    ChatModule,       // services/chat-service       -> modules/chat       (migrated, WS+REST)
+    CallingModule,    // services/calling-service    -> modules/calling    (migrated, WS+REST)
     // Migration playbook: docs/monolith-migration-playbook.md
   ],
 })
