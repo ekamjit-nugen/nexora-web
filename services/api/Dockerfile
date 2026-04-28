@@ -38,5 +38,7 @@ ENV PORT=3000
 EXPOSE 3000
 
 # Default entrypoint = the full monolith. Override CMD when you split a
-# module out (e.g. `node dist/src/modules/payroll/payroll.bootstrap.js`).
-CMD ["node", "dist/src/main.js"]
+# module out (e.g. `node dist/modules/payroll/payroll.bootstrap.js`).
+# Note: nest build puts compiled files at `dist/<file>`, NOT
+# `dist/src/<file>`, so paths here drop the `src/` prefix.
+CMD ["node", "dist/main.js"]

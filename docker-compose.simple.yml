@@ -609,6 +609,123 @@ services:
       - nexora-network
     restart: unless-stopped
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # The Modular Monolith
+  # ─────────────────────────────────────────────────────────────────────────
+  # Single deployable that contains all 17 application modules
+  # (auth, hr, payroll, attendance, leave, policy, task, project, chat,
+  #  calling, notification, media, asset, bench, helpdesk, knowledge, ai).
+  #
+  # Runs SIDE-BY-SIDE with the legacy 18 microservices above during the
+  # cutover window. Both can be hit:
+  #   - http://localhost:3005/api/v1/...   ← legacy gateway → 18 services
+  #   - http://localhost:3015/api/v1/...   ← monolith (this service)
+  #
+  # Once the monolith is verified, comment out / delete the 18 legacy
+  # service blocks above. The legacy folders under services/<name>-service
+  # stay on disk as a code-level safety net until you're sure.
+  # ─────────────────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    container_name: nexora-api
+    ports:
+      - "3015:3000"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3000
+
+      # Mongo — root URI without DB; each module appends its own via
+      # named connections (see services/api/src/bootstrap/database/).
+      MONGODB_URI: mongodb://root:nexora_dev_password@mongodb:27017/?authSource=admin
+
+      # Redis — for chat / calling Socket.IO adapter + bullmq queues
+      REDIS_URL: redis://redis:6379
+
+      # JWT — must match the legacy auth-service secret so JWTs
+      # minted by either side validate everywhere.
+      JWT_SECRET: ${JWT_SECRET:-nexora-jwt-secret-key-change-in-production-12345}
+      JWT_EXPIRY: ${JWT_EXPIRY:-15m}
+
+      # OAuth / SAML (auth module) — placeholder values are harmless
+      # because the strategies only fire on the OAuth/SAML routes.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-placeholder}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-placeholder}
+      GOOGLE_CALLBACK_URL: ${GOOGLE_CALLBACK_URL:-http://localhost:3015/api/v1/auth/google/callback}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-placeholder}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-placeholder}
+      MICROSOFT_CALLBACK_URL: ${MICROSOFT_CALLBACK_URL:-http://localhost:3015/api/v1/auth/microsoft/callback}
+      SAML_ENTRY_POINT: ${SAML_ENTRY_POINT:-http://placeholder}
+      SAML_ISSUER: ${SAML_ISSUER:-nexora-saml}
+      SAML_CALLBACK_URL: ${SAML_CALLBACK_URL:-http://localhost:3015/api/v1/auth/saml/callback}
+      SAML_CERT: ${SAML_CERT:-placeholder}
+
+      # Email (auth OTP)
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_FROM: ${SMTP_FROM:-noreply@nexora.io}
+
+      # Frontend URL — referenced by auth's invite emails
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3100}
+
+      # Cross-service URLs (legacy fallback path).
+      # payroll-module's ExternalServicesService still calls these over
+      # HTTP. Once it refactors to inject HR_PUBLIC_API/AUTH_PUBLIC_API
+      # directly, these become unused. Kept pointing at the legacy
+      # services that are still running on the docker network.
+      AUTH_SERVICE_URL: http://auth-service:3001
+      HR_SERVICE_URL: http://hr-service:3010
+      ATTENDANCE_SERVICE_URL: http://attendance-service:3011
+      LEAVE_SERVICE_URL: http://leave-service:3012
+      POLICY_SERVICE_URL: http://policy-service:3013
+
+      # Media (S3 / MinIO) — names match what media-service expects.
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+      S3_BUCKET: ${S3_BUCKET:-nexora-media}
+
+      # AI module — placeholder until you provide real keys
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-placeholder}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-placeholder}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+
+      # OTP rate-limiting — same defaults as legacy auth-service
+      OTP_MAX_ATTEMPTS: ${OTP_MAX_ATTEMPTS:-20}
+      OTP_LOCKOUT_MINUTES: ${OTP_LOCKOUT_MINUTES:-2}
+      OTP_RATE_LIMIT_PER_HOUR: ${OTP_RATE_LIMIT_PER_HOUR:-100}
+      OTP_RESEND_COOLDOWN_SECONDS: ${OTP_RESEND_COOLDOWN_SECONDS:-1}
+
+      # CORS / logging
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3100}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+      # Until ExternalServicesService is refactored, the monolith's
+      # payroll module still calls these legacy services over HTTP.
+      # service_started (not service_healthy) so the monolith can boot
+      # while they're warming up.
+      auth-service:
+        condition: service_started
+      hr-service:
+        condition: service_started
+    networks:
+      - nexora-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:3000/api/v1/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
   # Development Tools
   mailhog:
     image: mailhog/mailhog:latest
