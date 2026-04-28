@@ -40,6 +40,12 @@ async function bootstrap() {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      // Critical: query strings (?limit=10&page=1) arrive as strings,
+      // but DTOs declare those fields as `number` with @IsNumber().
+      // Without enableImplicitConversion, every list endpoint with
+      // pagination params 400s with "limit must be a number".
+      // Matches the legacy hr/payroll/etc. service config exactly.
+      transformOptions: { enableImplicitConversion: true },
     }),
   );
 

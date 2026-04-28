@@ -24,7 +24,7 @@ async function bootstrap() {
   app.enableCors({ origin: true, credentials: true });
   app.use(cookieParser());
   app.use(helmet());
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, transformOptions: { enableImplicitConversion: true } }));
   app.useGlobalInterceptors(new ResponseInterceptor());
   app.useGlobalFilters(new HttpExceptionFilterImpl());
   app.setGlobalPrefix('api/v1');
