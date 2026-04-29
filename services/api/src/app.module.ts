@@ -18,6 +18,7 @@ import { HelpdeskModule } from './modules/helpdesk/helpdesk.module';
 import { KnowledgeModule } from './modules/knowledge/knowledge.module';
 import { AiModule } from './modules/ai/ai.module';
 import { ChatbotModule } from './modules/chatbot/chatbot.module';
+import { StorageModule } from './modules/storage/storage.module';
 
 /**
  * The root app module of the Nexora monolith.
@@ -70,6 +71,7 @@ import { ChatbotModule } from './modules/chatbot/chatbot.module';
     KnowledgeModule,    // services/knowledge-service    -> modules/knowledge    (migrated)
     AiModule,           // services/ai-service           -> modules/ai           (migrated, stateless)
     ChatbotModule,      // NEW — Ollama-backed AI assistant (tenant-isolated)
+    StorageModule,      // NEW — per-tenant cloud storage (S3-backed, quota'd)
     // Migration playbook: docs/monolith-migration-playbook.md
   ],
 })
