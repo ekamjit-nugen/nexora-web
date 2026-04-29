@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, ReactNode } from "react";
+import Link from "next/link";
 
 /**
  * Tiny zero-dep Markdown renderer for chatbot replies.
@@ -158,17 +159,40 @@ function renderInline(text: string, key: string): ReactNode {
     } else if (tok.startsWith("[")) {
       const linkMatch = tok.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
       if (linkMatch) {
-        out.push(
-          <a
-            key={`${key}-${idx++}`}
-            href={linkMatch[2]}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-indigo-600 underline-offset-2 hover:underline"
-          >
-            {linkMatch[1]}
-          </a>,
-        );
+        const [, label, href] = linkMatch;
+        // Internal app routes (start with `/` and not `//` for protocol-
+        // relative) use Next.js client-side routing — no full page reload,
+        // no new tab, no chat-panel teardown. The chat widget is mounted
+        // globally in src/app/layout.tsx so it persists across navigations.
+        const isInternal = href.startsWith("/") && !href.startsWith("//");
+        if (isInternal) {
+          out.push(
+            <Link
+              key={`${key}-${idx++}`}
+              href={href}
+              prefetch={false}
+              className="inline-flex items-center gap-0.5 rounded bg-indigo-50 px-1.5 py-px font-medium text-indigo-700 transition hover:bg-indigo-100 hover:text-indigo-800"
+            >
+              {label}
+              {/* tiny chevron so it's visually obvious this navigates */}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </Link>,
+          );
+        } else {
+          out.push(
+            <a
+              key={`${key}-${idx++}`}
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-indigo-600 underline-offset-2 hover:underline"
+            >
+              {label}
+            </a>,
+          );
+        }
       } else {
         out.push(tok);
       }
