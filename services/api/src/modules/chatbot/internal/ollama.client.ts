@@ -39,6 +39,23 @@ export class OllamaClient {
     this.timeoutMs = Number(cfg.get<string>('OLLAMA_TIMEOUT_MS') || 60_000);
   }
 
+  /**
+   * Sampling options.
+   * temperature 0.85 — slightly above default so Nexie's openers and
+   *   emoji picks don't feel canned across turns, but low enough to
+   *   keep factual answers stable.
+   * top_p 0.9 — standard nucleus filter.
+   * repeat_penalty 1.1 — gently discourages repeated phrasing within
+   *   a conversation (e.g. starting every reply with "Sure!").
+   */
+  private samplingOptions() {
+    return {
+      temperature: 0.85,
+      top_p: 0.9,
+      repeat_penalty: 1.1,
+    };
+  }
+
   /** Buffered (non-streaming) chat completion. */
   async chat(messages: OllamaMessage[]): Promise<OllamaChatResponse> {
     const ctrl = new AbortController();
@@ -48,7 +65,12 @@ export class OllamaClient {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: ctrl.signal,
-        body: JSON.stringify({ model: this.model, messages, stream: false }),
+        body: JSON.stringify({
+          model: this.model,
+          messages,
+          stream: false,
+          options: this.samplingOptions(),
+        }),
       });
       if (!res.ok) {
         const body = await res.text();
@@ -74,7 +96,12 @@ export class OllamaClient {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: ctrl.signal,
-        body: JSON.stringify({ model: this.model, messages, stream: true }),
+        body: JSON.stringify({
+          model: this.model,
+          messages,
+          stream: true,
+          options: this.samplingOptions(),
+        }),
       });
       if (!res.ok || !res.body) {
         const body = await res.text();
