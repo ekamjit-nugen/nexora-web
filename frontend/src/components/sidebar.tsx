@@ -495,6 +495,14 @@ export function Sidebar({ user, onLogout }: SidebarProps) {
         </Link>
       </div>
 
+      {/* "Preview all features" toggle — only visible to owner / admin /
+          platform admin. By default, even an owner sees the same sidebar
+          their employees see (i.e. with disabled features hidden). This
+          toggle lets them temporarily un-hide everything so they can
+          configure modules that are flagged off. Persists in localStorage
+          across reloads. */}
+      <PreviewFeaturesToggle visibleTo={isPlatformAdmin || hasOrgRole("admin")} />
+
       {/* User Card */}
       <div className="p-3 border-t border-[var(--sidebar-border,#E2E8F0)]">
         <div className="flex items-center gap-2.5 p-1.5">
@@ -517,5 +525,67 @@ export function Sidebar({ user, onLogout }: SidebarProps) {
       </div>
     </aside>
     </>
+  );
+}
+
+/**
+ * Sidebar toggle for owners/admins/platform admins to flip between
+ * "see what end users see" (default — feature flags respected) and
+ * "preview all" (every module visible regardless of flag — useful for
+ * configuration moments).
+ *
+ * The toggle persists via localStorage key `nexora.previewAllFeatures`.
+ * `useAuth().isFeatureEnabled` reads the same key, so the next render
+ * already shows the new state.
+ */
+function PreviewFeaturesToggle({ visibleTo }: { visibleTo: boolean }) {
+  const [enabled, setEnabled] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setEnabled(localStorage.getItem("nexora.previewAllFeatures") === "true");
+  }, []);
+
+  if (!visibleTo) return null;
+
+  const flip = () => {
+    const next = !enabled;
+    setEnabled(next);
+    if (typeof window !== "undefined") {
+      if (next) localStorage.setItem("nexora.previewAllFeatures", "true");
+      else localStorage.removeItem("nexora.previewAllFeatures");
+    }
+    // Force a soft re-render so isFeatureEnabled re-reads localStorage.
+    // useAuth's previewAllFeatures is read on every render via a fresh
+    // localStorage call, so a route change OR React state nudge picks
+    // it up. Use a hash flip — cheap, no full reload.
+    window.dispatchEvent(new Event("nexora:features-preview-changed"));
+    setTimeout(() => window.location.reload(), 0);
+  };
+
+  return (
+    <div className="mx-3 mt-2 mb-1 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2">
+      <div className="flex items-start gap-2">
+        <svg className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+        <div className="flex-1 min-w-0">
+          <div className="text-[10.5px] font-semibold text-amber-900 leading-tight">
+            {enabled ? "Previewing all features" : "Showing live features only"}
+          </div>
+          <div className="mt-0.5 text-[10px] text-amber-700/90 leading-snug">
+            {enabled
+              ? "You're seeing modules that are disabled for your team."
+              : "Only modules enabled for your team are visible."}
+          </div>
+          <button
+            onClick={flip}
+            className="mt-1.5 text-[10.5px] font-semibold text-amber-900 underline-offset-2 hover:underline"
+          >
+            {enabled ? "← Back to live view" : "Show disabled features →"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

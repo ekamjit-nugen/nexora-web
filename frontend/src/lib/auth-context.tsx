@@ -284,23 +284,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // created before section-level flags existed.
   const OPT_IN_FLAGS: Array<keyof OrgFeatures> = ["customFields", "automations"];
 
+  // Owner / admin "preview disabled features" toggle — when ON the user
+  // sees everything (helpful for configuration); when OFF (default) they
+  // see exactly what an end user in their tenant would see. Persisted
+  // in localStorage. Polled on every render so the toggle in the sidebar
+  // takes effect immediately. Platform admins always see everything.
+  const previewAllFeatures = (() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("nexora.previewAllFeatures") === "true";
+  })();
+
   const isFeatureEnabled = useCallback((feature: keyof OrgFeatures): boolean => {
+    // Platform admins (Nexora staff) sit above tenants and always see all.
     if (isPlatformAdmin) return true;
-    // Owner / org admin bypass — they're the tenant administrators.
-    // Feature flags exist to scope what END USERS see; the owner needs
-    // to see everything to configure modules, decide what to roll out,
-    // and audit data even in modules that are toggled off for the rest
-    // of the team. Rule-of-thumb: feature flags are about which
-    // capabilities are "live" for users, not about hiding things from
-    // the people responsible for the tenant.
-    if (orgRole === "owner" || orgRole === "admin") return true;
+
+    // Owner / admin can opt INTO seeing disabled features for
+    // configuration. Default = OFF so a tenant owner sees exactly the
+    // tenant view their employees see — that's what the user expects when
+    // they say "Helpdesk is disabled, why is the owner seeing it?".
+    if (
+      previewAllFeatures &&
+      (orgRole === "owner" || orgRole === "admin")
+    ) {
+      return true;
+    }
+
     const features = currentOrg?.features;
     const optIn = OPT_IN_FLAGS.includes(feature);
     if (!features) return !optIn;
     const flag = features[feature];
     if (flag === undefined) return !optIn;
     return flag.enabled === true;
-  }, [isPlatformAdmin, orgRole, currentOrg]);
+  }, [isPlatformAdmin, orgRole, currentOrg, previewAllFeatures]);
 
   const handleSetCurrentOrg = (org: Organization | null) => {
     setCurrentOrg(org);
