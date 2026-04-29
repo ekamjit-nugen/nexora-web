@@ -170,42 +170,97 @@ function StatCard(props: {
   );
 }
 
-// Every gateable feature in the platform. Order maps to the order they
-// render in the org features tab — kept loosely grouped (work → people →
-// payroll → ops → ai). Adding a new flag here requires (a) a matching
-// key in IOrganizationFeatures (auth-service), (b) the OrgFeatures
-// interface in api.ts, and (c) a `feature:` reference somewhere in
-// sidebar.tsx so the toggle actually hides something.
-const ALL_FEATURES: { key: keyof OrgFeatures; label: string; description: string }[] = [
-  // Work
-  { key: "projects",   label: "Projects",    description: "Project boards and planning" },
-  { key: "tasks",      label: "Tasks",       description: "Task management and tracking" },
-  { key: "sprints",    label: "Sprints",     description: "Agile sprint planning" },
-  { key: "timesheets", label: "Timesheets",  description: "Time tracking and logging" },
-  // Time
-  { key: "attendance", label: "Attendance",  description: "Attendance and check-in/out" },
-  { key: "leaves",     label: "Leaves",      description: "Leave requests and approvals" },
-  // Finance
-  { key: "clients",    label: "Clients",     description: "Client management" },
-  { key: "invoices",   label: "Invoices",    description: "Invoicing and billing" },
-  { key: "reports",    label: "Reports",     description: "Analytics and reporting" },
-  // Communication
-  { key: "chat",       label: "Chat",        description: "Team messaging, standups, announcements" },
-  { key: "calls",      label: "Calls",       description: "Audio and video calls + meetings" },
-  // Section-level gates (added for tenant-scoped rollouts)
-  { key: "payroll",     label: "Payroll & HR",   description: "Payroll runs, payslips, statutory reports, onboarding/offboarding" },
-  { key: "performance", label: "Performance",    description: "Goals, OKRs, reviews, kudos, surveys, learning" },
-  { key: "helpdesk",    label: "Helpdesk",       description: "Internal IT/HR ticketing" },
-  { key: "knowledge",   label: "Knowledge / Wiki", description: "Wiki, bookmarks, search" },
-  { key: "assetManagement",  label: "IT Assets",      description: "Asset directory, categories, dashboard" },
-  { key: "expenseManagement", label: "Expenses",       description: "Expense claims and reimbursements" },
-  { key: "recruitment",      label: "Recruitment",     description: "Jobs, candidates, hiring pipeline" },
-  // Capability flags — default OFF for all tenants; flip on per-org.
-  { key: "customFields", label: "Custom Fields", description: "Per-task / per-record custom field definitions (Admin → Custom Fields)" },
-  { key: "automations",  label: "Automations",   description: "Rule-based automations across tasks, leaves, etc. (Admin → Automations)" },
-  // AI
-  { key: "ai",         label: "AI Features", description: "AI-powered tools and suggestions" },
+// Every gateable feature in the platform, grouped by category. Adding
+// a new flag requires (a) a matching key in IOrganizationFeatures
+// (auth-service), (b) the OrgFeatures interface in api.ts, and (c) a
+// `feature:` reference somewhere in sidebar.tsx so the toggle actually
+// hides something.
+type FeatureGroup = {
+  id: string;
+  label: string;
+  description: string;
+  emoji: string;
+  features: Array<{
+    key: keyof OrgFeatures;
+    label: string;
+    description: string;
+  }>;
+};
+
+const FEATURE_GROUPS: FeatureGroup[] = [
+  {
+    id: "work",
+    label: "Work & Productivity",
+    description: "Projects, tasks, time tracking",
+    emoji: "📋",
+    features: [
+      { key: "projects",   label: "Projects",    description: "Project boards and planning" },
+      { key: "tasks",      label: "Tasks",       description: "Task management and tracking" },
+      { key: "sprints",    label: "Sprints",     description: "Agile sprint planning" },
+      { key: "timesheets", label: "Timesheets",  description: "Time tracking and logging" },
+    ],
+  },
+  {
+    id: "people",
+    label: "People & HR",
+    description: "Workforce, attendance, leave",
+    emoji: "👥",
+    features: [
+      { key: "attendance", label: "Attendance",  description: "Clock-in / clock-out, regularisation" },
+      { key: "leaves",     label: "Leaves",      description: "Leave requests and approvals" },
+      { key: "payroll",    label: "Payroll",     description: "Runs, payslips, statutory reports, onboarding/offboarding" },
+      { key: "recruitment",label: "Recruitment", description: "Jobs, candidates, hiring pipeline" },
+      { key: "performance",label: "Performance", description: "Goals, OKRs, reviews, kudos, surveys, learning" },
+    ],
+  },
+  {
+    id: "finance",
+    label: "Finance & Billing",
+    description: "Clients, invoices, expenses, reports",
+    emoji: "💰",
+    features: [
+      { key: "clients",          label: "Clients",  description: "Client management" },
+      { key: "invoices",         label: "Invoices", description: "Invoicing and billing" },
+      { key: "expenseManagement",label: "Expenses", description: "Expense claims and reimbursements" },
+      { key: "reports",          label: "Reports",  description: "Analytics and reporting" },
+    ],
+  },
+  {
+    id: "comms",
+    label: "Communication",
+    description: "Chat, calls, meetings",
+    emoji: "💬",
+    features: [
+      { key: "chat",  label: "Chat",  description: "Team messaging, standups, announcements" },
+      { key: "calls", label: "Calls", description: "Audio and video calls + meetings" },
+    ],
+  },
+  {
+    id: "ops",
+    label: "Operations",
+    description: "Helpdesk, knowledge base, assets",
+    emoji: "🛠️",
+    features: [
+      { key: "helpdesk",        label: "Helpdesk",       description: "Internal IT/HR ticketing" },
+      { key: "knowledge",       label: "Knowledge / Wiki", description: "Wiki, bookmarks, search" },
+      { key: "assetManagement", label: "IT Assets",      description: "Asset directory, categories, dashboard" },
+    ],
+  },
+  {
+    id: "advanced",
+    label: "Advanced",
+    description: "Power-user capabilities",
+    emoji: "⚡",
+    features: [
+      { key: "customFields", label: "Custom Fields", description: "Per-task / per-record custom field definitions" },
+      { key: "automations",  label: "Automations",   description: "Rule-based automations across tasks, leaves, etc." },
+      { key: "ai",           label: "AI Features",   description: "AI-powered tools and suggestions" },
+    ],
+  },
 ];
+
+// Flat list — used by the initialization effect + save handler.
+const ALL_FEATURES = FEATURE_GROUPS.flatMap((g) => g.features);
 
 const PLANS = ["free", "starter", "professional", "enterprise"];
 
@@ -378,48 +433,13 @@ export default function PlatformOrganizationDetailPage() {
             </CardContent>
           </Card>
         ) : activeTab === "features" ? (
-          <div className="space-y-4">
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-semibold text-[#0F172A]">Feature Flags</CardTitle>
-                  <Button size="sm" onClick={handleSaveFeatures} disabled={featuresLoading}>
-                    {featuresLoading ? "Saving..." : "Save Changes"}
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-[#64748B] mb-4">Enable or disable features for this organization. Changes take effect immediately.</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {ALL_FEATURES.map(({ key, label, description }) => (
-                    <div
-                      key={key}
-                      className="flex items-center justify-between p-3 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC]"
-                    >
-                      <div>
-                        <p className="text-[13px] font-medium text-[#0F172A]">{label}</p>
-                        <p className="text-[11px] text-[#94A3B8]">{description}</p>
-                      </div>
-                      <button
-                        onClick={() => setFeatureDraft((d) => ({ ...d, [key]: !d[key] }))}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-                          featureDraft[key] ? "bg-[#2E86C1]" : "bg-[#CBD5E1]"
-                        }`}
-                        role="switch"
-                        aria-checked={featureDraft[key]}
-                      >
-                        <span
-                          className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
-                            featureDraft[key] ? "translate-x-4.5" : "translate-x-0.5"
-                          }`}
-                        />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+          <FeatureFlagsPanel
+            featureDraft={featureDraft}
+            setFeatureDraft={setFeatureDraft}
+            handleSaveFeatures={handleSaveFeatures}
+            featuresLoading={featuresLoading}
+            org={org}
+          />
         ) : (
           <div className="space-y-6">
             {/* Overview — header now leads with the org avatar so a
@@ -880,5 +900,274 @@ export default function PlatformOrganizationDetailPage() {
       </main>
     </div>
     </RouteGuard>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Feature flags panel — super admin's per-tenant on/off matrix.
+//
+// Replaces the previous flat "list of small grey toggles" with a
+// grouped layout: features are organised into 6 categories (Work,
+// People, Finance, Communication, Operations, Advanced) so a Nexora
+// staff member configuring a tenant scans by area instead of reading
+// every row. Each group shows an enabled-count badge so it's immediately
+// obvious which areas are mostly on or off.
+//
+// Design notes:
+//   - iOS-style toggle (h-6 w-11) — bigger, more visible.
+//   - "Dirty" banner appears at the top once any toggle differs from
+//     the saved state, with Save / Discard buttons. The Save in the
+//     header is gone — having it always visible was confusing because
+//     it made you wonder if you had to save after every flip.
+//   - Bulk actions per group: "Enable all" / "Disable all" inside
+//     each category for fast tenant onboarding.
+// ─────────────────────────────────────────────────────────────────────
+interface FeatureFlagsPanelProps {
+  featureDraft: Record<string, boolean>;
+  setFeatureDraft: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  handleSaveFeatures: () => Promise<void> | void;
+  featuresLoading: boolean;
+  org: OrgDetail | null;
+}
+
+function FeatureFlagsPanel({
+  featureDraft,
+  setFeatureDraft,
+  handleSaveFeatures,
+  featuresLoading,
+  org,
+}: FeatureFlagsPanelProps) {
+  // Compute dirty state by comparing draft against currently-saved org.features
+  const isDirty = ALL_FEATURES.some(
+    ({ key }) => featureDraft[key] !== (org?.features?.[key]?.enabled ?? true),
+  );
+
+  // Counts for the summary header
+  const totalCount = ALL_FEATURES.length;
+  const enabledCount = Object.values(featureDraft).filter(Boolean).length;
+  const disabledCount = totalCount - enabledCount;
+
+  function toggle(key: string) {
+    setFeatureDraft((d) => ({ ...d, [key]: !d[key] }));
+  }
+
+  function bulkSet(keys: string[], value: boolean) {
+    setFeatureDraft((d) => {
+      const next = { ...d };
+      for (const k of keys) next[k] = value;
+      return next;
+    });
+  }
+
+  function discard() {
+    if (!org) return;
+    const fresh: Record<string, boolean> = {};
+    for (const { key } of ALL_FEATURES) {
+      fresh[key] = org.features?.[key]?.enabled ?? true;
+    }
+    setFeatureDraft(fresh);
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Summary card */}
+      <Card>
+        <CardContent className="p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-base font-semibold text-[#0F172A]">
+                Feature flags for {org?.name || "this organization"}
+              </h3>
+              <p className="mt-0.5 text-[12.5px] text-[#64748B]">
+                Toggle modules on or off. Backend enforces these via{" "}
+                <code className="rounded bg-slate-100 px-1 py-px text-[11px] text-slate-700">
+                  FEATURE_DISABLED
+                </code>{" "}
+                so disabled features are unavailable both in the UI and
+                via the API.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 sm:gap-3">
+              <CountChip color="emerald" value={enabledCount} label="enabled" />
+              <CountChip color="slate" value={disabledCount} label="disabled" />
+              <span className="text-[12px] text-[#94A3B8]">
+                of {totalCount}
+              </span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Dirty banner — appears only when there are unsaved changes */}
+      {isDirty && (
+        <div className="sticky top-0 z-10 flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 shadow-sm">
+          <div className="flex items-center gap-2 text-[13px] text-amber-900">
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            You have unsaved changes
+          </div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={discard}
+              disabled={featuresLoading}
+              className="border-amber-300 text-amber-900 hover:bg-amber-100"
+            >
+              Discard
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSaveFeatures}
+              disabled={featuresLoading}
+              className="bg-amber-600 text-white hover:bg-amber-700"
+            >
+              {featuresLoading ? "Saving…" : "Save changes"}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Grouped features */}
+      {FEATURE_GROUPS.map((group) => {
+        const groupKeys = group.features.map((f) => String(f.key));
+        const enabledInGroup = group.features.filter(
+          (f) => featureDraft[f.key as string],
+        ).length;
+        const allEnabled = enabledInGroup === group.features.length;
+        const allDisabled = enabledInGroup === 0;
+        return (
+          <Card key={group.id}>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-lg">
+                    {group.emoji}
+                  </span>
+                  <div>
+                    <CardTitle className="text-[14px] font-semibold text-[#0F172A]">
+                      {group.label}
+                    </CardTitle>
+                    <p className="mt-0.5 text-[11.5px] text-[#94A3B8]">
+                      {group.description}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] font-medium text-[#64748B]">
+                    {enabledInGroup} of {group.features.length} on
+                  </span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => bulkSet(groupKeys, true)}
+                      disabled={allEnabled}
+                      className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      All on
+                    </button>
+                    <button
+                      onClick={() => bulkSet(groupKeys, false)}
+                      disabled={allDisabled}
+                      className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      All off
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                {group.features.map(({ key, label, description }) => {
+                  const enabled = !!featureDraft[key as string];
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => toggle(key as string)}
+                      className={`group flex items-start gap-3 rounded-lg border p-3 text-left transition hover:shadow-sm ${
+                        enabled
+                          ? "border-emerald-200 bg-emerald-50/40"
+                          : "border-slate-200 bg-slate-50/60"
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`block h-1.5 w-1.5 rounded-full ${
+                              enabled ? "bg-emerald-500" : "bg-slate-300"
+                            }`}
+                          />
+                          <p className="text-[13px] font-semibold text-[#0F172A]">
+                            {label}
+                          </p>
+                        </div>
+                        <p className="mt-1 ml-3.5 text-[11.5px] leading-snug text-[#64748B]">
+                          {description}
+                        </p>
+                      </div>
+                      <Toggle
+                        on={enabled}
+                        // The button is the click target; the toggle is just the
+                        // visual indicator and shouldn't double-fire onClick.
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+/** iOS-style toggle (visual only — caller's onClick handles the flip). */
+function Toggle({ on }: { on: boolean }) {
+  return (
+    <span
+      className={`relative mt-0.5 inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
+        on ? "bg-emerald-500" : "bg-slate-300"
+      }`}
+      aria-hidden
+    >
+      <span
+        className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${
+          on ? "translate-x-[22px]" : "translate-x-0.5"
+        }`}
+      />
+    </span>
+  );
+}
+
+function CountChip({
+  color,
+  value,
+  label,
+}: {
+  color: "emerald" | "slate";
+  value: number;
+  label: string;
+}) {
+  const palette =
+    color === "emerald"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : "border-slate-200 bg-slate-50 text-slate-700";
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] font-medium ${palette}`}
+    >
+      <span
+        className={`block h-1.5 w-1.5 rounded-full ${
+          color === "emerald" ? "bg-emerald-500" : "bg-slate-400"
+        }`}
+      />
+      <span className="tabular-nums">{value}</span>
+      <span className="text-[11px] opacity-80">{label}</span>
+    </span>
   );
 }
