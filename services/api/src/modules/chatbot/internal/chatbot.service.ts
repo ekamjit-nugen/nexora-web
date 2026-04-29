@@ -5,6 +5,7 @@ import { IConversation } from './schemas/conversation.schema';
 import { OllamaClient, OllamaMessage } from './ollama.client';
 import { NEXORA_KNOWLEDGE } from '../knowledge/nexora-knowledge';
 import { CHATBOT_DB } from '../../../bootstrap/database/database.tokens';
+import { TenantContextService } from './tenant-context.service';
 
 /**
  * Multi-tenant chatbot service.
@@ -41,6 +42,7 @@ export class ChatbotService {
     @InjectModel('Conversation', CHATBOT_DB)
     private readonly conversationModel: Model<IConversation>,
     private readonly ollama: OllamaClient,
+    private readonly tenantContext: TenantContextService,
   ) {}
 
   /** List conversations for the current user — strictly tenant scoped. */
@@ -98,13 +100,16 @@ export class ChatbotService {
   async ask(
     organizationId: string,
     userId: string,
-    userContext: { firstName?: string; orgName?: string; orgRole?: string },
+    userContext: { firstName?: string; orgName?: string; orgRole?: string; isPlatformAdmin?: boolean },
     message: string,
     conversationId?: string,
   ): Promise<{ conversationId: string; reply: string }> {
     const t0 = Date.now();
     const conv = await this.loadOrCreateConversation(organizationId, userId, conversationId);
-    const messages = this.buildPrompt(conv, userContext, message);
+    const snapshot = await this.tenantContext
+      .fetch(organizationId, userId, userContext.orgRole || 'member', !!userContext.isPlatformAdmin)
+      .catch(() => null);
+    const messages = this.buildPrompt(conv, userContext, message, snapshot);
 
     let reply = '';
     try {
@@ -140,13 +145,16 @@ export class ChatbotService {
   async *askStream(
     organizationId: string,
     userId: string,
-    userContext: { firstName?: string; orgName?: string; orgRole?: string },
+    userContext: { firstName?: string; orgName?: string; orgRole?: string; isPlatformAdmin?: boolean },
     message: string,
     conversationId?: string,
   ): AsyncGenerator<{ chunk?: string; done?: boolean; conversationId: string }, void, void> {
     const t0 = Date.now();
     const conv = await this.loadOrCreateConversation(organizationId, userId, conversationId);
-    const messages = this.buildPrompt(conv, userContext, message);
+    const snapshot = await this.tenantContext
+      .fetch(organizationId, userId, userContext.orgRole || 'member', !!userContext.isPlatformAdmin)
+      .catch(() => null);
+    const messages = this.buildPrompt(conv, userContext, message, snapshot);
 
     let assembled = '';
     try {
@@ -207,26 +215,29 @@ export class ChatbotService {
 
   private buildPrompt(
     conv: IConversation,
-    userContext: { firstName?: string; orgName?: string; orgRole?: string },
+    userContext: { firstName?: string; orgName?: string; orgRole?: string; isPlatformAdmin?: boolean },
     newMessage: string,
+    snapshot?: any,
   ): OllamaMessage[] {
-    // System prompt: knowledge + safe per-tenant context block. No
-    // other tenant's data ever appears here.
-    const ctx = [
+    // System prompt = persona + workflow knowledge + LIVE tenant snapshot.
+    // No other tenant's data ever appears here because the snapshot
+    // service only ever queries by the caller's organizationId.
+    const fallbackCtx = [
       userContext.firstName ? `User's first name: ${userContext.firstName}` : '',
       userContext.orgName ? `User's organization: ${userContext.orgName}` : '',
       userContext.orgRole ? `User's role: ${userContext.orgRole}` : '',
     ].filter(Boolean).join('\n');
 
+    // Prefer the live snapshot block when available (richer + accurate
+    // numbers); fall back to the JWT-only context for the rare case
+    // where the tenant-context query fails.
+    const tenantBlock = snapshot
+      ? this.tenantContext.toPromptBlock(snapshot)
+      : '## Current user context\n' + fallbackCtx;
+
     const system: OllamaMessage = {
       role: 'system',
-      content:
-        NEXORA_KNOWLEDGE +
-        '\n\n## Current user context\n' +
-        ctx +
-        '\n\nWhen answering, refer to the user by their first name when' +
-        ' it feels natural. Always assume their organization context;' +
-        " never mention or speculate about other organizations' data.",
+      content: NEXORA_KNOWLEDGE + '\n\n' + tenantBlock,
     };
 
     // Trim long history to keep prompt size reasonable. Take last 12

@@ -130,8 +130,9 @@ export class ChatbotController {
   private userContext(req: any) {
     return {
       firstName: req.user.firstName,
-      orgName: undefined as string | undefined, // resolved by frontend if needed
+      orgName: undefined as string | undefined, // tenant snapshot fills this
       orgRole: req.user.orgRole || (req.user.roles?.[0] ?? undefined),
+      isPlatformAdmin: !!req.user.isPlatformAdmin,
     };
   }
 }
