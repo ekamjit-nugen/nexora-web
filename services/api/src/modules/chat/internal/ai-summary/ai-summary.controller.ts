@@ -3,8 +3,9 @@ import { AiSummaryService } from './ai-summary.service';
 import { SmartRepliesService } from './smart-replies.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 @Controller('chat/ai')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard)
 export class AiSummaryController {
   constructor(
     private aiSummaryService: AiSummaryService,

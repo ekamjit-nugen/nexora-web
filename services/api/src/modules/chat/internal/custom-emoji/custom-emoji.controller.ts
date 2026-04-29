@@ -14,8 +14,9 @@ import {
 import { CustomEmojiService } from './custom-emoji.service';
 import { JwtAuthGuard } from '../chat/guards/jwt-auth.guard';
 
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 @Controller('chat/emoji')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard)
 export class CustomEmojiController {
   private readonly logger = new Logger(CustomEmojiController.name);
 

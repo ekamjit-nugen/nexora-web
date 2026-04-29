@@ -16,6 +16,7 @@ import {
 import { CallingService } from './calling.service';
 import { CallingGateway } from './calling.gateway';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { Roles, RolesGuard } from './guards/roles.guard';
 import {
   InitiateCallDto,
@@ -26,7 +27,7 @@ import {
 } from './dto/index';
 
 @Controller('calls')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard, RolesGuard)
 export class CallingController {
   private readonly logger = new Logger(CallingController.name);
 

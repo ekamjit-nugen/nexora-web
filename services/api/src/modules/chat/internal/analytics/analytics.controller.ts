@@ -1,10 +1,11 @@
 import { Controller, Get, Query, UseGuards, Req } from '@nestjs/common';
 import { AnalyticsService } from './analytics.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { Roles, RolesGuard } from '../common/guards/roles.guard';
 
 @Controller('chat/analytics')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard, RolesGuard)
 export class AnalyticsController {
   constructor(private analyticsService: AnalyticsService) {}
 

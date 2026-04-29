@@ -1,6 +1,7 @@
 import { Controller, Get, Put, Body, Query, UseGuards, Req, HttpCode, HttpStatus } from '@nestjs/common';
 import { PresenceService } from './presence.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { IsString, IsOptional, IsArray } from 'class-validator';
 
 class SetStatusDto {
@@ -23,7 +24,7 @@ class BatchPresenceDto {
 }
 
 @Controller('chat/presence')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard)
 export class PresenceController {
   constructor(private presenceService: PresenceService) {}
 

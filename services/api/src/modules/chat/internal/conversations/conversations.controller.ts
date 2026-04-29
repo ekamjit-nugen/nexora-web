@@ -4,6 +4,7 @@ import {
 } from '@nestjs/common';
 import { ConversationsService } from './conversations.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { Roles, RolesGuard } from '../common/guards/roles.guard';
 import { CreateDirectConversationDto } from './dto/create-direct.dto';
 import { CreateGroupDto } from './dto/create-group.dto';
@@ -11,7 +12,7 @@ import { CreateChannelDto } from './dto/create-channel.dto';
 import { AddParticipantsDto, ConvertToGroupDto } from './dto/add-participant.dto';
 
 @Controller('chat')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard, RolesGuard)
 export class ConversationsController {
   private readonly logger = new Logger(ConversationsController.name);
 

@@ -2,8 +2,9 @@ import { Controller, Get, Query, UseGuards, Req } from '@nestjs/common';
 import { SyncService } from './sync.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 @Controller('chat/sync')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard)
 export class SyncController {
   constructor(private syncService: SyncService) {}
 

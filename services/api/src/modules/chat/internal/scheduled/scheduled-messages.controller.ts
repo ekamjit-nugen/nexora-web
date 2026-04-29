@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Delete, Body, Param, UseGuards, Req, HttpCode, HttpStatus } from '@nestjs/common';
 import { ScheduledMessagesService } from './scheduled-messages.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { IsString, IsDateString } from 'class-validator';
 
 class ScheduleMessageDto {
@@ -10,7 +11,7 @@ class ScheduleMessageDto {
 }
 
 @Controller('chat/scheduled')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard)
 export class ScheduledMessagesController {
   constructor(private scheduledService: ScheduledMessagesService) {}
 

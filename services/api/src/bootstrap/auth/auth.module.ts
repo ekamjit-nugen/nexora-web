@@ -2,7 +2,11 @@ import { Global, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { APP_GUARD } from '@nestjs/core';
+import { MongooseModule } from '@nestjs/mongoose';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { FeatureGuard, FeatureLookupService } from './feature.guard';
+import { OrganizationSchema } from '../../modules/auth/internal/auth/schemas/organization.schema';
+import { AUTH_DB } from '../database/database.tokens';
 
 /**
  * Global JWT setup. Exposes JwtService to every feature module so each
@@ -27,15 +31,23 @@ import { JwtAuthGuard } from './jwt-auth.guard';
         },
       }),
     }),
+    // FeatureLookupService reads org.features.<key>.enabled. Cached
+    // 30s — see feature.guard.ts.
+    MongooseModule.forFeature(
+      [{ name: 'Organization', schema: OrganizationSchema }],
+      AUTH_DB,
+    ),
   ],
   providers: [
     JwtAuthGuard,
+    FeatureGuard,
+    FeatureLookupService,
     // NOTE: we deliberately do NOT register JwtAuthGuard as APP_GUARD
     // because too much of the existing surface is intentionally public
     // (OTP send, health, webhooks). Each controller/handler opts in via
     // `@UseGuards(JwtAuthGuard)`. Use `@Public()` on individual handlers
     // if we ever flip the default.
   ],
-  exports: [JwtModule, JwtAuthGuard],
+  exports: [JwtModule, JwtAuthGuard, FeatureGuard, FeatureLookupService],
 })
 export class BootstrapAuthModule {}

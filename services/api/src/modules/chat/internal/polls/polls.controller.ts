@@ -1,6 +1,7 @@
 import { Controller, Post, Param, Body, UseGuards, Req, HttpCode, HttpStatus } from '@nestjs/common';
 import { PollsService } from './polls.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { IsString, IsArray, IsOptional, IsBoolean, IsDateString } from 'class-validator';
 
 class CreatePollDto {
@@ -22,7 +23,7 @@ class AddOptionDto {
 }
 
 @Controller('chat/polls')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard)
 export class PollsController {
   constructor(private pollsService: PollsService) {}
 

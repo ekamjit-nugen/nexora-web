@@ -1,6 +1,7 @@
 import { Controller, Post, Get, Body, Param, UseGuards, Req, HttpCode, HttpStatus } from '@nestjs/common';
 import { VoiceMessagesService } from './voice-messages.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { IsString, IsNumber } from 'class-validator';
 
 class SendVoiceMessageDto {
@@ -15,7 +16,7 @@ class TranscribeVoiceMessageDto {
 }
 
 @Controller('chat/voice')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard)
 export class VoiceMessagesController {
   constructor(private voiceService: VoiceMessagesService) {}
 

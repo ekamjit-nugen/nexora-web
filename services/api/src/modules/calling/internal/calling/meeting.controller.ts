@@ -20,6 +20,7 @@ import { MeetingService } from './meeting.service';
 import { MeetingGateway } from './meeting.gateway';
 import { CaptionsService } from '../meetings/captions/captions.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { Roles, RolesGuard } from './guards/roles.guard';
 import {
   ScheduleMeetingDto,
@@ -29,7 +30,7 @@ import {
 } from './dto/index';
 
 @Controller('meetings')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard, RolesGuard)
 export class MeetingController {
   private readonly logger = new Logger(MeetingController.name);
 
@@ -57,7 +58,7 @@ export class MeetingController {
 
   /** List meetings for current user */
   @Get()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async listMeetings(@Query() query: MeetingQueryDto, @Req() req: any) {
     try {
       const userId = req.user.sub || req.user.userId;
@@ -71,7 +72,7 @@ export class MeetingController {
 
   /** Get meetings for a sprint */
   @Get('sprint/:sprintId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMeetingsBySprint(@Param('sprintId') sprintId: string) {
     try {
       const meetings = await this.meetingService.getMeetingsBySprint(sprintId);
@@ -94,7 +95,7 @@ export class MeetingController {
 
   /** Get full meeting details (authenticated) */
   @Get(':meetingId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMeeting(@Param('meetingId') meetingId: string, @Req() req: any) {
     try {
       const userId = req.user.sub || req.user.userId;
@@ -107,7 +108,7 @@ export class MeetingController {
 
   /** Update meeting details */
   @Put(':meetingId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async updateMeeting(
     @Param('meetingId') meetingId: string,
     @Body() dto: UpdateMeetingDto,
@@ -124,7 +125,7 @@ export class MeetingController {
 
   /** Host starts the meeting — notifies all invited participants via WebSocket */
   @Post(':meetingId/start')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @HttpCode(HttpStatus.OK)
   async startMeeting(@Param('meetingId') meetingId: string, @Req() req: any) {
     try {
@@ -151,7 +152,7 @@ export class MeetingController {
 
   /** End the meeting */
   @Post(':meetingId/end')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @HttpCode(HttpStatus.OK)
   async endMeeting(@Param('meetingId') meetingId: string, @Req() req: any) {
     try {
@@ -175,7 +176,7 @@ export class MeetingController {
 
   /** Cancel meeting */
   @Delete(':meetingId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async cancelMeeting(@Param('meetingId') meetingId: string, @Req() req: any) {
     try {
       const userId = req.user.sub || req.user.userId;
@@ -188,7 +189,7 @@ export class MeetingController {
 
   /** Get meeting transcript */
   @Get(':meetingId/transcript')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getTranscript(@Param('meetingId') meetingId: string, @Req() req: any) {
     try {
       const userId = req.user.sub || req.user.userId;
@@ -226,7 +227,7 @@ export class MeetingController {
 
   /** Toggle captions for a user */
   @Post(':meetingId/captions/toggle')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @HttpCode(HttpStatus.OK)
   async toggleCaptions(
     @Param('meetingId') meetingId: string,
@@ -250,7 +251,7 @@ export class MeetingController {
 
   /** Submit an audio chunk for server-side transcription */
   @Post(':meetingId/captions/chunk')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @HttpCode(HttpStatus.OK)
   async submitCaptionChunk(
     @Param('meetingId') meetingId: string,
@@ -284,7 +285,7 @@ export class MeetingController {
 
   /** Check if server-side captions are available */
   @Get(':meetingId/captions/status')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getCaptionsStatus(@Param('meetingId') meetingId: string, @Req() req: any) {
     const userId = req.user.sub || req.user.userId;
     return {

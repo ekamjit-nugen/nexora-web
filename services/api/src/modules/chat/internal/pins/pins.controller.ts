@@ -1,10 +1,11 @@
 import { Controller, Get, Post, Delete, Param, UseGuards, Req, HttpCode, HttpStatus } from '@nestjs/common';
 import { PinsService } from './pins.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { ChannelPermissionGuard } from '../common/guards/channel-permission.guard';
 
 @Controller('chat')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard)
 export class PinsController {
   constructor(private pinsService: PinsService) {}
 

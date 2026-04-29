@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards, Req, HttpCode, HttpStatus } from '@nestjs/common';
 import { ThreadsService } from './threads.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { IsString, IsOptional, IsNumber, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -24,7 +25,7 @@ class ThreadQueryDto {
 }
 
 @Controller('chat/threads')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard)
 export class ThreadsController {
   constructor(private threadsService: ThreadsService) {}
 

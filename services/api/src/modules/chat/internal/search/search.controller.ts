@@ -3,8 +3,9 @@ import { Throttle } from '@nestjs/throttler';
 import { SearchService } from './search.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 @Controller('chat/search')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard)
 export class SearchController {
   constructor(private searchService: SearchService) {}
 

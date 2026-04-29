@@ -7,6 +7,7 @@ import type { Response } from 'express';
 import { PayrollService } from './payroll.service';
 import { BankPayoutService } from './bank-payout.service';
 import { JwtAuthGuard, Roles } from './guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import {
   CreateSalaryStructureDto, UpdateSalaryStructureDto, SimulateCTCDto,
   InitiatePayrollRunDto, UpdatePayrollStatusDto, OverrideEntryDto,
@@ -51,7 +52,7 @@ export class PayrollController {
   // ── Salary Structures ──
 
   @Post('salary-structures')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async createSalaryStructure(@Body() dto: CreateSalaryStructureDto, @Req() req) {
@@ -65,7 +66,7 @@ export class PayrollController {
   // declared BEFORE `:employeeId` so Nest doesn't route `salary-structures`
   // (without a path param) into the parametric handler.
   @Get('salary-structures')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async listSalaryStructures(@Query() query: any, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -83,7 +84,7 @@ export class PayrollController {
   // guard — any authenticated user can read their own row. The service
   // resolves HR employee from the auth userId (via HR service).
   @Get('salary-structures/me')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMySalaryStructure(@Query('status') status: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -97,7 +98,7 @@ export class PayrollController {
   }
 
   @Get('salary-structures/:employeeId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getSalaryStructure(@Param('employeeId') employeeId: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -116,7 +117,7 @@ export class PayrollController {
   }
 
   @Get('salary-structures/:employeeId/history')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getSalaryHistory(@Param('employeeId') employeeId: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -132,7 +133,7 @@ export class PayrollController {
   }
 
   @Put('salary-structures/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async updateSalaryStructure(@Param('id') id: string, @Body() dto: UpdateSalaryStructureDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -142,7 +143,7 @@ export class PayrollController {
   }
 
   @Post('salary-structures/:id/submit')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async submitForApproval(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -152,7 +153,7 @@ export class PayrollController {
   }
 
   @Post('salary-structures/:id/approve')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin', 'owner')
   async approveSalaryStructure(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -163,7 +164,7 @@ export class PayrollController {
   }
 
   @Post('salary-structures/:id/reject')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   async rejectSalaryStructure(@Param('id') id: string, @Body() dto: RejectSalaryStructureDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -178,7 +179,7 @@ export class PayrollController {
   // the admin-only gate blocked the employee self-view's "Simulate CTC"
   // button. Relax to any authenticated user in an org.
   @Post('salary-structures/simulate')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async simulateCTC(@Body() dto: SimulateCTCDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -189,7 +190,7 @@ export class PayrollController {
   // ── Payroll Runs ──
 
   @Post('payroll-runs')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async initiatePayrollRun(@Body() dto: InitiatePayrollRunDto, @Req() req) {
@@ -200,7 +201,7 @@ export class PayrollController {
   }
 
   @Get('payroll-runs')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getPayrollRuns(@Query() query: PayrollQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -219,7 +220,7 @@ export class PayrollController {
   }
 
   @Get('payroll-runs/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getPayrollRun(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -229,7 +230,7 @@ export class PayrollController {
   }
 
   @Post('payroll-runs/:id/process')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   async processPayrollRun(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -239,7 +240,7 @@ export class PayrollController {
   }
 
   @Put('payroll-runs/:id/status')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   async updatePayrollRunStatus(@Param('id') id: string, @Body() dto: UpdatePayrollStatusDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -254,7 +255,7 @@ export class PayrollController {
   // the supplementary-run path. Maker-checker: reopener ≠ finalizer
   // (owner can bypass).
   @Post('payroll-runs/:id/reopen')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   @HttpCode(HttpStatus.OK)
   async reopenPayrollRun(
@@ -270,7 +271,7 @@ export class PayrollController {
   }
 
   @Get('payroll-runs/:id/entries')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getPayrollEntries(@Param('id') id: string, @Query() query: PayrollQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -284,7 +285,7 @@ export class PayrollController {
   // `getPayrollEntry` resolves the caller's HR row and refuses if
   // `:employeeId` isn't theirs (unless caller has an admin/hr role).
   @Get('payroll-runs/:id/entries/:employeeId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getPayrollEntry(@Param('id') id: string, @Param('employeeId') employeeId: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -303,7 +304,7 @@ export class PayrollController {
   }
 
   @Put('payroll-runs/:id/entries/:employeeId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async overridePayrollEntry(
     @Param('id') id: string,
@@ -318,7 +319,7 @@ export class PayrollController {
   }
 
   @Post('payroll-runs/:id/entries/:employeeId/hold')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async holdEntry(
     @Param('id') id: string,
@@ -333,7 +334,7 @@ export class PayrollController {
   }
 
   @Post('payroll-runs/:id/entries/:employeeId/release')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async releaseEntry(@Param('id') id: string, @Param('employeeId') employeeId: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -343,7 +344,7 @@ export class PayrollController {
   }
 
   @Post('payroll-runs/:id/generate-payslips')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   async generatePayslips(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -358,7 +359,7 @@ export class PayrollController {
   // pass has already run (the bulk endpoint skips on_hold rows). Same
   // RBAC as the bulk endpoint — admin/owner/super_admin only.
   @Post('payroll-runs/:id/entries/:employeeId/generate-payslip')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   async generatePayslipForEmployee(
     @Param('id') id: string,
@@ -390,7 +391,7 @@ export class PayrollController {
   // ── Bank Payouts ──
 
   @Post('payroll-runs/:id/payout')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   async initiateBulkPayout(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -400,7 +401,7 @@ export class PayrollController {
   }
 
   @Get('payroll-runs/:id/transactions')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async getPayoutTransactions(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -409,7 +410,7 @@ export class PayrollController {
   }
 
   @Get('payroll-runs/:id/bank-file')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   async downloadBankFile(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -432,7 +433,7 @@ export class PayrollController {
   // to fix the bank details (or ack the skips) before pulling the
   // file. Same RBAC as the download itself — bank details are PII.
   @Get('payroll-runs/:id/bank-file/validate')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   async validateBankFile(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -445,7 +446,7 @@ export class PayrollController {
   }
 
   @Post('bank-transactions/:id/retry')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   async retryBankTransaction(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -455,7 +456,7 @@ export class PayrollController {
   }
 
   @Post('bank-transactions/:id/sync')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async syncBankTransaction(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -466,7 +467,7 @@ export class PayrollController {
   // ── Payslips ──
 
   @Get('payslips/my')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMyPayslips(@Query() query: PayslipQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -477,7 +478,7 @@ export class PayrollController {
   }
 
   @Get('payslips/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getPayslip(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -491,7 +492,7 @@ export class PayrollController {
   // on-demand (no file storage) because payroll is immutable after finalize
   // — regenerating from the Payslip doc always produces the same output.
   @Get('payslips/:id/download')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async downloadPayslipPdf(
     @Param('id') id: string,
     @Req() req,
@@ -523,7 +524,7 @@ export class PayrollController {
   // ── Investment Declarations ──
 
   @Post('investment-declarations')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @HttpCode(HttpStatus.CREATED)
   async submitDeclaration(@Body() dto: SubmitInvestmentDeclarationDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -533,7 +534,7 @@ export class PayrollController {
   }
 
   @Get('investment-declarations/my')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMyDeclarations(@Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -545,7 +546,7 @@ export class PayrollController {
   // status (`submitted`/`verified`/`rejected`) and financial year to
   // work the queue.
   @Get('investment-declarations')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async getAllDeclarations(
     @Query('status') status: string,
@@ -561,7 +562,7 @@ export class PayrollController {
   }
 
   @Get('investment-declarations/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getDeclaration(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -570,7 +571,7 @@ export class PayrollController {
   }
 
   @Put('investment-declarations/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async updateDeclaration(@Param('id') id: string, @Body() dto: SubmitInvestmentDeclarationDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -579,7 +580,7 @@ export class PayrollController {
   }
 
   @Post('investment-declarations/:id/verify')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async verifyDeclaration(@Param('id') id: string, @Body() dto: VerifyInvestmentDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -591,7 +592,7 @@ export class PayrollController {
   // ── Expense Claims ──
 
   @Post('expense-claims')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @HttpCode(HttpStatus.CREATED)
   async createExpenseClaim(@Body() dto: CreateExpenseClaimDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -601,7 +602,7 @@ export class PayrollController {
   }
 
   @Get('expense-claims/my')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMyExpenseClaims(@Query() query: ExpenseQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -610,7 +611,7 @@ export class PayrollController {
   }
 
   @Get('expense-claims/stats')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getExpenseStats(@Req() req) {
     const orgId = req.user?.organizationId;
@@ -620,7 +621,7 @@ export class PayrollController {
   }
 
   @Get('expense-claims/pending')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getPendingApprovals(@Query() query: ExpenseQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -630,7 +631,7 @@ export class PayrollController {
   }
 
   @Get('expense-claims')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getAllExpenseClaims(@Query() query: ExpenseQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -640,7 +641,7 @@ export class PayrollController {
   }
 
   @Get('expense-claims/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getExpenseClaim(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -649,7 +650,7 @@ export class PayrollController {
   }
 
   @Put('expense-claims/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async updateExpenseClaim(@Param('id') id: string, @Body() dto: UpdateExpenseClaimDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -658,7 +659,7 @@ export class PayrollController {
   }
 
   @Post('expense-claims/:id/submit')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async submitExpenseClaim(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -667,7 +668,7 @@ export class PayrollController {
   }
 
   @Post('expense-claims/:id/approve')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async approveExpenseClaim(@Param('id') id: string, @Body() dto: ApproveExpenseDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -677,7 +678,7 @@ export class PayrollController {
   }
 
   @Delete('expense-claims/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async cancelExpenseClaim(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -688,7 +689,7 @@ export class PayrollController {
   // ── Onboarding ──
 
   @Post('onboarding')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async initiateOnboarding(@Body() dto: InitiateOnboardingDto, @Req() req) {
@@ -699,7 +700,7 @@ export class PayrollController {
   }
 
   @Get('onboarding')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getAllOnboardings(@Query() query: OnboardingQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -709,7 +710,7 @@ export class PayrollController {
   }
 
   @Get('onboarding/:employeeId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getOnboarding(@Param('employeeId') employeeId: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -719,7 +720,7 @@ export class PayrollController {
   }
 
   @Post('onboarding/:employeeId/checklist/complete')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async completeChecklistItem(
     @Param('employeeId') employeeId: string,
@@ -733,7 +734,7 @@ export class PayrollController {
   }
 
   @Post('onboarding/:employeeId/documents/:docIndex/upload')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async uploadDocument(
     @Param('employeeId') employeeId: string,
     @Param('docIndex') docIndex: number,
@@ -747,7 +748,7 @@ export class PayrollController {
   }
 
   @Post('onboarding/:employeeId/documents/:docIndex/verify')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async verifyDocument(
     @Param('employeeId') employeeId: string,
@@ -762,7 +763,7 @@ export class PayrollController {
   }
 
   @Post('onboarding/:employeeId/confirm')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async confirmEmployee(@Param('employeeId') employeeId: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -772,7 +773,7 @@ export class PayrollController {
   }
 
   @Put('onboarding/:employeeId/status')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async updateOnboardingStatus(
     @Param('employeeId') employeeId: string,
@@ -788,7 +789,7 @@ export class PayrollController {
   // ── Offboarding ──
 
   @Post('offboarding')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async initiateOffboarding(@Body() dto: InitiateOffboardingDto, @Req() req) {
@@ -799,7 +800,7 @@ export class PayrollController {
   }
 
   @Get('offboarding')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getAllOffboardings(@Query() query: OffboardingQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -809,7 +810,7 @@ export class PayrollController {
   }
 
   @Get('offboarding/:employeeId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getOffboarding(@Param('employeeId') employeeId: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -819,7 +820,7 @@ export class PayrollController {
   }
 
   @Put('offboarding/:employeeId/clearance')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async updateClearance(
     @Param('employeeId') employeeId: string,
@@ -833,7 +834,7 @@ export class PayrollController {
   }
 
   @Post('offboarding/:employeeId/exit-interview')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async submitExitInterview(
     @Param('employeeId') employeeId: string,
@@ -847,7 +848,7 @@ export class PayrollController {
   }
 
   @Post('offboarding/:employeeId/calculate-fnf')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async calculateFnF(@Param('employeeId') employeeId: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -857,7 +858,7 @@ export class PayrollController {
   }
 
   @Post('offboarding/:employeeId/approve-fnf')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   async approveFnF(
     @Param('employeeId') employeeId: string,
@@ -871,7 +872,7 @@ export class PayrollController {
   }
 
   @Post('offboarding/:employeeId/generate-letters')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async generateLetters(@Param('employeeId') employeeId: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -885,7 +886,7 @@ export class PayrollController {
   // an ex-employee can download their OWN letter (service enforces
   // ownership via HR row resolution); admin/HR bypass the ownership gate.
   @Get('offboarding/:employeeId/letters/:kind')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async downloadOffboardingLetter(
     @Param('employeeId') employeeId: string,
     @Param('kind') kind: string,
@@ -917,7 +918,7 @@ export class PayrollController {
   }
 
   @Put('offboarding/:employeeId/status')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async updateOffboardingStatus(
     @Param('employeeId') employeeId: string,
@@ -933,7 +934,7 @@ export class PayrollController {
   // ── Analytics ──
 
   @Get('analytics/dashboard')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async getDashboardMetrics(@Query() query: AnalyticsQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -943,7 +944,7 @@ export class PayrollController {
   }
 
   @Get('analytics/headcount')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async getHeadcountTrends(@Query() query: AnalyticsQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -953,7 +954,7 @@ export class PayrollController {
   }
 
   @Get('analytics/attrition')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async getAttritionTrends(@Query() query: AnalyticsQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -963,7 +964,7 @@ export class PayrollController {
   }
 
   @Get('analytics/attrition/predictions')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async getAttritionPredictions(@Req() req) {
     const orgId = req.user?.organizationId;
@@ -973,7 +974,7 @@ export class PayrollController {
   }
 
   @Get('analytics/attrition/predictions/live')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async getLiveAttritionPredictions(@Req() req) {
     const orgId = req.user?.organizationId;
@@ -982,7 +983,7 @@ export class PayrollController {
   }
 
   @Get('analytics/cost')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   async getCostAnalytics(@Query() query: AnalyticsQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -992,7 +993,7 @@ export class PayrollController {
   }
 
   @Get('analytics/attendance-trends')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async getAttendanceTrends(@Query() query: AnalyticsQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1002,7 +1003,7 @@ export class PayrollController {
   }
 
   @Get('analytics/headcount-forecast')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async getHeadcountForecast(@Req() req) {
     const orgId = req.user?.organizationId;
@@ -1012,7 +1013,7 @@ export class PayrollController {
   }
 
   @Post('analytics/snapshots/generate')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async generateSnapshot(@Req() req) {
@@ -1025,7 +1026,7 @@ export class PayrollController {
   // ── Employee Loans ──
 
   @Post('loans')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @HttpCode(HttpStatus.CREATED)
   async applyLoan(@Body() dto: ApplyLoanDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1035,7 +1036,7 @@ export class PayrollController {
   }
 
   @Get('loans/my')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMyLoans(@Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1044,7 +1045,7 @@ export class PayrollController {
   }
 
   @Get('loans')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getLoans(@Query() query: LoanQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1054,7 +1055,7 @@ export class PayrollController {
   }
 
   @Get('loans/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getLoan(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1063,7 +1064,7 @@ export class PayrollController {
   }
 
   @Post('loans/:id/approve')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async approveLoan(@Param('id') id: string, @Body() dto: ApproveLoanDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1073,7 +1074,7 @@ export class PayrollController {
   }
 
   @Post('loans/:id/disburse')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   async disburseLoan(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1083,7 +1084,7 @@ export class PayrollController {
   }
 
   @Post('loans/:id/close')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   async closeLoan(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1095,7 +1096,7 @@ export class PayrollController {
   // ── Recruitment - Job Postings ──
 
   @Post('jobs')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async createJobPosting(@Body() dto: CreateJobPostingDto, @Req() req) {
@@ -1106,7 +1107,7 @@ export class PayrollController {
   }
 
   @Get('jobs')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getJobPostings(@Query() query: JobQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1116,7 +1117,7 @@ export class PayrollController {
   }
 
   @Get('jobs/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getJobPosting(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1126,7 +1127,7 @@ export class PayrollController {
   }
 
   @Put('jobs/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async updateJobPosting(@Param('id') id: string, @Body() dto: UpdateJobPostingDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1136,7 +1137,7 @@ export class PayrollController {
   }
 
   @Put('jobs/:id/status')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async updateJobStatus(@Param('id') id: string, @Body() dto: UpdateJobStatusDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1148,7 +1149,7 @@ export class PayrollController {
   // ── Recruitment - Candidates ──
 
   @Post('candidates')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async addCandidate(@Body() dto: AddCandidateDto, @Req() req) {
@@ -1159,7 +1160,7 @@ export class PayrollController {
   }
 
   @Get('candidates')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getCandidates(@Query() query: CandidateQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1169,7 +1170,7 @@ export class PayrollController {
   }
 
   @Get('candidates/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getCandidate(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1179,7 +1180,7 @@ export class PayrollController {
   }
 
   @Post('candidates/:id/advance')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async advanceCandidate(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1189,7 +1190,7 @@ export class PayrollController {
   }
 
   @Post('candidates/:id/reject')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async rejectCandidate(@Param('id') id: string, @Body() dto: RejectCandidateDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1201,7 +1202,7 @@ export class PayrollController {
   // ── AI Recruitment: Resume Parsing & Smart Matching ──
 
   @Post('candidates/parse-resume')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async parseResume(@Body() dto: ParseResumeDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1211,7 +1212,7 @@ export class PayrollController {
   }
 
   @Post('candidates/parse-and-create')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async parseAndCreateCandidate(@Body() dto: ParseAndCreateCandidateDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1221,7 +1222,7 @@ export class PayrollController {
   }
 
   @Post('jobs/smart-match')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async smartMatchCandidates(@Body() dto: SmartMatchDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1231,7 +1232,7 @@ export class PayrollController {
   }
 
   @Post('candidates/:id/schedule-interview')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async scheduleInterview(@Param('id') id: string, @Body() dto: ScheduleInterviewDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1241,7 +1242,7 @@ export class PayrollController {
   }
 
   @Post('candidates/:id/interview-feedback')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async interviewFeedback(@Param('id') id: string, @Body() dto: InterviewFeedbackDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1251,7 +1252,7 @@ export class PayrollController {
   }
 
   @Post('candidates/:id/offer')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async createOffer(@Param('id') id: string, @Body() dto: CreateOfferDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1261,7 +1262,7 @@ export class PayrollController {
   }
 
   @Post('candidates/:id/send-offer')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async sendOffer(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1271,7 +1272,7 @@ export class PayrollController {
   }
 
   @Post('candidates/:id/convert-to-employee')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async convertToEmployee(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1283,7 +1284,7 @@ export class PayrollController {
   // ── Recruitment Analytics ──
 
   @Get('recruitment/analytics')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async getRecruitmentAnalytics(@Req() req) {
     const orgId = req.user?.organizationId;
@@ -1295,7 +1296,7 @@ export class PayrollController {
   // ── Statutory Reports ──
 
   @Post('statutory-reports/form-16')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async generateForm16(@Body() dto: GenerateForm16Dto, @Req() req) {
@@ -1306,7 +1307,7 @@ export class PayrollController {
   }
 
   @Post('statutory-reports/pf-ecr')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async generatePFECR(@Body() dto: GeneratePFECRDto, @Req() req) {
@@ -1317,7 +1318,7 @@ export class PayrollController {
   }
 
   @Post('statutory-reports/esi-return')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async generateESIReturn(@Body() dto: GenerateESIReturnDto, @Req() req) {
@@ -1328,7 +1329,7 @@ export class PayrollController {
   }
 
   @Post('statutory-reports/tds-quarterly')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async generateTDSQuarterly(@Body() dto: GenerateTDSQuarterlyDto, @Req() req) {
@@ -1339,7 +1340,7 @@ export class PayrollController {
   }
 
   @Get('statutory-reports/my/form-16')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMyForm16(@Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1348,7 +1349,7 @@ export class PayrollController {
   }
 
   @Get('statutory-reports')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async listStatutoryReports(@Query() query: StatutoryReportQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1358,7 +1359,7 @@ export class PayrollController {
   }
 
   @Get('statutory-reports/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getStatutoryReport(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1372,7 +1373,7 @@ export class PayrollController {
   // download their OWN Form 16; the service method enforces ownership +
   // rejects non-privileged callers for org-wide report types (PF ECR etc).
   @Get('statutory-reports/:id/download')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async downloadStatutoryReportPdf(
     @Param('id') id: string,
     @Req() req,
@@ -1409,7 +1410,7 @@ export class PayrollController {
   // ========================================================================
 
   @Post('goals')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @HttpCode(HttpStatus.CREATED)
   async createGoal(@Body() dto: CreateGoalDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1419,7 +1420,7 @@ export class PayrollController {
   }
 
   @Get('goals')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async getAllGoals(@Query() query: GoalQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1429,7 +1430,7 @@ export class PayrollController {
   }
 
   @Get('goals/my')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMyGoals(@Query() query: GoalQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1438,7 +1439,7 @@ export class PayrollController {
   }
 
   @Get('goals/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getGoal(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1447,7 +1448,7 @@ export class PayrollController {
   }
 
   @Put('goals/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async updateGoal(@Param('id') id: string, @Body() dto: UpdateGoalDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1456,7 +1457,7 @@ export class PayrollController {
   }
 
   @Post('goals/:id/check-in')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async goalCheckIn(@Param('id') id: string, @Body() dto: GoalCheckInDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1465,7 +1466,7 @@ export class PayrollController {
   }
 
   @Post('goals/:id/rate')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async rateGoal(@Param('id') id: string, @Body() dto: RateGoalDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1474,7 +1475,7 @@ export class PayrollController {
   }
 
   @Delete('goals/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async deleteGoal(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1485,7 +1486,7 @@ export class PayrollController {
   // ── OKR Hierarchy / Alignment ──
 
   @Get('goals/:id/children')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getGoalChildren(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const data = await this.payrollService.getGoalChildren(id, orgId);
@@ -1493,7 +1494,7 @@ export class PayrollController {
   }
 
   @Get('goals/:id/hierarchy')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getGoalHierarchy(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const data = await this.payrollService.getGoalHierarchy(id, orgId);
@@ -1501,7 +1502,7 @@ export class PayrollController {
   }
 
   @Get('goals-tree')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getOrgGoalTree(@Req() req) {
     const orgId = req.user?.organizationId;
     const data = await this.payrollService.getOrgGoalTree(orgId);
@@ -1513,7 +1514,7 @@ export class PayrollController {
   // ========================================================================
 
   @Post('review-cycles')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async createReviewCycle(@Body() dto: CreateReviewCycleDto, @Req() req) {
@@ -1524,7 +1525,7 @@ export class PayrollController {
   }
 
   @Get('review-cycles')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async listReviewCycles(@Query() query: ReviewCycleQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1533,7 +1534,7 @@ export class PayrollController {
   }
 
   @Get('review-cycles/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getReviewCycle(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1542,7 +1543,7 @@ export class PayrollController {
   }
 
   @Put('review-cycles/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async updateReviewCycle(
     @Param('id') id: string,
@@ -1556,7 +1557,7 @@ export class PayrollController {
   }
 
   @Post('review-cycles/:id/start')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async startReviewCycle(
     @Param('id') id: string,
@@ -1570,7 +1571,7 @@ export class PayrollController {
   }
 
   @Put('review-cycles/:id/status')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async updateCycleStatus(
     @Param('id') id: string,
@@ -1588,7 +1589,7 @@ export class PayrollController {
   // ========================================================================
 
   @Get('reviews/my')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMyReviews(@Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1597,7 +1598,7 @@ export class PayrollController {
   }
 
   @Get('reviews/pending')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getPendingReviews(@Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1606,7 +1607,7 @@ export class PayrollController {
   }
 
   @Get('reviews/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getReview(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1615,7 +1616,7 @@ export class PayrollController {
   }
 
   @Post('reviews/:id/self-review')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async submitSelfReview(
     @Param('id') id: string,
     @Body() dto: SubmitSelfReviewDto,
@@ -1628,7 +1629,7 @@ export class PayrollController {
   }
 
   @Post('reviews/:id/peer-review')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async submitPeerReview(
     @Param('id') id: string,
     @Body() dto: SubmitPeerReviewDto,
@@ -1641,7 +1642,7 @@ export class PayrollController {
   }
 
   @Patch('reviews/:id/peer-reviewers')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async assignPeerReviewers(
     @Param('id') id: string,
@@ -1660,7 +1661,7 @@ export class PayrollController {
   }
 
   @Post('reviews/:id/manager-review')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async submitManagerReview(
     @Param('id') id: string,
@@ -1674,7 +1675,7 @@ export class PayrollController {
   }
 
   @Post('reviews/:id/finalize')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async finalizeReview(
     @Param('id') id: string,
@@ -1690,7 +1691,7 @@ export class PayrollController {
   // ── Employee Engagement: Announcements ──
 
   @Post('announcements')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   @HttpCode(HttpStatus.CREATED)
   async createAnnouncement(@Body() dto: CreateAnnouncementDto, @Req() req) {
@@ -1701,7 +1702,7 @@ export class PayrollController {
   }
 
   @Get('announcements')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async listAnnouncements(@Query() query: AnnouncementQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1710,7 +1711,7 @@ export class PayrollController {
   }
 
   @Get('announcements/pinned')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getPinnedAnnouncements(@Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1719,7 +1720,7 @@ export class PayrollController {
   }
 
   @Get('announcements/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getAnnouncement(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1728,7 +1729,7 @@ export class PayrollController {
   }
 
   @Put('announcements/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async updateAnnouncement(
     @Param('id') id: string,
@@ -1742,7 +1743,7 @@ export class PayrollController {
   }
 
   @Post('announcements/:id/publish')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin', 'manager')
   async publishAnnouncement(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1752,7 +1753,7 @@ export class PayrollController {
   }
 
   @Post('announcements/:id/read')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async markAnnouncementRead(
     @Param('id') id: string,
     @Body() _dto: AnnouncementReadDto,
@@ -1765,7 +1766,7 @@ export class PayrollController {
   }
 
   @Post('announcements/:id/react')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async reactToAnnouncement(
     @Param('id') id: string,
     @Body() dto: AnnouncementReactDto,
@@ -1778,7 +1779,7 @@ export class PayrollController {
   }
 
   @Delete('announcements/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async deleteAnnouncement(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1790,7 +1791,7 @@ export class PayrollController {
   // ── Employee Engagement: Kudos ──
 
   @Post('kudos')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @HttpCode(HttpStatus.CREATED)
   async giveKudos(@Body() dto: CreateKudosDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1800,7 +1801,7 @@ export class PayrollController {
   }
 
   @Get('kudos')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async listKudos(@Query() query: KudosQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1809,7 +1810,7 @@ export class PayrollController {
   }
 
   @Get('kudos/received')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMyReceivedKudos(@Query() query: KudosQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1818,7 +1819,7 @@ export class PayrollController {
   }
 
   @Get('kudos/given')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMyGivenKudos(@Query() query: KudosQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1827,7 +1828,7 @@ export class PayrollController {
   }
 
   @Get('kudos/leaderboard')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getKudosLeaderboard(@Query('limit') limit: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1840,7 +1841,7 @@ export class PayrollController {
   }
 
   @Delete('kudos/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async deleteKudos(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1851,7 +1852,7 @@ export class PayrollController {
   // ── Employee Engagement: Surveys / Polls / eNPS ──
 
   @Post('surveys')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   @HttpCode(HttpStatus.CREATED)
   async createSurvey(@Body() dto: CreateSurveyDto, @Req() req) {
@@ -1862,7 +1863,7 @@ export class PayrollController {
   }
 
   @Get('surveys')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async listSurveys(@Query() query: SurveyQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1871,7 +1872,7 @@ export class PayrollController {
   }
 
   @Get('surveys/active')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getActiveSurveysForUser(@Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1880,7 +1881,7 @@ export class PayrollController {
   }
 
   @Get('surveys/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getSurvey(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1889,7 +1890,7 @@ export class PayrollController {
   }
 
   @Put('surveys/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async updateSurvey(
     @Param('id') id: string,
@@ -1903,7 +1904,7 @@ export class PayrollController {
   }
 
   @Post('surveys/:id/publish')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async publishSurvey(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1913,7 +1914,7 @@ export class PayrollController {
   }
 
   @Post('surveys/:id/close')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async closeSurvey(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1923,7 +1924,7 @@ export class PayrollController {
   }
 
   @Post('surveys/:id/respond')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async submitSurveyResponse(
     @Param('id') id: string,
     @Body() dto: SubmitSurveyResponseDto,
@@ -1936,7 +1937,7 @@ export class PayrollController {
   }
 
   @Get('surveys/:id/results')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async getSurveyResults(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1946,7 +1947,7 @@ export class PayrollController {
   }
 
   @Get('surveys/:id/my-response')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMySurveyResponse(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1959,7 +1960,7 @@ export class PayrollController {
   // ===========================================================================
 
   @Post('courses')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async createCourse(@Body() dto: CreateCourseDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -1969,7 +1970,7 @@ export class PayrollController {
   }
 
   @Get('courses')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async listCourses(@Query() query: CourseQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1979,7 +1980,7 @@ export class PayrollController {
   }
 
   @Get('courses/mandatory')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMandatoryCourses(@Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1988,7 +1989,7 @@ export class PayrollController {
   }
 
   @Get('courses/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getCourse(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -1997,7 +1998,7 @@ export class PayrollController {
   }
 
   @Put('courses/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async updateCourse(
     @Param('id') id: string,
@@ -2011,7 +2012,7 @@ export class PayrollController {
   }
 
   @Post('courses/:id/publish')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async publishCourse(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -2021,7 +2022,7 @@ export class PayrollController {
   }
 
   @Post('courses/:id/archive')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async archiveCourse(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -2031,7 +2032,7 @@ export class PayrollController {
   }
 
   @Post('courses/:id/rate')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async rateCourse(
     @Param('id') id: string,
     @Body() dto: RateCourseDto,
@@ -2044,7 +2045,7 @@ export class PayrollController {
   }
 
   @Delete('courses/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async deleteCourse(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -2056,7 +2057,7 @@ export class PayrollController {
   // ── LMS: Enrollments ──
 
   @Post('enrollments')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async enrollInCourse(@Body() dto: EnrollCourseDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -2065,7 +2066,7 @@ export class PayrollController {
   }
 
   @Get('enrollments/my')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMyEnrollments(@Query() query: EnrollmentQueryDto, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -2074,7 +2075,7 @@ export class PayrollController {
   }
 
   @Get('enrollments/my/active')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMyActiveCourses(@Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -2083,7 +2084,7 @@ export class PayrollController {
   }
 
   @Get('enrollments/course/:courseId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'manager')
   async getCourseEnrollments(@Param('courseId') courseId: string, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -2093,7 +2094,7 @@ export class PayrollController {
   }
 
   @Get('enrollments/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getEnrollment(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -2102,7 +2103,7 @@ export class PayrollController {
   }
 
   @Post('enrollments/:id/start')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async markCourseStarted(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -2111,7 +2112,7 @@ export class PayrollController {
   }
 
   @Post('enrollments/:id/lesson-progress')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async updateLessonProgress(
     @Param('id') id: string,
     @Body() dto: UpdateLessonProgressDto,
@@ -2124,7 +2125,7 @@ export class PayrollController {
   }
 
   @Post('enrollments/:id/quiz')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async submitQuiz(
     @Param('id') id: string,
     @Body() dto: SubmitQuizDto,
@@ -2137,7 +2138,7 @@ export class PayrollController {
   }
 
   @Post('enrollments/:id/drop')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async dropCourse(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -2148,7 +2149,7 @@ export class PayrollController {
   // ── LMS: Certificates ──
 
   @Get('certificates/my')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getMyCertificates(@Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -2163,7 +2164,7 @@ export class PayrollController {
   }
 
   @Get('certificates/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getCertificate(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -2172,7 +2173,7 @@ export class PayrollController {
   }
 
   @Post('certificates/:id/download')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async incrementCertificateDownload(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -2181,7 +2182,7 @@ export class PayrollController {
   }
 
   @Post('certificates/:id/revoke')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async revokeCertificate(
     @Param('id') id: string,
@@ -2202,7 +2203,7 @@ export class PayrollController {
   // ── LMS: Learning Paths ──
 
   @Post('learning-paths')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async createLearningPath(@Body() dto: CreateLearningPathDto, @Req() req) {
     const orgId = req.user?.organizationId;
@@ -2212,7 +2213,7 @@ export class PayrollController {
   }
 
   @Get('learning-paths')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async listLearningPaths(@Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -2222,7 +2223,7 @@ export class PayrollController {
   }
 
   @Get('learning-paths/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getLearningPath(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;
     const userId = req.user.userId;
@@ -2231,7 +2232,7 @@ export class PayrollController {
   }
 
   @Put('learning-paths/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async updateLearningPath(
     @Param('id') id: string,
@@ -2245,7 +2246,7 @@ export class PayrollController {
   }
 
   @Delete('learning-paths/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @Roles('admin', 'hr', 'super_admin')
   async deleteLearningPath(@Param('id') id: string, @Req() req) {
     const orgId = req.user?.organizationId;

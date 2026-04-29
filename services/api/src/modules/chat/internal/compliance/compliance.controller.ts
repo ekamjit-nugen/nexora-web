@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards, Req, HttpCode, HttpStatus } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { Roles, RolesGuard } from '../common/guards/roles.guard';
 import { RetentionService } from './retention.service';
 import { DlpService } from './dlp.service';
@@ -9,7 +10,7 @@ import { GuestAccessService } from './guest-access.service';
 import { CreateDlpRuleDto, CreateRetentionPolicyDto, CreateLegalHoldDto } from './dto/compliance.dto';
 
 @Controller('chat/compliance')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard, RolesGuard)
 export class ComplianceController {
   constructor(
     private retentionService: RetentionService,

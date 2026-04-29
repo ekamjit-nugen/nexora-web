@@ -1,10 +1,11 @@
 import { Controller, Get, Put, Body, Param, UseGuards, Req, HttpCode, HttpStatus } from '@nestjs/common';
 import { SettingsService } from './settings.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { Roles, RolesGuard } from '../common/guards/roles.guard';
 
 @Controller('chat')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard, RolesGuard)
 export class SettingsController {
   constructor(private settingsService: SettingsService) {}
 

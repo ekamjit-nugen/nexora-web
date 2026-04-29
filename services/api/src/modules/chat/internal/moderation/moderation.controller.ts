@@ -2,6 +2,7 @@ import { Controller, Get, Put, Body, Param, UseGuards, Req } from '@nestjs/commo
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { Roles, RolesGuard } from '../common/guards/roles.guard';
 import { IFlaggedMessage } from './schemas/flagged-message.schema';
 import { IsString, IsOptional } from 'class-validator';
@@ -16,7 +17,7 @@ class ReviewFlaggedMessageDto {
 }
 
 @Controller('chat/moderation')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard, RolesGuard)
 export class ModerationController {
   constructor(
     @InjectModel('FlaggedMessage', 'nexora_chat') private flaggedMessageModel: Model<IFlaggedMessage>,

@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Req, HttpCode, HttpStatus } from '@nestjs/common';
 import { ChannelsService } from './channels.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { Roles, RolesGuard } from '../common/guards/roles.guard';
 import { IsString, IsOptional, IsArray } from 'class-validator';
 
@@ -16,7 +17,7 @@ class ReorderCategoriesDto {
 }
 
 @Controller('chat/channels')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard, RolesGuard)
 export class ChannelsController {
   constructor(private channelsService: ChannelsService) {}
 

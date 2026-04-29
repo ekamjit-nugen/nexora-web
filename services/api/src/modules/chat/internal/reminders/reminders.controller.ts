@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Delete, Body, Param, UseGuards, Req, HttpCode, HttpStatus } from '@nestjs/common';
 import { RemindersService } from './reminders.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { IsString, IsDateString, IsOptional } from 'class-validator';
 
 class CreateReminderDto {
@@ -11,7 +12,7 @@ class CreateReminderDto {
 }
 
 @Controller('chat/reminders')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard)
 export class RemindersController {
   constructor(private remindersService: RemindersService) {}
 

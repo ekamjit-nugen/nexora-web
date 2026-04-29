@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Req, HttpCode, HttpStatus } from '@nestjs/common';
 import { BookmarksService } from './bookmarks.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { IsString, IsOptional } from 'class-validator';
 
 class CreateBookmarkDto {
@@ -15,7 +16,7 @@ class UpdateBookmarkDto {
 }
 
 @Controller('chat/bookmarks')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard)
 export class BookmarksController {
   constructor(private bookmarksService: BookmarksService) {}
 

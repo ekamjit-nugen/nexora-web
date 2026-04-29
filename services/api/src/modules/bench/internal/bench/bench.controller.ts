@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { BenchService } from './bench.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import {
   CreateResourceRequestDto, UpdateResourceRequestDto, UpdateMatchStatusDto,
   ResourceRequestQueryDto, BenchEmployeeQueryDto, BenchTrendQueryDto,
@@ -20,7 +21,7 @@ export class BenchController {
   // ── Overview ──
 
   @Get('overview')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getOverview(@Req() req) {
     const data = await this.benchService.getBenchOverview(req.user?.organizationId, req.headers.authorization);
     return { success: true, message: 'Bench overview retrieved', data };
@@ -29,7 +30,7 @@ export class BenchController {
   // ── Bench Employees ──
 
   @Get('employees')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getBenchEmployees(@Query() query: BenchEmployeeQueryDto, @Req() req) {
     const result = await this.benchService.getBenchEmployees(
       req.user?.organizationId, query, req.headers.authorization,
@@ -38,7 +39,7 @@ export class BenchController {
   }
 
   @Get('employees/:userId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getEmployeeStatus(@Param('userId') userId: string, @Req() req) {
     const data = await this.benchService.getEmployeeAllocationStatus(
       req.user?.organizationId, userId, req.headers.authorization,
@@ -49,7 +50,7 @@ export class BenchController {
   // ── Skills ──
 
   @Get('skills')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getSkillAvailability(@Query('skills') skills: string, @Req() req) {
     const skillList = skills ? skills.split(',').map(s => s.trim()).filter(Boolean) : [];
     const data = await this.benchService.getSkillAvailability(
@@ -61,7 +62,7 @@ export class BenchController {
   // ── Analytics ──
 
   @Get('analytics')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getAnalytics(@Req() req) {
     const data = await this.benchService.getBenchAnalytics(
       req.user?.organizationId, req.headers.authorization,
@@ -72,7 +73,7 @@ export class BenchController {
   // ── Trends ──
 
   @Get('trends')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getTrends(@Query() query: BenchTrendQueryDto, @Req() req) {
     const data = await this.benchService.getBenchTrends(req.user?.organizationId, query);
     return { success: true, message: 'Bench trends retrieved', data };
@@ -81,7 +82,7 @@ export class BenchController {
   // ── Snapshots ──
 
   @Post('snapshot')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @HttpCode(HttpStatus.CREATED)
   async takeSnapshot(@Req() req) {
     const data = await this.benchService.takeSnapshot(
@@ -93,14 +94,14 @@ export class BenchController {
   // ── Config ──
 
   @Get('config')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getConfig(@Req() req) {
     const data = await this.benchService.getBenchConfig(req.user?.organizationId);
     return { success: true, message: 'Bench config retrieved', data };
   }
 
   @Put('config')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async updateConfig(@Body() dto: UpdateBenchConfigDto, @Req() req) {
     const data = await this.benchService.updateBenchConfig(req.user?.organizationId, dto);
     return { success: true, message: 'Bench config updated', data };
@@ -109,7 +110,7 @@ export class BenchController {
   // ── Resource Requests ──
 
   @Post('resource-requests')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @HttpCode(HttpStatus.CREATED)
   async createResourceRequest(@Body() dto: CreateResourceRequestDto, @Req() req) {
     const data = await this.benchService.createResourceRequest(
@@ -119,21 +120,21 @@ export class BenchController {
   }
 
   @Get('resource-requests')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getResourceRequests(@Query() query: ResourceRequestQueryDto, @Req() req) {
     const result = await this.benchService.getResourceRequests(req.user?.organizationId, query);
     return { success: true, message: 'Resource requests retrieved', data: result.data, pagination: result.pagination };
   }
 
   @Get('resource-requests/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getResourceRequest(@Param('id') id: string, @Req() req) {
     const data = await this.benchService.getResourceRequest(req.user?.organizationId, id);
     return { success: true, message: 'Resource request retrieved', data };
   }
 
   @Put('resource-requests/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async updateResourceRequest(@Param('id') id: string, @Body() dto: UpdateResourceRequestDto, @Req() req) {
     const data = await this.benchService.updateResourceRequest(
       req.user?.organizationId, id, dto, req.user.userId,
@@ -142,7 +143,7 @@ export class BenchController {
   }
 
   @Post('resource-requests/:id/match')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async rematchResourceRequest(@Param('id') id: string, @Req() req) {
     const data = await this.benchService.runMatching(
       req.user?.organizationId, id, req.headers.authorization,
@@ -151,7 +152,7 @@ export class BenchController {
   }
 
   @Put('resource-requests/:id/matches/:userId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async updateMatchStatus(
     @Param('id') id: string,
     @Param('userId') userId: string,
@@ -165,7 +166,7 @@ export class BenchController {
   }
 
   @Delete('resource-requests/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async deleteResourceRequest(@Param('id') id: string, @Req() req) {
     const data = await this.benchService.deleteResourceRequest(
       req.user?.organizationId, id, req.user.userId,

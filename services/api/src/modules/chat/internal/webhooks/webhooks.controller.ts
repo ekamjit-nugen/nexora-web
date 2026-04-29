@@ -1,10 +1,11 @@
 import { Controller, Get, Post, Delete, Body, Param, UseGuards, Req, HttpCode, HttpStatus, HttpException } from '@nestjs/common';
 import { WebhooksService } from './webhooks.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { Roles, RolesGuard } from '../common/guards/roles.guard';
 
 @Controller('chat')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard, RolesGuard)
 export class WebhooksController {
   constructor(private webhooksService: WebhooksService) {}
 

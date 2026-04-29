@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { AssetService } from './asset.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import {
   CreateAssetCategoryDto, UpdateAssetCategoryDto,
   CreateAssetDto, UpdateAssetDto, AssetQueryDto,
@@ -22,7 +23,7 @@ export class AssetController {
   // ── Categories ──
 
   @Post('categories')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @HttpCode(HttpStatus.CREATED)
   async createCategory(@Body() dto: CreateAssetCategoryDto, @Req() req) {
     const data = await this.assetService.createCategory(dto, req.user.userId, req.user?.organizationId);
@@ -30,28 +31,28 @@ export class AssetController {
   }
 
   @Get('categories')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getCategories(@Req() req) {
     const data = await this.assetService.getCategories(req.user?.organizationId);
     return { success: true, message: 'Categories retrieved', data };
   }
 
   @Get('categories/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getCategory(@Param('id') id: string, @Req() req) {
     const data = await this.assetService.getCategory(req.user?.organizationId, id);
     return { success: true, message: 'Category retrieved', data };
   }
 
   @Put('categories/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async updateCategory(@Param('id') id: string, @Body() dto: UpdateAssetCategoryDto, @Req() req) {
     const data = await this.assetService.updateCategory(req.user?.organizationId, id, dto, req.user.userId);
     return { success: true, message: 'Category updated', data };
   }
 
   @Delete('categories/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async deleteCategory(@Param('id') id: string, @Req() req) {
     const data = await this.assetService.deleteCategory(req.user?.organizationId, id, req.user.userId);
     return { success: true, ...data };
@@ -60,7 +61,7 @@ export class AssetController {
   // ── Assets ──
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @HttpCode(HttpStatus.CREATED)
   async createAsset(@Body() dto: CreateAssetDto, @Req() req) {
     const data = await this.assetService.createAsset(dto, req.user.userId, req.user?.organizationId);
@@ -68,70 +69,70 @@ export class AssetController {
   }
 
   @Get()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getAssets(@Query() query: AssetQueryDto, @Req() req) {
     const result = await this.assetService.getAssets(req.user?.organizationId, query);
     return { success: true, message: 'Assets retrieved', data: result.data, pagination: result.pagination };
   }
 
   @Get('stats')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getStats(@Req() req) {
     const data = await this.assetService.getStats(req.user?.organizationId);
     return { success: true, message: 'Asset stats retrieved', data };
   }
 
   @Get('warranty-expiring')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getWarrantyExpiring(@Query('days') days: number, @Req() req) {
     const data = await this.assetService.getWarrantyExpiring(req.user?.organizationId, days || 30);
     return { success: true, message: 'Warranty expiring assets retrieved', data };
   }
 
   @Get('employee/:employeeId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getEmployeeAssets(@Param('employeeId') employeeId: string, @Req() req) {
     const data = await this.assetService.getEmployeeAssets(req.user?.organizationId, employeeId);
     return { success: true, message: 'Employee assets retrieved', data };
   }
 
   @Get('employee/:employeeId/unreturned')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getUnreturnedAssets(@Param('employeeId') employeeId: string, @Req() req) {
     const data = await this.assetService.getUnreturnedAssets(req.user?.organizationId, employeeId);
     return { success: true, message: 'Unreturned assets retrieved', data };
   }
 
   @Get(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getAsset(@Param('id') id: string, @Req() req) {
     const data = await this.assetService.getAsset(req.user?.organizationId, id);
     return { success: true, message: 'Asset retrieved', data };
   }
 
   @Get(':id/history')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getAssetHistory(@Param('id') id: string, @Req() req) {
     const data = await this.assetService.getAssetHistory(req.user?.organizationId, id);
     return { success: true, message: 'Asset history retrieved', data };
   }
 
   @Get(':id/maintenance')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async getAssetMaintenance(@Param('id') id: string, @Req() req) {
     const data = await this.assetService.getAssetMaintenance(req.user?.organizationId, id);
     return { success: true, message: 'Maintenance logs retrieved', data };
   }
 
   @Put(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async updateAsset(@Param('id') id: string, @Body() dto: UpdateAssetDto, @Req() req) {
     const data = await this.assetService.updateAsset(req.user?.organizationId, id, dto, req.user.userId);
     return { success: true, message: 'Asset updated', data };
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async deleteAsset(@Param('id') id: string, @Req() req) {
     const data = await this.assetService.deleteAsset(req.user?.organizationId, id, req.user.userId);
     return { success: true, ...data };
@@ -140,35 +141,35 @@ export class AssetController {
   // ── Assignment Operations ──
 
   @Post('assign')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async assignAsset(@Body() dto: AssignAssetDto, @Req() req) {
     const data = await this.assetService.assignAsset(dto, req.user.userId, req.user?.organizationId);
     return { success: true, message: 'Asset assigned', data };
   }
 
   @Post('unassign')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async unassignAsset(@Body() dto: UnassignAssetDto, @Req() req) {
     const data = await this.assetService.unassignAsset(dto, req.user.userId, req.user?.organizationId);
     return { success: true, message: 'Asset unassigned', data };
   }
 
   @Post('transfer')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async transferAsset(@Body() dto: TransferAssetDto, @Req() req) {
     const data = await this.assetService.transferAsset(dto, req.user.userId, req.user?.organizationId);
     return { success: true, message: 'Asset transferred', data };
   }
 
   @Post('bulk-assign')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async bulkAssign(@Body() dto: BulkAssignDto, @Req() req) {
     const data = await this.assetService.bulkAssign(dto, req.user.userId, req.user?.organizationId);
     return { success: true, message: 'Bulk assignment completed', data };
   }
 
   @Post('bulk-unassign')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async bulkUnassign(@Body() dto: BulkUnassignDto, @Req() req) {
     const data = await this.assetService.bulkUnassign(dto, req.user.userId, req.user?.organizationId);
     return { success: true, message: 'Bulk unassignment completed', data };
@@ -177,7 +178,7 @@ export class AssetController {
   // ── Maintenance ──
 
   @Post('maintenance')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   @HttpCode(HttpStatus.CREATED)
   async createMaintenance(@Body() dto: CreateMaintenanceDto, @Req() req) {
     const data = await this.assetService.createMaintenance(dto, req.user.userId, req.user?.organizationId);
@@ -185,7 +186,7 @@ export class AssetController {
   }
 
   @Put('maintenance/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureGuard)
   async updateMaintenance(@Param('id') id: string, @Body() dto: UpdateMaintenanceDto, @Req() req) {
     const data = await this.assetService.updateMaintenance(req.user?.organizationId, id, dto, req.user.userId);
     return { success: true, message: 'Maintenance log updated', data };

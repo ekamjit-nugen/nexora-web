@@ -9,12 +9,13 @@ import { ForwardingService } from './forwarding.service';
 import { CreateTaskService } from './create-task.service';
 import { CommandsService } from '../commands/commands.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 import { Roles, RolesGuard } from '../common/guards/roles.guard';
 import { ChannelPermissionGuard } from '../common/guards/channel-permission.guard';
 import { SendMessageDto, EditMessageDto, MessageQueryDto, SearchMessageDto } from './dto/send-message.dto';
 
 @Controller('chat')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard, RolesGuard)
 export class MessagesController {
   private readonly logger = new Logger(MessagesController.name);
 

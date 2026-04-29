@@ -6,8 +6,9 @@ import {
 import { ClipsService } from './clips.service';
 import { JwtAuthGuard } from '../chat/guards/jwt-auth.guard';
 
+import { FeatureGuard } from '../../../../bootstrap/auth/feature.guard';
 @Controller('chat/clips')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, FeatureGuard)
 export class ClipsController {
   private readonly logger = new Logger(ClipsController.name);
 
