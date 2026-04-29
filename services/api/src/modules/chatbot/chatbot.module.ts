@@ -5,6 +5,7 @@ import { ChatbotService } from './internal/chatbot.service';
 import { OllamaClient } from './internal/ollama.client';
 import { ConversationSchema } from './internal/schemas/conversation.schema';
 import { TenantContextService } from './internal/tenant-context.service';
+import { IntentEnrichmentService } from './internal/intent-enrichment.service';
 import { CHATBOT_PUBLIC_API } from './public-api';
 import { ChatbotPublicApiImpl } from './public-api/chatbot-public-api.impl';
 import {
@@ -80,6 +81,7 @@ import { LeaveSchema } from '../leave/internal/leave/schemas/leave.schema';
     ChatbotService,
     OllamaClient,
     TenantContextService,
+    IntentEnrichmentService,
     { provide: CHATBOT_PUBLIC_API, useClass: ChatbotPublicApiImpl },
   ],
   exports: [CHATBOT_PUBLIC_API, ChatbotService, OllamaClient],

@@ -143,7 +143,13 @@ services:
       # response. Streaming endpoint side-steps this — but the buffered
       # /chatbot/ask still needs a generous timeout for callers that
       # don't stream (curl, scripts, mobile clients without SSE).
-      OLLAMA_TIMEOUT_MS: ${OLLAMA_TIMEOUT_MS:-180000}
+      # 5 min safety net for the buffered /chatbot/ask path. Big
+      # data-block replies (full team attendance table, full salary
+      # structures list) on a remote CPU can run 3–4 minutes. The
+      # frontend uses /chatbot/stream which renders tokens as they
+      # arrive, so users never feel the wait — but scripts /
+      # automation hitting /ask need a generous cap.
+      OLLAMA_TIMEOUT_MS: ${OLLAMA_TIMEOUT_MS:-300000}
 
       # OTP rate limiting
       OTP_MAX_ATTEMPTS: ${OTP_MAX_ATTEMPTS:-20}

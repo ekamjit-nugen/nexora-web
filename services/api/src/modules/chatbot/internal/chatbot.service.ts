@@ -6,6 +6,7 @@ import { OllamaClient, OllamaMessage } from './ollama.client';
 import { NEXORA_KNOWLEDGE } from '../knowledge/nexora-knowledge';
 import { CHATBOT_DB } from '../../../bootstrap/database/database.tokens';
 import { TenantContextService } from './tenant-context.service';
+import { IntentEnrichmentService } from './intent-enrichment.service';
 
 /**
  * Multi-tenant chatbot service.
@@ -43,6 +44,7 @@ export class ChatbotService {
     private readonly conversationModel: Model<IConversation>,
     private readonly ollama: OllamaClient,
     private readonly tenantContext: TenantContextService,
+    private readonly intentEnrichment: IntentEnrichmentService,
   ) {}
 
   /** List conversations for the current user — strictly tenant scoped. */
@@ -106,10 +108,15 @@ export class ChatbotService {
   ): Promise<{ conversationId: string; reply: string }> {
     const t0 = Date.now();
     const conv = await this.loadOrCreateConversation(organizationId, userId, conversationId);
-    const snapshot = await this.tenantContext
-      .fetch(organizationId, userId, userContext.orgRole || 'member', !!userContext.isPlatformAdmin)
-      .catch(() => null);
-    const messages = this.buildPrompt(conv, userContext, message, snapshot);
+    const [snapshot, intentBlock] = await Promise.all([
+      this.tenantContext
+        .fetch(organizationId, userId, userContext.orgRole || 'member', !!userContext.isPlatformAdmin)
+        .catch(() => null),
+      this.intentEnrichment
+        .detectAndFetch(message, organizationId, userId, userContext.orgRole || 'member')
+        .catch(() => null),
+    ]);
+    const messages = this.buildPrompt(conv, userContext, message, snapshot, intentBlock);
 
     let reply = '';
     try {
@@ -151,10 +158,15 @@ export class ChatbotService {
   ): AsyncGenerator<{ chunk?: string; done?: boolean; conversationId: string }, void, void> {
     const t0 = Date.now();
     const conv = await this.loadOrCreateConversation(organizationId, userId, conversationId);
-    const snapshot = await this.tenantContext
-      .fetch(organizationId, userId, userContext.orgRole || 'member', !!userContext.isPlatformAdmin)
-      .catch(() => null);
-    const messages = this.buildPrompt(conv, userContext, message, snapshot);
+    const [snapshot, intentBlock] = await Promise.all([
+      this.tenantContext
+        .fetch(organizationId, userId, userContext.orgRole || 'member', !!userContext.isPlatformAdmin)
+        .catch(() => null),
+      this.intentEnrichment
+        .detectAndFetch(message, organizationId, userId, userContext.orgRole || 'member')
+        .catch(() => null),
+    ]);
+    const messages = this.buildPrompt(conv, userContext, message, snapshot, intentBlock);
 
     let assembled = '';
     try {
@@ -218,10 +230,12 @@ export class ChatbotService {
     userContext: { firstName?: string; orgName?: string; orgRole?: string; isPlatformAdmin?: boolean },
     newMessage: string,
     snapshot?: any,
+    intentBlock?: string | null,
   ): OllamaMessage[] {
-    // System prompt = persona + workflow knowledge + LIVE tenant snapshot.
-    // No other tenant's data ever appears here because the snapshot
-    // service only ever queries by the caller's organizationId.
+    // System prompt = persona + workflow knowledge + LIVE tenant snapshot
+    // + (when relevant) live data block fetched on intent.
+    // No other tenant's data ever appears here because every query is
+    // filtered by the caller's organizationId server-side.
     const fallbackCtx = [
       userContext.firstName ? `User's first name: ${userContext.firstName}` : '',
       userContext.orgName ? `User's organization: ${userContext.orgName}` : '',
@@ -235,9 +249,15 @@ export class ChatbotService {
       ? this.tenantContext.toPromptBlock(snapshot)
       : '## Current user context\n' + fallbackCtx;
 
+    const systemContent = [
+      NEXORA_KNOWLEDGE,
+      tenantBlock,
+      intentBlock || '', // empty string is fine — appended cleanly when present
+    ].filter(Boolean).join('\n\n');
+
     const system: OllamaMessage = {
       role: 'system',
-      content: NEXORA_KNOWLEDGE + '\n\n' + tenantBlock,
+      content: systemContent,
     };
 
     // Trim long history to keep prompt size reasonable. Take last 12
